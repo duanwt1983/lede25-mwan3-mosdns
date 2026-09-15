@@ -161,16 +161,16 @@ export function autolimit_load_config() {
 	let ctx = cursor();
 	let cfg = {
 		enabled: false,
-		down_threshold_kbps: 100000,
-		up_threshold_kbps: 30000,
-		down_sustain_minutes: 20,
+		down_threshold_kbps: 50000,
+		up_threshold_kbps: 15000,
+		down_sustain_minutes: 30,
 		up_sustain_minutes: 20,
 		limit_down_kbps: 10000,
 		limit_up_kbps: 1000,
 		limit_minutes: 30,
 		penalty_window_minutes: 30,
-		penalty_limit_minutes: 60,
-		interval_sec: 30,
+		penalty_limit_minutes: 120,
+		interval_sec: 60,
 		iface: 'br-lan',
 		whitelist: {}
 	};

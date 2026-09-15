@@ -1,0 +1,5 @@
+#!/bin/sh
+chmod +x /usr/libexec/lede-conntrack-tune /etc/init.d/lede-conntrack 2>/dev/null || true
+[ -x /etc/init.d/lede-conntrack ] && /etc/init.d/lede-conntrack enable
+[ -x /etc/init.d/lede-conntrack ] && /etc/init.d/lede-conntrack start
+exit 0

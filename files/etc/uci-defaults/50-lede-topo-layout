@@ -1,0 +1,5 @@
+#!/bin/sh
+# 首次启动写入拓扑默认布局（来自 192.168.8.1 当前样式快照）
+[ -s /etc/lede-topo.json ] && exit 0
+[ -f /etc/lede-topo.default.json ] || exit 0
+cp /etc/lede-topo.default.json /etc/lede-topo.json

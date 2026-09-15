@@ -1,0 +1,21 @@
+#!/bin/sh /etc/rc.common
+# Raise rpcd/ubusd nofile via procd limits. Do not wrap /sbin/ubusd.
+
+START=11
+
+patch_init() {
+	local f="$1"
+	[ -f "$f" ] || return 0
+	grep -q 'nofile=' "$f" && return 0
+	grep -q 'procd_set_param respawn' "$f" || return 0
+	sed -i '/procd_set_param respawn/a\\	procd_set_param limits nofile="65535 65535"' "$f"
+}
+
+start() {
+	patch_init /etc/init.d/rpcd
+	patch_init /etc/init.d/ubus
+}
+
+boot() {
+	start
+}

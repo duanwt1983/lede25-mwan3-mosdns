@@ -1,0 +1,26 @@
+#!/bin/sh
+# Remove stock Status → System Log menus. Logs live in 日志中心.
+# Do not add stub JSON nodes; this LuCI build still shows them.
+f=/usr/share/luci/menu.d/luci-mod-status.json
+[ -f "$f" ] || exit 0
+rm -f /usr/share/luci/menu.d/luci-hide-status-logs.json \
+      /usr/share/luci/menu.d/zzz-lede-hide-status-logs.json
+ucode - <<'UC'
+import { readfile, writefile } from 'fs';
+let p = '/usr/share/luci/menu.d/luci-mod-status.json';
+let raw = readfile(p);
+if (raw == null || raw == '')
+	exit(0);
+let d;
+try { d = json(raw); } catch (e) { exit(0); }
+if (type(d) != 'object')
+	exit(0);
+delete d['admin/status/logs'];
+delete d['admin/status/logs/syslog'];
+delete d['admin/status/logs/dmesg'];
+delete d['admin/status/syslog'];
+delete d['admin/status/alertlog'];
+writefile(p, sprintf('%J\n', d));
+UC
+rm -rf /tmp/luci-indexcache* /tmp/luci-modulecache*
+exit 0

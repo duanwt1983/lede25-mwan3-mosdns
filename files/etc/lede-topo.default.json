@@ -1,0 +1,127 @@
+{
+    "saved":  1,
+    "pos":  {
+                "internet":  {
+                                 "x":  120,
+                                 "y":  240,
+                                 "w":  404.52884639551,
+                                 "h":  211.4378817249
+                             },
+                "gateway":  {
+                                "x":  408,
+                                "y":  238.5,
+                                "w":  68,
+                                "h":  344
+                            },
+                "switch":  {
+                               "x":  672,
+                               "y":  240,
+                               "w":  68,
+                               "h":  344
+                           },
+                "cli-stack":  {
+                                  "x":  888,
+                                  "y":  240
+                              },
+                "nic:Wan_1":  {
+                                  "rel":  1,
+                                  "x":  -48,
+                                  "y":  -118.5,
+                                  "s":  0.5
+                              },
+                "nic:Wan_2":  {
+                                  "rel":  1,
+                                  "x":  -48,
+                                  "y":  1.5,
+                                  "s":  0.55
+                              },
+                "nic:Wan_3":  {
+                                  "rel":  1,
+                                  "x":  -48,
+                                  "y":  121.5,
+                                  "s":  0.5
+                              },
+                "wan-sum":  {
+                                "x":  120,
+                                "y":  240
+                            },
+                "nic:lan":  {
+                                "rel":  1,
+                                "s":  0.5,
+                                "x":  48,
+                                "y":  1.5
+                            }
+            },
+    "fields":  {
+                   "switch":  [
+
+                              ],
+                   "link:inet:Wan_1":  [
+                                           "rate"
+                                       ],
+                   "link:inet:Wan_3":  [
+                                           "rate"
+                                       ],
+                   "nic:Wan_2":  [
+                                     "name",
+                                     "ip"
+                                 ],
+                   "nic:Wan_3":  [
+                                     "name",
+                                     "ip"
+                                 ],
+                   "nic:Wan_1":  [
+                                     "name",
+                                     "ip"
+                                 ],
+                   "gateway":  [
+
+                               ],
+                   "cli-list":  [
+                                    "ip",
+                                    "rate",
+                                    "name"
+                                ],
+                   "wan-sum":  [
+                                   "rate"
+                               ]
+               },
+    "links":  {
+                  "link:inet:Wan_3":  {
+                                          "x1":  96,
+                                          "y1":  264,
+                                          "x2":  360,
+                                          "y2":  360,
+                                          "labelX":  264,
+                                          "labelY":  360
+                                      },
+                  "link:inet:Wan_1":  {
+                                          "x1":  96,
+                                          "y1":  216,
+                                          "x2":  360,
+                                          "y2":  120,
+                                          "labelX":  264,
+                                          "labelY":  120
+                                      },
+                  "link:inet:Wan_2":  {
+                                          "x1":  96,
+                                          "y1":  240,
+                                          "x2":  360,
+                                          "y2":  240,
+                                          "labelX":  288,
+                                          "labelY":  240
+                                      },
+                  "_lanDir":  2,
+                  "link:lan":  {
+                                   "x1":  456,
+                                   "y1":  240,
+                                   "x2":  648,
+                                   "y2":  240,
+                                   "labelX":  552,
+                                   "labelY":  240
+                               }
+              },
+    "snap":  "1",
+    "lock":  "0",
+    "topn":  6
+}

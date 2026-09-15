@@ -1,0 +1,298 @@
+#!/bin/sh
+# First-boot (and every boot): use leftover space on the *root disk* as ext4 /data.
+# Never touches other disks. Never formats a partition that already has a filesystem.
+# Mounts by UUID so device names (sda/nvme) can change.
+
+MARKER=/data/.lede-data
+MIN_MIB=1024
+LABEL=LEDEDATA
+LOG=/tmp/lede-data-setup.log
+
+log() {
+	echo "$(date '+%F %T') $*" >> "$LOG"
+	logger -t lede-data "$*"
+}
+
+data_mounted() {
+	grep -q ' /data ' /proc/mounts
+}
+
+seed_and_bind() {
+	local ov="$1" dt="$2" f bn
+	[ -n "$ov" ] && [ -n "$dt" ] || return 0
+	mkdir -p "$dt" "$ov"
+	for f in "$ov"/* "$ov"/.[!.]*; do
+		[ -e "$f" ] || continue
+		bn=$(basename "$f")
+		[ -e "$dt/$bn" ] || cp -a "$f" "$dt/$bn" 2>/dev/null || true
+	done
+	if ! grep -q " $ov " /proc/mounts; then
+		mount --bind "$dt" "$ov" 2>/dev/null || true
+	fi
+}
+
+ensure_dirs() {
+	mkdir -p \
+		/data/logs/alert \
+		/data/logs/syslog \
+		/data/logs/kernel \
+		/data/logs/mosdns \
+		/data/mosdns/cache \
+		/data/mosdns/adlist \
+		/data/geodata \
+		/data/passwall/rules \
+		/data/pcap \
+		/data/metrics \
+		/data/share
+	for f in /etc/mosdns/cache.dump /etc/mosdns/cache_wan*.dump /etc/mosdns/stats.dump; do
+		[ -f "$f" ] || continue
+		bn=$(basename "$f")
+		[ -f "/data/mosdns/cache/$bn" ] || mv "$f" "/data/mosdns/cache/$bn" 2>/dev/null || true
+	done
+	# PassWall / Xray geoip.dat geosite.dat（及同目录其它 .dat）
+	[ -d /usr/share/v2ray ] && seed_and_bind /usr/share/v2ray /data/geodata
+	if [ -d /usr/share/xray ] && ! grep -q ' /usr/share/xray ' /proc/mounts; then
+		mount --bind /data/geodata /usr/share/xray 2>/dev/null || true
+	fi
+	# PassWall 定时规则：gfwlist / chnroute / chnroute6 / chnlist 等
+	[ -d /usr/share/passwall/rules ] && seed_and_bind /usr/share/passwall/rules /data/passwall/rules
+	# MosDNS 广告源下载目录（anti-AD、AdRules 等 URL）
+	mkdir -p /etc/mosdns/rule/adlist
+	seed_and_bind /etc/mosdns/rule/adlist /data/mosdns/adlist
+	touch "$MARKER" 2>/dev/null || true
+}
+
+root_src() {
+	awk '$2=="/"{print $1; exit}' /proc/mounts
+}
+
+resolve_dev() {
+	local d="$1"
+	[ -n "$d" ] || return 1
+	d=$(readlink -f "$d" 2>/dev/null || echo "$d")
+	# /dev/root → real partition
+	if [ "$d" = "/dev/root" ] || [ ! -e "$d" ]; then
+		d=$(awk '$2=="/"{print $1; exit}' /proc/self/mountinfo 2>/dev/null)
+		d=$(echo "$d" | awk '{print $1}')
+	fi
+	if [ -e /dev/root ] && [ "$d" = "/dev/root" -o -z "$d" ]; then
+		d=$(readlink -f /dev/root 2>/dev/null || true)
+	fi
+	# /dev/root or mapper: kernel cmdline
+	if [ ! -b "$d" ]; then
+		d=$(sed -n 's/.*root=\([^ ]*\).*/\1/p' /proc/cmdline)
+	fi
+	if [ ! -b "$d" ]; then
+		d=$(awk '$2=="/" && $3=="ext4"{print $1; exit}' /proc/mounts)
+	fi
+	[ -b "$d" ] || return 1
+	echo "$d"
+}
+
+disk_of_part() {
+	local p="$1" n
+	p=$(readlink -f "$p")
+	n=$(basename "$p")
+	case "$n" in
+		nvme*n*p[0-9]*|mmcblk*p[0-9]*|loop*p[0-9]*)
+			echo "/dev/${n%p*}"
+			;;
+		*)
+			echo "/dev/${n%%[0-9]*}"
+			;;
+	esac
+}
+
+part_path() {
+	local disk="$1" num="$2" bn
+	bn=$(basename "$disk")
+	case "$bn" in
+		nvme*n*|mmcblk*|loop*)
+			echo "${disk}p${num}"
+			;;
+		*)
+			echo "${disk}${num}"
+			;;
+	esac
+}
+
+find_label_part() {
+	local p
+	for p in /dev/sd*[0-9] /dev/vd*[0-9] /dev/hd*[0-9] /dev/nvme*n*p*[0-9] /dev/mmcblk*p*[0-9]; do
+		[ -b "$p" ] || continue
+		if blkid -o value -s LABEL "$p" 2>/dev/null | grep -qx "$LABEL"; then
+			echo "$p"
+			return 0
+		fi
+	done
+	return 1
+}
+
+fstab_has_data() {
+	uci -q show fstab 2>/dev/null | grep -q "target='/data'"
+}
+
+write_fstab() {
+	local uuid="$1" sid
+	[ -n "$uuid" ] || return 1
+	if fstab_has_data; then
+		sid=$(uci -q show fstab | awk -F'[.=]' "/target='\\/data'/{print \$2; exit}")
+		if [ -n "$sid" ]; then
+			uci -q set "fstab.$sid.uuid=$uuid"
+			uci -q set "fstab.$sid.target=/data"
+			uci -q set "fstab.$sid.fstype=ext4"
+			uci -q set "fstab.$sid.options=rw,noatime,nofail"
+			uci -q set "fstab.$sid.enabled=1"
+			uci -q commit fstab
+			return 0
+		fi
+	fi
+	uci -q add fstab mount >/dev/null
+	uci -q set "fstab.@mount[-1].uuid=$uuid"
+	uci -q set "fstab.@mount[-1].target=/data"
+	uci -q set "fstab.@mount[-1].fstype=ext4"
+	uci -q set "fstab.@mount[-1].options=rw,noatime,nofail"
+	uci -q set "fstab.@mount[-1].enabled=1"
+	uci -q commit fstab
+}
+
+mount_uuid() {
+	local uuid="$1"
+	mkdir -p /data
+	if data_mounted; then
+		return 0
+	fi
+	if command -v block >/dev/null 2>&1; then
+		block mount >/dev/null 2>&1 || true
+	fi
+	if data_mounted; then
+		return 0
+	fi
+	mount -t ext4 -o rw,noatime,nofail "UUID=$uuid" /data 2>/dev/null || \
+		mount -t ext4 -o rw,noatime "/dev/disk/by-uuid/$uuid" /data 2>/dev/null || \
+		return 1
+}
+
+refresh_parts() {
+	local disk="$1"
+	partx -u "$disk" >/dev/null 2>&1 || true
+	partprobe "$disk" >/dev/null 2>&1 || true
+	block detect >/dev/null 2>&1 || true
+	sleep 1
+}
+
+# --- already good ---
+if data_mounted; then
+	ensure_dirs
+	exit 0
+fi
+
+EXIST=$(find_label_part || true)
+if [ -n "$EXIST" ]; then
+	UUID=$(blkid -o value -s UUID "$EXIST" 2>/dev/null || true)
+	if [ -n "$UUID" ]; then
+		write_fstab "$UUID"
+		if mount_uuid "$UUID"; then
+			ensure_dirs
+			log "mounted existing $LABEL $EXIST uuid=$UUID"
+			exit 0
+		fi
+	fi
+fi
+
+ROOT_PART=$(resolve_dev "$(root_src)") || {
+	log "cannot resolve root device, skip"
+	exit 0
+}
+DISK=$(disk_of_part "$ROOT_PART")
+if [ ! -b "$DISK" ]; then
+	log "root disk not a block device: $DISK (part $ROOT_PART)"
+	exit 0
+fi
+
+if ! command -v parted >/dev/null 2>&1; then
+	log "parted missing, skip"
+	exit 0
+fi
+
+# Last free region on this disk only.
+FREE_LINE=$(parted -m -s "$DISK" unit MiB print free 2>/dev/null | awk -F: '
+	$0 ~ /:free;$/ {
+		start=$2; size=$4
+		gsub(/MiB/,"",start); gsub(/MiB/,"",size)
+		last_start=start; last_size=size
+	}
+	END { if (last_size+0 > 0) print last_start, last_size }
+')
+FREE_START=$(echo "$FREE_LINE" | awk '{print $1}')
+FREE_SIZE=$(echo "$FREE_LINE" | awk '{print $2}')
+FREE_SIZE=${FREE_SIZE%.*}
+FREE_START=${FREE_START%.*}
+
+if [ -z "$FREE_SIZE" ] || [ "$FREE_SIZE" -lt "$MIN_MIB" ]; then
+	log "no leftover >= ${MIN_MIB}MiB on $DISK (got ${FREE_SIZE:-0}), skip"
+	exit 0
+fi
+
+TABLE=$(parted -m -s "$DISK" print 2>/dev/null | awk -F: 'NR==2{print $6}')
+log "creating $LABEL on $DISK from ${FREE_START}MiB table=$TABLE free=${FREE_SIZE}MiB"
+
+if [ "$TABLE" = "gpt" ]; then
+	parted -s "$DISK" -- mkpart "$LABEL" ext4 "${FREE_START}MiB" 100% || {
+		log "parted mkpart failed"
+		exit 1
+	}
+else
+	parted -s "$DISK" -- mkpart primary ext4 "${FREE_START}MiB" 100% || {
+		log "parted mkpart failed"
+		exit 1
+	}
+fi
+
+refresh_parts "$DISK"
+
+# New partition = highest number on this disk
+NEW_N=$(parted -m -s "$DISK" print 2>/dev/null | awk -F: '
+	$1 ~ /^[0-9]+$/ { n=$1 }
+	END { print n }
+')
+NEW_PART=$(part_path "$DISK" "$NEW_N")
+i=0
+while [ ! -b "$NEW_PART" ] && [ "$i" -lt 10 ]; do
+	sleep 1
+	refresh_parts "$DISK"
+	i=$((i + 1))
+done
+if [ ! -b "$NEW_PART" ]; then
+	log "new partition $NEW_PART did not appear"
+	exit 1
+fi
+
+FSTYPE=$(blkid -o value -s TYPE "$NEW_PART" 2>/dev/null || true)
+if [ -n "$FSTYPE" ]; then
+	log "$NEW_PART already has fstype=$FSTYPE, will not format"
+else
+	if ! command -v mkfs.ext4 >/dev/null 2>&1; then
+		log "mkfs.ext4 missing"
+		exit 1
+	fi
+	mkfs.ext4 -F -L "$LABEL" -m 0 "$NEW_PART" || {
+		log "mkfs.ext4 failed on $NEW_PART"
+		exit 1
+	}
+	log "formatted $NEW_PART ext4 label=$LABEL"
+fi
+
+UUID=$(blkid -o value -s UUID "$NEW_PART" 2>/dev/null || true)
+if [ -z "$UUID" ]; then
+	log "no UUID for $NEW_PART"
+	exit 1
+fi
+write_fstab "$UUID"
+if mount_uuid "$UUID"; then
+	ensure_dirs
+	log "mounted /data uuid=$UUID part=$NEW_PART"
+	exit 0
+fi
+log "mount failed uuid=$UUID part=$NEW_PART"
+exit 1

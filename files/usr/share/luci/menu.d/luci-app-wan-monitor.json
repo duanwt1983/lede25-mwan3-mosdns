@@ -1,13 +1,2 @@
 {
-	"admin/status/wanmonitor": {
-		"title": "宽带监控",
-		"order": 4,
-		"action": {
-			"type": "view",
-			"path": "status/wanmonitor"
-		},
-		"depends": {
-			"acl": [ "luci-app-wan-monitor" ]
-		}
-	}
 }

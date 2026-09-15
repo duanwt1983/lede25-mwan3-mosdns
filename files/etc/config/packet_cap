@@ -1,2 +1,2 @@
 config settings 'settings'
-	option cap_dir '/overlay/pcap'
+	option cap_dir '/data/pcap'

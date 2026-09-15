@@ -5,27 +5,43 @@ import { cursor } from 'uci';
 import { readfile, writefile, popen, unlink } from 'fs';
 import * as ubus from 'ubus';
 import {
-	trim, as_bool, as_list, now_fmt, max_temp_c, cpu_pct, mem_percent, load1,
-	disk_of, dhcp_pools
+	trim, as_bool, as_list, now_fmt, max_temp_c, cpu_pct, mem_percent, load1, load15,
+	disk_of, dhcp_pools, resource_cause, ncpu
 } from '/usr/share/ucode/lede-metrics.uc';
-import { append_event } from '/usr/share/ucode/lede-log.uc';
+import { append_event, ensure_log_file, archive_if_needed, prune_old_logs, persist_system_logs, configured_path, shutdown_mark_path } from '/usr/share/ucode/lede-log.uc';
+import { mem_cause, disk_cause, temp_cause, wan_cause, kernel_new_faults, reboot_report, dhcp_cause } from '/usr/share/ucode/lede-diag.uc';
+import { collect_tick, collect_interval } from '/usr/share/ucode/lede-watch.uc';
+import { wan_probe_ok } from '/usr/share/ucode/lede-wan-probe.uc';
 
 const STATE = '/tmp/wan-alert.state';
 const CONF = 'wanalert';
-const DEFAULT_LOG = '/overlay/logs/sys-alert.log';
 
 let ctx = cursor();
 ctx.load(CONF);
 ctx.load('mwan3');
 ctx.load('dhcp');
 ctx.load('network');
-ctx.load('system');
+	try { ctx.load('mosdns'); } catch (e) {}
 
 function cfg(key, def) {
 	let v = ctx.get(CONF, 'main', key);
 	if (v == null || v == '')
 		return def;
 	return v;
+}
+
+const ALERT_ON = {
+	alert_down: true, alert_up: true, alert_all_down: true,
+	alert_cpu: true, alert_load: true, alert_mem: true, alert_disk: true,
+	alert_temp: true, alert_conntrack: true, alert_dhcp: true, alert_arp: true,
+	alert_overlay: true, alert_hw: true
+};
+
+function alert_push(flag) {
+	if (flag == null || flag == '')
+		return false;
+	let def = ALERT_ON[flag] ? '1' : '0';
+	return as_bool(cfg(flag, def), def == '1');
 }
 
 function join_sp(arr) {
@@ -66,12 +82,17 @@ function compose_text(content) {
 	let extra = trim(cfg('extra_text', ''));
 	let kw = trim(cfg('keyword', '线路'));
 	let lines = [];
-	if (extra != '')
-		push(lines, extra);
+	let head = '';
+	if (kw != '' && extra != '')
+		head = kw + ' --- ' + extra;
+	else if (kw != '')
+		head = kw;
+	else if (extra != '')
+		head = extra;
+	if (head != '')
+		push(lines, head);
 	push(lines, now_fmt());
 	push(lines, content);
-	if (kw != '')
-		push(lines, kw);
 	let out = '';
 	for (let i = 0; i < length(lines); i++) {
 		if (i > 0)
@@ -98,6 +119,22 @@ function dingtalk_url() {
 			return url + '&timestamp=' + ts + '&sign=' + urlencode(sign);
 	}
 	return url;
+}
+
+function alert_log_path() {
+	let p = cfg('log_path', '');
+	if (p == '')
+		p = configured_path('alert');
+	return p;
+}
+
+function log_event(level, cat, title, detail) {
+	if (!as_bool(cfg('log_enabled', '1'), true))
+		return;
+	let path = alert_log_path();
+	if (path == '')
+		return;
+	append_event(path, cfg('log_max_kb', 512), level, cat, title, detail);
 }
 
 function send_dingtalk(text, force) {
@@ -129,11 +166,124 @@ function send_dingtalk(text, force) {
 	return false;
 }
 
-function log_event(level, cat, title, detail) {
-	if (!as_bool(cfg('log_enabled', '1'), true))
+function q_persist_path() {
+	let p = alert_log_path();
+	if (p == null || p == '' || match(p, /^\/(tmp|var)\//))
+		return '';
+	return replace(p, /\/[^\/]+$/, '') + '/ding-queue.json';
+}
+
+function load_ding_q() {
+	let raw = readfile('/tmp/lede-ding-queue.json');
+	if (raw == null || trim(raw) == '')
+		raw = readfile(q_persist_path()) || '';
+	try {
+		let a = json(raw || '[]');
+		return type(a) == 'array' ? a : [];
+	} catch (e) {
+		return [];
+	}
+}
+
+function save_ding_q(arr) {
+	if (type(arr) != 'array')
+		arr = [];
+	if (length(arr) > 40) {
+		let keep = [];
+		let i = length(arr) - 40;
+		while (i < length(arr)) {
+			push(keep, arr[i]);
+			i++;
+		}
+		arr = keep;
+	}
+	let s = sprintf('%J\n', arr);
+	writefile('/tmp/lede-ding-queue.json', s);
+	let p = q_persist_path();
+	if (p != '')
+		try { writefile(p, s); } catch (e) {}
+}
+
+function enqueue_ding(text, why) {
+	let q = load_ding_q();
+	push(q, { t: time(), when: now_fmt(), text: `${text}`, why: why || '当时发不出去' });
+	save_ding_q(q);
+}
+
+function count_up_wans() {
+	let u = null;
+	try { u = ubus.connect(); } catch (e) { u = null; }
+	let n = 0;
+	ctx.foreach('mwan3', 'interface', (s) => {
+		if (!as_bool(s.enabled, true))
+			return;
+		if (u == null)
+			return;
+		try {
+			let st = u.call('network.interface.' + s['.name'], 'status');
+			if (st && st.up == true)
+				n++;
+		} catch (e) {}
+	});
+	if (u) try { u.disconnect(); } catch (e) {}
+	return n;
+}
+
+function has_uplink() {
+	if (count_up_wans() > 0)
+		return true;
+	let t = readfile('/proc/net/route') || '';
+	for (let line in split(t, '\n')) {
+		let parts = split(replace(line, /\t/g, ' '), ' ');
+		let iface = '';
+		let dest = '';
+		let n = 0;
+		for (let p in parts) {
+			if (p == '')
+				continue;
+			if (n == 0)
+				iface = p;
+			else if (n == 1)
+				dest = p;
+			n++;
+		}
+		if (dest == '00000000' && iface != 'Iface' && !match(iface, /^(lo|br-lan)$/))
+			return true;
+	}
+	return false;
+}
+
+function flush_ding_queue() {
+	if (!as_bool(cfg('enabled', '0'), false))
 		return;
-	let path = cfg('log_path', DEFAULT_LOG);
-	append_event(path, cfg('log_max_kb', 512), level, cat, title, detail);
+	if (!has_uplink())
+		return;
+	let q = load_ding_q();
+	if (length(q) == 0)
+		return;
+	let left = [];
+	for (let item in q) {
+		let extra = sprintf('\n（补发）原记录时间 %s。当时：%s。', item.when || '', item.why || '发不出去');
+		if (!send_dingtalk((item.text || '') + extra, false))
+			push(left, item);
+	}
+	save_ding_q(left);
+}
+
+function deliver_ding(text, force) {
+	if (!force && !as_bool(cfg('enabled', '0'), false))
+		return true;
+	if (!has_uplink()) {
+		enqueue_ding(text, '全部WAN掉线或无默认路由，钉钉发不出去');
+		log_event('一般', '系统', '钉钉待补发', '当时发不出去，已记下内容和时间，网络恢复后再发。');
+		return false;
+	}
+	if (send_dingtalk(text, force)) {
+		flush_ding_queue();
+		return true;
+	}
+	enqueue_ding(text, '钉钉接口失败或超时');
+	return false;
 }
 
 function load_state() {
@@ -163,63 +313,138 @@ function stamp(key) {
 	save_state(st);
 }
 
-function notify(level, cat, title, detail, key) {
+function notify(level, cat, title, detail, key, push) {
 	log_event(level, cat, title, detail);
+	if (as_bool(cfg('autofix', '0'), false) && key != null && key != '' &&
+	    match('' + key, /^down-[A-Za-z0-9_]+$/)) {
+		system(sprintf("/usr/libexec/lede-autofix '%s' >/dev/null 2>&1 &", key));
+	}
 	if (level == '信息')
+		return true;
+	if (push == false || push == 0 || push == '0')
 		return true;
 	if (key == null || key == '')
 		key = 'misc';
 	if (cooled(key))
 		return true;
-	stamp(key);
-	return send_dingtalk(sprintf('[%s] %s：%s', hostname(), title, detail));
+	let ok = deliver_ding(sprintf('[%s] %s：%s', hostname(), title, detail));
+	if (ok)
+		stamp(key);
+	else {
+		let last = trim(readfile('/tmp/wan-alert.last') || '');
+		if (last == '')
+			last = '无响应或未出网，已排队补发';
+		log_event('一般', '系统', '钉钉未发出', last);
+	}
+	return ok;
 }
 
-function count_up_wans() {
-	let u = ubus.connect();
-	let n = 0;
-	ctx.foreach('mwan3', 'interface', (s) => {
-		if (!as_bool(s.enabled, true))
+function drain(list) {
+	if (type(list) != 'array')
+		return;
+	for (let e in list) {
+		if (!e)
+			continue;
+		let push = false;
+		if (e.flag && e.flag != '')
+			push = alert_push(e.flag);
+		notify(e.level, e.cat, e.title, e.detail, e.key, push);
+	}
+}
+
+const KICK_PROBE_ST = '/tmp/lede-wan-kick-probe.json';
+
+function kick_probe_due(name, sec) {
+	let st = {};
+	try { st = json(readfile(KICK_PROBE_ST) || '{}') || {}; } catch (e) { st = {}; }
+	let last = +st[name] || 0;
+	if (last > 0 && (time() - last) < sec)
+		return false;
+	st[name] = time();
+	try { writefile(KICK_PROBE_ST, sprintf('%J', st)); } catch (e) {}
+	return true;
+}
+
+function kick_wan_autofix() {
+	if (!as_bool(cfg('autofix', '0'), false))
+		return;
+	if (cfg('autofix_wan', '1') == '0')
+		return;
+	let u = null;
+	try { u = ubus.connect(); } catch (e) { u = null; }
+	ctx.foreach('network', 'interface', (s) => {
+		let name = s['.name'];
+		if (name == null || name == '' || name == 'loopback' || name == 'lan' || name == 'wan6')
 			return;
-		try {
-			let st = u.call('network.interface.' + s['.name'], 'status');
-			if (st && st.up == true)
-				n++;
-		} catch (e) {}
+		if (match(name, /_6$/) || match(name, /^@/))
+			return;
+		if (s.proto == 'none' || s.proto == 'relay')
+			return;
+		if (s.device == 'br-lan' || s.device == 'lo')
+			return;
+		let like = match(name, /^[Ww]an/) || s.proto == 'pppoe' || s.proto == 'dhcp' ||
+			s.proto == 'pptp' || s.proto == 'l2tp' || s.proto == 'qmi' || s.proto == 'ppp';
+		let mw = ctx.get('mwan3', name, 'enabled');
+		if (!like && mw != '1' && mw != 'true')
+			return;
+		if (ctx.get(CONF, 'main', 'wfix_' + name) == '0')
+			return;
+		if (!match(name, /^[A-Za-z0-9_]+$/))
+			return;
+		let bad = true;
+		if (u) {
+			try {
+				let st = u.call('network.interface.' + name, 'status');
+				if (st && (st.up == true || st.up == 1)) {
+					bad = false;
+					if (kick_probe_due(name, 30))
+						bad = !wan_probe_ok(ctx, u, name);
+				}
+			} catch (e) {}
+		}
+		if (bad)
+			system(sprintf("/usr/libexec/lede-autofix 'down-%s' >/dev/null 2>&1 &", name));
 	});
-	return n;
+	if (u)
+		try { u.disconnect(); } catch (e) {}
 }
 
 function check_metrics() {
 	let cpu = cpu_pct();
 	let mem = mem_percent();
-	let ld = load1();
+	let ld = load15();
+	let ld1 = load1();
 	let tmp = max_temp_c();
 	let pools = dhcp_pools(ctx);
 	let dhcp_s = [];
 	let warn_remain = +cfg('dhcp_remain', 8);
 	for (let p in pools) {
 		push(dhcp_s, sprintf('%s 已用%d/%d', p.name, p.used, p.limit));
-		if (as_bool(cfg('alert_dhcp', '1'), true) && p.remain <= warn_remain)
+		if (p.remain <= warn_remain)
 			notify('中等', 'DHCP', '地址池不足',
-				sprintf('%s 已用 %d/%d，剩余 %d（阈值：剩余≤%d）', p.name, p.used, p.limit, p.remain, warn_remain),
-				'dhcp-' + p.name);
+				sprintf('%s 已用 %d/%d，剩余 %d（阈值：剩余≤%d）。%s',
+					p.name, p.used, p.limit, p.remain, warn_remain, dhcp_cause(p)),
+				'dhcp-' + p.name, as_bool(cfg('alert_dhcp', '1'), true));
 	}
 
 	let cpu_l = +cfg('cpu_percent', 90);
-	if (as_bool(cfg('alert_cpu', '1'), true) && cpu >= cpu_l)
+	if (cpu >= cpu_l)
 		notify('中等', '资源', 'CPU 过高',
-			sprintf('当前 %d%%，阈值 %d%%', cpu, cpu_l), 'cpu');
+			sprintf('当前 %d%%，阈值 %d%%。%s', cpu, cpu_l, resource_cause()),
+			'cpu', as_bool(cfg('alert_cpu', '1'), true));
 
 	let mem_l = +cfg('mem_percent', 90);
-	if (as_bool(cfg('alert_mem', '1'), true) && mem >= mem_l)
+	if (mem >= mem_l)
 		notify('中等', '资源', '内存不足',
-			sprintf('当前已用 %d%%，阈值 %d%%', mem, mem_l), 'mem');
+			sprintf('当前已用 %d%%，阈值 %d%%。%s', mem, mem_l, mem_cause()),
+			'mem', as_bool(cfg('alert_mem', '1'), true));
 
 	let load_l = +cfg('load_warn', '2.00');
-	if (as_bool(cfg('alert_load', '1'), true) && +ld >= load_l)
+	if (+ld >= load_l)
 		notify('中等', '资源', '系统负载过高',
-			sprintf('1 分钟负载 %s，阈值 %s', ld, cfg('load_warn', '2.00')), 'load');
+			sprintf('15 分钟负载 %s（1 分钟 %s），阈值 %s（%d 核）。%s',
+				ld, ld1, cfg('load_warn', '2.00'), ncpu(), resource_cause()),
+			'load', as_bool(cfg('alert_load', '1'), true));
 
 	let disk_l = +cfg('disk_percent', 90);
 	let paths = as_list(ctx.get(CONF, 'main', 'disk_path'));
@@ -235,25 +460,50 @@ function check_metrics() {
 			continue;
 		seen[d.src] = true;
 		push(disk_s, sprintf('%s %d%%', diskp, d.pct));
-		if (as_bool(cfg('alert_disk', '1'), true) && d.pct >= disk_l)
+		if (d.pct >= disk_l)
 			notify('严重', '资源', '磁盘空间不足',
-				sprintf('%s 已用 %d%%，阈值 %d%%（请把大日志改到 U 盘/外置盘）', diskp, d.pct, disk_l),
-				'disk-' + replace(d.src, /[\/ ]/g, '_'));
+				sprintf('%s 已用 %d%%，阈值 %d%%。已按从旧到新回收归档日志。%s',
+					diskp, d.pct, disk_l, disk_cause(diskp)),
+				'disk-' + replace(d.src, /[\/ ]/g, '_'), as_bool(cfg('alert_disk', '1'), true));
 	}
 
 	let temp_l = +cfg('temp_c', 80);
-	if (as_bool(cfg('alert_temp', '1'), true) && tmp >= temp_l)
+	if (tmp >= temp_l)
 		notify('中等', '资源', '温度过高',
-			sprintf('当前 %d℃，阈值 %d℃', tmp, temp_l), 'temp');
+			sprintf('当前 %d℃，阈值 %d℃。%s', tmp, temp_l, temp_cause()),
+			'temp', as_bool(cfg('alert_temp', '1'), true));
 
-	if (as_bool(cfg('log_sample', '1'), true)) {
+	let kf = kernel_new_faults();
+	if (kf && kf.detail)
+		notify(kf.level || '中等', '内核', kf.title || '内核异常', kf.detail,
+			'hw-kmsg', as_bool(cfg('alert_hw', '1'), true));
+
+	if (as_bool(cfg('log_sample', '0'), false)) {
 		let ttxt = tmp > 0 ? sprintf('%d℃', tmp) : '无传感器';
 		log_event('信息', '资源', '状态采样',
-			sprintf('CPU %d%% · 负载 %s · 内存 %d%% · 温度 %s · 磁盘 %s · DHCP %s',
-				cpu, ld, mem, ttxt,
+			sprintf('CPU %d%% · 15m负载 %s · 1m负载 %s · 内存 %d%% · 温度 %s · 磁盘 %s · DHCP %s',
+				cpu, ld, ld1, mem, ttxt,
 				length(disk_s) ? join_sp(disk_s) : '无',
 				length(dhcp_s) ? join_sp(dhcp_s) : '无'));
 	}
+
+	try { ctx.load('lede-log'); } catch (e) {}
+	let pct = +cfg('disk_percent', 90);
+	let ap = alert_log_path();
+	if (ap != '') {
+		archive_if_needed(ensure_log_file(ap, 'sys-alert.log'), cfg('log_max_kb', 2048), false);
+		prune_old_logs(ap, pct);
+	}
+	if (as_bool(ctx.get('lede-log', 'mosdns', 'enabled'), false)) {
+		let mp = configured_path('mosdns');
+		if (mp != '') {
+			mp = ensure_log_file(mp, 'mosdns.log');
+			archive_if_needed(mp, ctx.get('lede-log', 'mosdns', 'max_kb') || 2048, true);
+			prune_old_logs(mp, pct);
+		}
+	}
+	try { drain(collect_interval(ctx)); } catch (e) {}
+	try { kick_wan_autofix(); } catch (e) {}
 }
 
 function handle(event, iface) {
@@ -271,35 +521,86 @@ function handle(event, iface) {
 		check_metrics();
 		break;
 	case 'down':
-		if (!as_bool(cfg('alert_down', '1'), true))
-			return;
 		notify('严重', '线路', '断线告警',
-			sprintf('当前网口 %s 异常/掉线，请检查线路或光猫。', iface), 'down-' + iface);
-		if (as_bool(cfg('alert_all_down', '1'), true) && count_up_wans() == 0)
+			sprintf('当前网口 %s 异常/掉线。%s', iface, wan_cause(iface)),
+			'down-' + iface, as_bool(cfg('alert_down', '1'), true));
+		if (count_up_wans() == 0)
 			notify('严重', '线路', '全部 WAN 掉线',
-				'所有已启用 WAN 均不可用，内网将无法上网。', 'all-down');
+				'所有已启用 WAN 均不可用，内网将无法上网。',
+				'all-down', as_bool(cfg('alert_all_down', '1'), true));
 		break;
 	case 'up':
-		if (!as_bool(cfg('alert_up', '1'), true))
-			return;
 		notify('一般', '线路', '线路恢复',
-			sprintf('网口 %s 已恢复正常。', iface), 'up-' + iface);
+			sprintf('网口 %s 已恢复正常。', iface),
+			'up-' + iface, as_bool(cfg('alert_up', '1'), true));
+		try { flush_ding_queue(); } catch (e) {}
 		break;
-	case 'boot':
-		log_event('一般', '系统', '系统启动', '告警服务已启动，开始监控线路与资源。');
+	case 'fix-done': {
+		let r = {};
+		try { r = json(readfile('/tmp/lede-fix-report.json') || '{}') || {}; } catch (e) { r = {}; }
+		let msg = trim(r.msg || '');
+		if (msg == '' && r.title && r.title != '')
+			msg = r.detail ? sprintf('%s：%s', r.title, r.detail) : r.title;
+		if (msg == '')
+			break;
+		log_event(r.level || '一般', r.cat || '系统', r.title || '自动维护', r.detail || msg);
+		let fk = 'fix-' + replace('' + (r.key || 'x'), /[^A-Za-z0-9._-]/g, '_');
+		if (cooled(fk))
+			break;
+		if (deliver_ding(sprintf('[%s] %s', hostname(), msg), true))
+			stamp(fk);
+		else {
+			let last = trim(readfile('/tmp/wan-alert.last') || '');
+			if (last == '')
+				last = '无响应或未出网，已排队补发';
+			log_event('一般', '系统', '钉钉未发出', last);
+		}
 		break;
+	}
+	case 'boot-reason': {
+		let up = +split(trim(readfile('/proc/uptime') || '0'), '.')[0];
+		if (up > 180) {
+			try { unlink(shutdown_mark_path()); } catch (e) {}
+			break;
+		}
+		let r = reboot_report();
+		let cat = '系统';
+		if (r.kind == 'hardware')
+			cat = '硬件';
+		else if (r.kind == 'software')
+			cat = '内核';
+		notify(r.level, cat, r.title, r.detail, 'boot-reason', as_bool(cfg('alert_hw', '1'), true));
+		try { unlink(shutdown_mark_path()); } catch (e) {}
+		break;
+	}
 	case 'watch':
-		log_event('一般', '系统', '系统启动', '告警服务已启动，开始监控线路与资源。');
+		try { persist_system_logs(); } catch (e) {}
+		if (!readfile('/tmp/lede-boot-reason.done')) {
+			try { handle('boot-reason', ''); } catch (e) {}
+			writefile('/tmp/lede-boot-reason.done', '1');
+		}
+		try { kick_wan_autofix(); } catch (e) {}
+		let acc = 0;
 		while (true) {
-			check_metrics();
+			try { drain(collect_tick(ctx)); } catch (e) {}
+			acc += 1;
+			if (acc % 10 == 0) {
+				try { persist_system_logs(); } catch (e) {}
+				try { flush_ding_queue(); } catch (e) {}
+			}
 			let n = +cfg('check_interval', 60);
 			if (n < 30)
 				n = 30;
 			if (n > 3600)
 				n = 3600;
-			system(sprintf('sleep %d', n));
-			try { ctx.unload(CONF); } catch (e) {}
-			ctx.load(CONF);
+			if (acc >= n) {
+				acc = 0;
+				try { check_metrics(); } catch (e) {}
+				try { ctx.unload(CONF); } catch (e) {}
+				ctx.load(CONF);
+				try { ctx.load('mwan3'); ctx.load('dhcp'); ctx.load('network'); } catch (e) {}
+			}
+			system('sleep 2');
 		}
 		break;
 	default:

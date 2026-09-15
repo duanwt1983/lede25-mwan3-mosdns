@@ -1,0 +1,132 @@
+#!/usr/bin/ucode
+'use strict';
+
+import { readfile, writefile } from 'fs';
+import { cursor } from 'uci';
+import * as ubus from 'ubus';
+import {
+	track_ip_for, wan_probe_ok, wait_wan_probe
+} from '/usr/share/ucode/lede-wan-probe.uc';
+
+const ST = '/tmp/lede-autofix.json';
+
+function trim(s) {
+	return replace(`${s || ''}`, /^\s+|\s+$/g, '');
+}
+
+function load_st() {
+	try {
+		return json(readfile(ST) || '{}') || {};
+	} catch (e) {
+		return {};
+	}
+}
+
+function mark(key) {
+	let st = load_st();
+	st[key] = time();
+	writefile(ST, sprintf('%J\n', st));
+}
+
+function cooled(key, sec) {
+	let last = +load_st()[key];
+	return last > 0 && (time() - last) < sec;
+}
+
+function wan_fail_key(iface) {
+	return 'fail-down-' + iface;
+}
+
+function wan_fail_cooled(iface, sec) {
+	return cooled(wan_fail_key(iface), sec || 90);
+}
+
+function wan_mark_fail(iface) {
+	mark(wan_fail_key(iface));
+}
+
+function wan_ok_cooled(ctx, iface, sec, u) {
+	if (!wan_probe_ok(ctx, u, iface))
+		return false;
+	return cooled('down-' + iface, sec);
+}
+
+function phy_link_up(dev) {
+	if (dev == '' || !match(dev, /^[A-Za-z0-9_.-]+$/))
+		return;
+	system(sprintf("ip link set dev '%s' up >/dev/null 2>&1", dev));
+}
+
+function bounce_iface(name, dev) {
+	if (!match(name, /^[A-Za-z0-9_]+$/))
+		return false;
+	phy_link_up(dev || '');
+	system(sprintf("ifup '%s' >/dev/null 2>&1", name));
+	return true;
+}
+
+function wan_fix_ok(ctx, iface) {
+	if (ctx.get('wanalert', 'main', 'autofix_wan') == '0')
+		return false;
+	if (ctx.get('wanalert', 'main', 'wfix_' + iface) == '0')
+		return false;
+	return true;
+}
+
+function report(key, ok, msg, log_detail) {
+	writefile('/tmp/lede-fix-report.json', sprintf('%J\n', {
+		key,
+		level: ok ? '一般' : '中等',
+		cat: '系统',
+		title: ok ? '自动处理成功' : '自动处理失败',
+		msg: msg || '',
+		detail: log_detail || msg || ''
+	}));
+	system("/usr/libexec/wan-alert fix-done >/dev/null 2>&1");
+}
+
+let key = trim(ARGV[0] || '');
+if (key == '' || !match(key, /^down-[A-Za-z0-9_]+$/))
+	exit(0);
+
+let ctx = cursor();
+try { ctx.load('wanalert'); ctx.load('network'); ctx.load('mwan3'); } catch (e) {}
+if (ctx.get('wanalert', 'main', 'autofix') != '1')
+	exit(0);
+if (ctx.get('wanalert', 'main', 'autofix_wan') == '0')
+	exit(0);
+
+let iface = replace(key, /^down-/, '');
+let ufix = null;
+try { ufix = ubus.connect(); } catch (e) { ufix = null; }
+if (!wan_fix_ok(ctx, iface))
+	exit(0);
+
+let cdn = +ctx.get('wanalert', 'main', 'autofix_cooldown') || 600;
+if (cdn < 120)
+	cdn = 120;
+if (wan_probe_ok(ctx, ufix, iface))
+	exit(0);
+if (wan_ok_cooled(ctx, iface, cdn, ufix))
+	exit(0);
+if (wan_fail_cooled(iface, 90))
+	exit(0);
+
+let phy = ctx.get('network', iface, 'device') || '';
+let host = track_ip_for(ctx, iface);
+if (!bounce_iface(iface, phy)) {
+	wan_mark_fail(iface);
+	report(key, false, sprintf('【%s】断网重启网卡 【失败】', iface), '接口名不合法，未执行。');
+	exit(0);
+}
+
+let ok = wait_wan_probe(ctx, ufix, iface, 50);
+if (ok)
+	mark(key);
+else
+	wan_mark_fail(iface);
+report(key, ok, sprintf('【%s】断网重启网卡 【%s】', iface, ok ? '成功' : '失败'),
+	ok ? sprintf('%s 已 ifup，探测 %s 正常。', iface, host)
+	   : sprintf('%s 已 ifup，但探测 %s 仍失败。', iface, host));
+try { ufix.disconnect(); } catch (e) {}
+exit(0);

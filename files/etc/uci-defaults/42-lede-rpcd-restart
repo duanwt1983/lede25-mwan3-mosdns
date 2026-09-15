@@ -1,0 +1,4 @@
+#!/bin/sh
+[ -x /usr/libexec/lede-rpcd-restart ] && /usr/libexec/lede-rpcd-restart
+rm -f /tmp/luci-indexcache /tmp/luci-modulecache/* 2>/dev/null
+exit 0

@@ -1,0 +1,28 @@
+#!/bin/sh
+# Recover rpcd when a stray "rpcd" process breaks file/session ubus calls.
+
+keep=
+for pid in $(pidof rpcd 2>/dev/null); do
+	cmd=$(tr '\0' ' ' < /proc/"$pid"/cmdline 2>/dev/null)
+	case "$cmd" in
+		*"/sbin/rpcd -s"*|"/sbin/rpcd -s"*)
+			keep=1
+			;;
+		*)
+			kill "$pid" 2>/dev/null
+			;;
+	esac
+done
+
+/etc/init.d/rpcd stop 2>/dev/null
+sleep 1
+/etc/init.d/rpcd start 2>/dev/null
+
+# file + session must exist after a healthy restart
+for i in 1 2 3 4 5; do
+	ubus list file >/dev/null 2>&1 && ubus list session >/dev/null 2>&1 && exit 0
+	sleep 1
+	/etc/init.d/rpcd start 2>/dev/null
+done
+
+exit 1

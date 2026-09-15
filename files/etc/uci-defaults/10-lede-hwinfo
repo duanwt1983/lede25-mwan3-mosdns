@@ -1,0 +1,5 @@
+#!/bin/sh
+chmod +x /usr/libexec/lede-hwinfo /etc/init.d/lede-hwinfo 2>/dev/null || true
+[ -x /etc/init.d/lede-hwinfo ] && /etc/init.d/lede-hwinfo enable
+[ -x /etc/init.d/lede-hwinfo ] && /etc/init.d/lede-hwinfo start
+exit 0

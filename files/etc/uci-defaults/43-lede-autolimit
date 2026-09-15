@@ -19,16 +19,16 @@ def() {
 }
 
 def enabled 0
-def down_threshold_kbps 100000
-def up_threshold_kbps 30000
-def down_sustain_minutes 20
+def down_threshold_kbps 50000
+def up_threshold_kbps 15000
+def down_sustain_minutes 30
 def up_sustain_minutes 20
 def limit_down_kbps 10000
 def limit_up_kbps 1000
 def limit_minutes 30
 def penalty_window_minutes 30
-def penalty_limit_minutes 60
-def interval_sec 30
+def penalty_limit_minutes 120
+def interval_sec 60
 def iface br-lan
 
 # Gateway MAC on LAN (br-lan) as default whitelist entry.

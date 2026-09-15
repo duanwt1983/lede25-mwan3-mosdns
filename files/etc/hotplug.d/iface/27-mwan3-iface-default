@@ -249,12 +249,9 @@ mwan3_repair_dead_one() {
 	ip -4 rule del pref "$((3000 + table))" 2>/dev/null || true
 	ip -4 rule del pref "$((3000 + table))" 2>/dev/null || true
 
-	# Second insert lands first. Set live mark then return so sticky
-	# cannot write the dead iface mark back.
+	# 仅把「已在死线 mark 上」的会话迁到 live；不要把整段 LAN 钉到一条 WAN。
 	nft -f - <<EOF
 insert rule inet mwan3 mwan3_prerouting ct mark & 0x00003f00 == $dead_mark ct mark set ct mark & 0xffffc0ff | $live_mark comment "mwfailover"
-insert rule inet mwan3 mwan3_rule_default ip saddr $lan_cidr return comment "mwfailover"
-insert rule inet mwan3 mwan3_rule_default ip saddr $lan_cidr meta mark set meta mark & 0xffffc0ff | $live_mark comment "mwfailover"
 EOF
 
 	log "dead $iface: remap mark $dead_mark -> $live_mark, drop prefs 2/3${table}"
@@ -281,6 +278,7 @@ mwan3_repair_dead() {
 
 	nft flush set inet mwan3 mwan3_sticky_v4_default_1 2>/dev/null || true
 	nft flush set inet mwan3 mwan3_sticky_v4_default_2 2>/dev/null || true
+	nft flush set inet mwan3 mwan3_sticky_v4_default_3 2>/dev/null || true
 	[ "$HAVE_DEAD" = 1 ] || return 0
 	if [ -x /usr/sbin/conntrack ]; then
 		/usr/sbin/conntrack -F >/dev/null 2>&1 || true
@@ -288,14 +286,9 @@ mwan3_repair_dead() {
 	if [ -x /usr/sbin/mwan3ct ]; then
 		/usr/sbin/mwan3ct flush >/dev/null 2>&1 || true
 	fi
-
-	if [ "$HAVE_DEAD" = 1 ] && [ -n "$LIVE_TABLE" ]; then
-		live_mark=$((LIVE_TABLE << 8))
-		nft flush chain inet mwan3 mwan3_policy_balanced 2>/dev/null || true
-		nft -f - <<EOF
-add rule inet mwan3 mwan3_policy_balanced meta mark & 0x00003f00 == 0x00000000 meta mark set meta mark & 0xffffc0ff | $live_mark
-EOF
-		log "policy_balanced -> mark $live_mark via $LIVE_DEV"
+	if [ -x /usr/libexec/wan-src-hash ]; then
+		/usr/libexec/wan-src-hash >/dev/null 2>&1 || ucode /usr/libexec/wan-src-hash >/dev/null 2>&1 || true
+		log "dead wan: rebuilt balanced policy for live ifaces"
 	fi
 }
 

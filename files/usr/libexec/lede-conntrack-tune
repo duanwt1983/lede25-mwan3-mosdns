@@ -1,0 +1,26 @@
+#!/bin/sh
+# Size nf_conntrack by current RAM. Re-run on every boot so a DIMM
+# change takes effect after reboot (no reflash).
+#
+# Budget: 1/64 of MemTotal at 512 bytes/entry → max = MemTotal_kB / 32.
+# 8GiB → 262144, 4GiB → 131072, 2GiB → 65536, 1GiB → 32768.
+set +e
+mem_kb=$(awk '/^MemTotal:/{print $2; exit}' /proc/meminfo)
+[ -n "$mem_kb" ] || exit 0
+
+max=$((mem_kb / 32))
+max=$(( (max / 4096) * 4096 ))
+[ "$max" -lt 32768 ] && max=32768
+[ "$max" -gt 524288 ] && max=524288
+
+buckets=$((max / 4))
+[ "$buckets" -lt 8192 ] && buckets=8192
+
+if [ -e /sys/module/nf_conntrack/parameters/hashsize ]; then
+	echo "$buckets" > /sys/module/nf_conntrack/parameters/hashsize 2>/dev/null || true
+fi
+sysctl -w net.netfilter.nf_conntrack_max="$max" >/dev/null 2>&1 || \
+	echo "$max" > /proc/sys/net/netfilter/nf_conntrack_max 2>/dev/null || true
+
+logger -t lede-conntrack "nf_conntrack_max=$max hash~=$buckets MemTotal=${mem_kb}kB"
+exit 0

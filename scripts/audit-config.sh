@@ -13,6 +13,10 @@ must_y=(
   CONFIG_PACKAGE_librespeed-go
   CONFIG_PACKAGE_qosmate
   CONFIG_PACKAGE_luci-app-qosmate
+  CONFIG_PACKAGE_tc-full
+  CONFIG_PACKAGE_kmod-ifb
+  CONFIG_PACKAGE_bandix-plus
+  CONFIG_PACKAGE_luci-app-bandix-plus
   CONFIG_PACKAGE_luci-app-samba4
   CONFIG_PACKAGE_samba4-server
   CONFIG_PACKAGE_luci-app-diskman
@@ -68,8 +72,8 @@ must_n=(
   CONFIG_PACKAGE_ookla-speedtest
   CONFIG_PACKAGE_iperf3
   CONFIG_PACKAGE_iperf3-ssl
-  CONFIG_PACKAGE_smartmontools
   CONFIG_PACKAGE_mdadm
+  CONFIG_PACKAGE_tc-tiny
   CONFIG_TARGET_ROOTFS_SQUASHFS
   CONFIG_GRUB_IMAGES
 )
@@ -91,8 +95,8 @@ for k in "${must_n[@]}"; do
   fi
 done
 
-if ! grep -q '^CONFIG_TARGET_ROOTFS_PARTSIZE=1024$' .config; then
-  echo "AUDIT FAIL: rootfs partsize is not 1024"
+if ! grep -q '^CONFIG_TARGET_ROOTFS_PARTSIZE=2048$' .config; then
+  echo "AUDIT FAIL: rootfs partsize is not 2048"
   grep TARGET_ROOTFS_PARTSIZE .config || true
   fail=1
 fi

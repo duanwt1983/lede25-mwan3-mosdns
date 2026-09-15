@@ -1,0 +1,950 @@
+#!/usr/bin/ucode
+'use strict';
+
+import { readfile, writefile, lsdir, popen, stat, unlink } from 'fs';
+
+const OUT = '/tmp/lede-hwinfo.json';
+const OUT_DATA = '/data/metrics/lede-hwinfo.json';
+
+function trim(s) {
+	if (s == null)
+		s = '';
+	return replace(`${s}`, /^\s+|\s+$/g, '');
+}
+
+function rf(path) {
+	try {
+		return trim(readfile(path) || '');
+	} catch (e) {
+		return '';
+	}
+}
+
+function sh(cmd) {
+	let p = popen(cmd, 'r');
+	if (!p)
+		return '';
+	let t = p.read('all') || '';
+	p.close();
+	return trim(t);
+}
+
+function have(bin) {
+	return system(sprintf("command -v '%s' >/dev/null 2>&1", bin)) == 0;
+}
+
+function skip_block(name) {
+	return match(name, /^(loop|ram|mtdblock|zram|fd|nbd|md)/) != null;
+}
+
+function dmi() {
+	let base = '/sys/class/dmi/id';
+	let keys = [
+		'bios_vendor', 'bios_version', 'bios_date', 'bios_release',
+		'board_vendor', 'board_name', 'board_version', 'board_serial', 'board_asset_tag',
+		'chassis_vendor', 'chassis_type', 'chassis_serial',
+		'product_name', 'product_version', 'product_serial', 'product_uuid', 'product_sku', 'product_family',
+		'sys_vendor'
+	];
+	let o = {};
+	for (let k in keys) {
+		let v = rf(base + '/' + k);
+		if (v != '' && v != 'None' && v != 'To be filled by O.E.M.')
+			o[k] = v;
+	}
+	return o;
+}
+
+function hb(h, i) {
+	if (i < 0 || i * 2 + 2 > length(h))
+		return 0;
+	return int(substr(h, i * 2, 2), 16);
+}
+
+function hu16(h, i) {
+	return hb(h, i) + hb(h, i + 1) * 256;
+}
+
+function hu32(h, i) {
+	return hu16(h, i) + hu16(h, i + 2) * 65536;
+}
+
+function dmi_hex() {
+	let path = '/sys/firmware/dmi/tables/DMI';
+	if (stat(path) == null)
+		return '';
+	let h = sh(sprintf("hexdump -v -e '1/1 \"%%02x\"' '%s' 2>/dev/null", path));
+	h = replace(h || '', /[^0-9a-fA-F]/g, '');
+	if (h != '')
+		return h;
+	h = sh(sprintf("od -An -v -tx1 '%s' 2>/dev/null", path));
+	return replace(h || '', /[^0-9a-fA-F]/g, '');
+}
+
+function dmi_strtab(h, p, n) {
+	let list = [];
+	if (p >= n)
+		return { list, next: p };
+	if (hb(h, p) == 0) {
+		p++;
+		if (p < n && hb(h, p) == 0)
+			p++;
+		return { list, next: p };
+	}
+	while (p < n) {
+		let s = '';
+		while (p < n && hb(h, p) != 0) {
+			let c = hb(h, p);
+			if (c >= 32 && c < 127)
+				s += chr(c);
+			p++;
+		}
+		p++;
+		push(list, s);
+		if (p >= n)
+			break;
+		if (hb(h, p) == 0) {
+			p++;
+			break;
+		}
+	}
+	return { list, next: p };
+}
+
+function dmi_s(list, idx) {
+	if (idx == null || idx <= 0 || idx > length(list))
+		return '';
+	return list[idx - 1];
+}
+
+function socket_name(code) {
+	let t = [
+		'', 'Other', 'Unknown', 'Daughter Board', 'ZIF Socket', 'Replaceable Piggy Back', 'None',
+		'LIF Socket', 'Slot 1', 'Slot 2', '370-pin Socket', 'Slot A', 'Slot M', 'Socket 423',
+		'Socket A (Socket 462)', 'Socket 478', 'Socket 754', 'Socket 940', 'Socket 939',
+		'Socket mPGA604', 'Socket LGA771', 'Socket LGA775', 'Socket S1', 'Socket AM2',
+		'Socket F (1207)', 'Socket LGA1366', 'Socket G34', 'Socket AM3', 'Socket C32',
+		'Socket LGA1156', 'Socket LGA1567', 'Socket PGA988A', 'Socket BGA1288', 'Socket rPGA988B',
+		'Socket BGA1023', 'Socket BGA1224', 'Socket LGA1155', 'Socket LGA1356', 'Socket LGA2011',
+		'Socket FS1', 'Socket FS2', 'Socket FM1', 'Socket FM2', 'Socket LGA2011-3', 'Socket LGA1356-3',
+		'Socket LGA1150', 'Socket BGA1168', 'Socket BGA1234', 'Socket BGA1364', 'Socket AM4',
+		'Socket LGA1151', 'Socket BGA1356', 'Socket BGA1440', 'Socket BGA1515', 'Socket LGA3647-1',
+		'Socket SP3', 'Socket SP3r2', 'Socket LGA2066', 'Socket BGA1392', 'Socket BGA1510',
+		'Socket BGA1528', 'Socket LGA4189', 'Socket LGA1200', 'Socket LGA4677', 'Socket LGA1700',
+		'Socket BGA1744', 'Socket BGA1781', 'Socket BGA1211', 'Socket BGA2422', 'Socket LGA4710',
+		'Socket LGA7529', 'Socket AM5', 'Socket SP5', 'Socket SP6'
+	];
+	if (code > 0 && code < length(t))
+		return t[code];
+	return '';
+}
+
+function memtype_name(code) {
+	let t = [
+		'', 'Other', 'Unknown', 'DRAM', 'EDRAM', 'VRAM', 'SRAM', 'RAM', 'ROM', 'FLASH',
+		'EEPROM', 'FEPROM', 'EPROM', 'CDRAM', '3DRAM', 'SDRAM', 'SGRAM', 'RDRAM', 'DDR',
+		'DDR2', 'DDR2 FB-DIMM', '', '', '', 'DDR3', 'FBD2', 'DDR4', 'LPDDR', 'LPDDR2',
+		'LPDDR3', 'LPDDR4', 'NVDIMM', 'HBM', 'HBM2', 'DDR5', 'LPDDR5', 'HBM3'
+	];
+	if (code > 0 && code < length(t) && t[code] != '')
+		return t[code];
+	return '';
+}
+
+function form_name(code) {
+	let t = [
+		'', 'Other', 'Unknown', 'SIMM', 'SIP', 'Chip', 'DIP', 'ZIP', 'Proprietary',
+		'DIMM', 'TSOP', 'Row of chips', 'RIMM', 'SODIMM', 'SRIMM', 'FB-DIMM', 'Die'
+	];
+	if (code > 0 && code < length(t))
+		return t[code];
+	return '';
+}
+
+function ecc_name(code) {
+	let t = [ '', '其他', '未知', '无', '奇偶校验', '单比特 ECC', '多比特 ECC', 'CRC' ];
+	if (code > 0 && code < length(t))
+		return t[code];
+	return '';
+}
+
+function dimm_size(h, i, len) {
+	let sz = hu16(h, i + 0x0C);
+	if (sz == 0)
+		return 'No Module Installed';
+	if (sz == 0xFFFF)
+		return '';
+	if (sz == 0x7FFF && len >= 0x20) {
+		let ext = hu32(h, i + 0x1C);
+		if (ext >= 1024)
+			return sprintf('%d GB', ext / 1024);
+		return sprintf('%d MB', ext);
+	}
+	if (sz & 0x8000)
+		return sprintf('%d KB', sz & 0x7FFF);
+	if (sz >= 1024)
+		return sprintf('%d GB', sz / 1024);
+	return sprintf('%d MB', sz);
+}
+
+function parse_smbios() {
+	let out = { dimms: [] };
+	let h = dmi_hex();
+	let n = length(h) / 2;
+	if (n < 8)
+		return out;
+	let i = 0;
+	let types = [];
+	let speeds = [];
+	while (i + 4 <= n) {
+		let type = hb(h, i);
+		let len = hb(h, i + 1);
+		if (len < 4)
+			break;
+		if (type == 127)
+			break;
+		if (i + len > n)
+			break;
+		let tab = dmi_strtab(h, i + len, n);
+		let s = tab.list;
+		if (type == 4 && len >= 0x1A) {
+			let sock = socket_name(hb(h, i + 0x19));
+			let des = dmi_s(s, hb(h, i + 0x04));
+			if (sock != '' && sock != 'Other' && sock != 'Unknown' && sock != 'None')
+				out.cpu_socket = replace(sock, /^Socket /i, '');
+			else if (match(des, /(LGA|PGA|BGA|AM[0-9]|SP[0-9]|rPGA)/i))
+				out.cpu_socket = des;
+			if (out.cpu_socket == null && des != '')
+				out.cpu_socket_label = des;
+		}
+		if (type == 16 && len >= 0x0F) {
+			let ecc = ecc_name(hb(h, i + 0x06));
+			if (ecc != '' && ecc != '未知')
+				out.memory_ecc = ecc;
+		}
+		if (type == 17 && len >= 0x15) {
+			let row = {
+				Size: dimm_size(h, i, len),
+				Type: memtype_name(hb(h, i + 0x12)),
+				'Form Factor': form_name(hb(h, i + 0x0E)),
+				Locator: dmi_s(s, hb(h, i + 0x10)),
+				'Bank Locator': dmi_s(s, hb(h, i + 0x11)),
+				Manufacturer: dmi_s(s, hb(h, i + 0x17)),
+				'Serial Number': dmi_s(s, hb(h, i + 0x18)),
+				'Part Number': len > 0x1A ? dmi_s(s, hb(h, i + 0x1A)) : '',
+				Speed: '',
+				'Configured Memory Speed': ''
+			};
+			let spd = hu16(h, i + 0x15);
+			if (spd > 0 && spd < 0xFFFF)
+				row.Speed = sprintf('%d MHz', spd);
+			if (len >= 0x22) {
+				let cur = hu16(h, i + 0x20);
+				if (cur > 0 && cur < 0xFFFF)
+					row['Configured Memory Speed'] = sprintf('%d MHz', cur);
+			}
+			let installed = row.Size != 'No Module Installed' && row.Size != '';
+			push(out.dimms, row);
+			if (!installed) {
+				if (row.Type != '' && row.Type != 'Other' && row.Type != 'Unknown')
+					push(types, row.Type);
+				if (spd > 0 && spd < 0xFFFF)
+					push(speeds, spd);
+			}
+		}
+		let nxt = tab.next;
+		if (nxt <= i)
+			nxt = i + len + 2;
+		if (nxt <= i)
+			break;
+		i = nxt;
+	}
+	let uniq = [];
+	for (let t in types) {
+		let seen = false;
+		for (let u in uniq)
+			if (u == t)
+				seen = true;
+		if (!seen)
+			push(uniq, t);
+	}
+	let spec = '';
+	let first = true;
+	for (let t in uniq) {
+		if (!first)
+			spec += '/';
+		spec += t;
+		first = false;
+	}
+	if (length(speeds) > 0) {
+		let mn = speeds[0], mx = speeds[0];
+		for (let v in speeds) {
+			if (v < mn)
+				mn = v;
+			if (v > mx)
+				mx = v;
+		}
+		if (mn == mx)
+			spec = spec != '' ? sprintf('%s %d MHz', spec, mx) : sprintf('%d MHz', mx);
+		else
+			spec = spec != '' ? sprintf('%s %d–%d MHz', spec, mn, mx) : sprintf('%d–%d MHz', mn, mx);
+	}
+	if (spec != '')
+		out.memory_spec = spec;
+	return out;
+}
+
+function parse_cpuinfo() {
+	let text = rf('/proc/cpuinfo');
+	let n = 0;
+	let model = '', vendor = '', mhz = '', cache = '', flags = '', bugs = '';
+	let cores = '', siblings = '', phys = '';
+	for (let line in split(text, '\n')) {
+		let m = match(line, /^([^ \t]+[^\t:]*)[ \t]*:[ \t]*(.*)$/);
+		if (!m)
+			continue;
+		let k = trim(m[1]), v = trim(m[2]);
+		if (k == 'processor')
+			n++;
+		if (model == '' && (k == 'model name' || k == 'Hardware'))
+			model = v;
+		if (vendor == '' && k == 'vendor_id')
+			vendor = v;
+		if (mhz == '' && k == 'cpu MHz')
+			mhz = v;
+		if (cache == '' && k == 'cache size')
+			cache = v;
+		if (flags == '' && k == 'flags')
+			flags = v;
+		if (bugs == '' && k == 'bugs')
+			bugs = v;
+		if (cores == '' && k == 'cpu cores')
+			cores = v;
+		if (siblings == '' && k == 'siblings')
+			siblings = v;
+		if (phys == '' && k == 'physical id')
+			phys = v;
+	}
+	let freqs = [];
+	let cpus = lsdir('/sys/devices/system/cpu') || [];
+	for (let c in cpus) {
+		if (!match(c, /^cpu[0-9]+$/))
+			continue;
+		let base = '/sys/devices/system/cpu/' + c + '/cpufreq';
+		let row = {
+			cpu: c,
+			governor: rf(base + '/scaling_governor'),
+			cur_khz: rf(base + '/scaling_cur_freq'),
+			min_khz: rf(base + '/scaling_min_freq'),
+			max_khz: rf(base + '/scaling_max_freq'),
+			driver: rf(base + '/scaling_driver')
+		};
+		if (row.governor != '' || row.max_khz != '')
+			push(freqs, row);
+	}
+	return {
+		logical: n,
+		model, vendor, mhz, cache, cores, siblings,
+		possible: rf('/sys/devices/system/cpu/possible'),
+		present: rf('/sys/devices/system/cpu/present'),
+		online: rf('/sys/devices/system/cpu/online'),
+		flags, bugs,
+		cpufreq: freqs,
+		lscpu: have('lscpu') ? sh("lscpu 2>/dev/null") : ''
+	};
+}
+
+function parse_meminfo() {
+	let o = {};
+	for (let line in split(rf('/proc/meminfo'), '\n')) {
+		let m = match(line, /^([^:]+):[ \t]+([0-9]+)/);
+		if (m)
+			o[trim(m[1])] = m[2] + ' kB';
+	}
+	return o;
+}
+
+function dimms_dmi() {
+	let rows = [];
+	if (!have('dmidecode'))
+		return rows;
+	let text = sh("dmidecode -t memory 2>/dev/null");
+	let cur = {};
+	for (let line in split(text, '\n')) {
+		if (match(line, /^Memory Device$/)) {
+			if (length(cur) > 1)
+				push(rows, cur);
+			cur = {};
+			continue;
+		}
+		let m = match(line, /^[ \t]+([^:]+):[ \t]*(.*)$/);
+		if (!m)
+			continue;
+		let k = trim(m[1]), v = trim(m[2]);
+		if (k == 'Size' || k == 'Type' || k == 'Speed' || k == 'Configured Memory Speed' ||
+		    k == 'Manufacturer' || k == 'Serial Number' || k == 'Part Number' ||
+		    k == 'Locator' || k == 'Bank Locator' || k == 'Form Factor' ||
+		    k == 'Rank' || k == 'Data Width' || k == 'Total Width' ||
+		    k == 'Type Detail' || k == 'Minimum Voltage' || k == 'Maximum Voltage' ||
+		    k == 'Configured Voltage' || k == 'Asset Tag')
+			cur[k] = v;
+	}
+	if (length(cur) > 1)
+		push(rows, cur);
+	let out = [];
+	for (let r in rows) {
+		if (r.Size == 'No Module Installed' || r.Size == 'Not Installed') {
+			push(out, r);
+			continue;
+		}
+		push(out, r);
+	}
+	return out;
+}
+
+function edac() {
+	let rows = [];
+	let mcs = lsdir('/sys/devices/system/edac/mc') || [];
+	for (let mc in mcs) {
+		if (!match(mc, /^mc[0-9]+$/))
+			continue;
+		let b = '/sys/devices/system/edac/mc/' + mc;
+		push(rows, {
+			mc,
+			ce_count: rf(b + '/ce_count'),
+			ue_count: rf(b + '/ue_count'),
+			size_mb: rf(b + '/size_mb'),
+			mc_name: rf(b + '/mc_name')
+		});
+	}
+	return rows;
+}
+
+function smart_of(dev) {
+	if (!have('smartctl'))
+		return { available: false, note: '当前固件未带 smartctl，SMART 需下一版加入 smartmontools。' };
+	let info = sh(sprintf("smartctl -n standby -i '%s' 2>/dev/null", dev));
+	let health = sh(sprintf("smartctl -n standby -H '%s' 2>/dev/null", dev));
+	let attr = sh(sprintf("smartctl -n standby -A '%s' 2>/dev/null", dev));
+	if (length(attr) > 8000)
+		attr = substr(attr, 0, 8000) + '\n…';
+	return { available: true, identify: info, health, attributes: attr };
+}
+
+function disks() {
+	let rows = [];
+	let names = lsdir('/sys/block') || [];
+	for (let name in names) {
+		if (skip_block(name))
+			continue;
+		let b = '/sys/block/' + name;
+		let sectors = +rf(b + '/size') || 0;
+		let bytes = sectors * 512;
+		let node = '/dev/' + name;
+		let st = stat(node);
+		if (st == null)
+			continue;
+		let row = {
+			name,
+			node,
+			size_bytes: bytes,
+			size: sprintf('%.2f GiB', bytes / 1073741824.0),
+			rotational: rf(b + '/queue/rotational'),
+			model: rf(b + '/device/model') || rf(b + '/device/name'),
+			vendor: rf(b + '/device/vendor'),
+			rev: rf(b + '/device/rev'),
+			serial: rf(b + '/device/serial') || rf(b + '/device/wwid'),
+			queue_depth: rf(b + '/device/queue_depth'),
+			scheduler: replace(rf(b + '/queue/scheduler'), /[\[\]]/g, ''),
+			hw_sector: rf(b + '/queue/hw_sector_size'),
+			discard: rf(b + '/queue/discard_granularity'),
+			uevent: rf(b + '/device/uevent')
+		};
+		try { row.smart = smart_of(node); } catch (e) { row.smart = { available: false, note: 'SMART 读取失败' }; }
+		push(rows, row);
+	}
+	return rows;
+}
+
+function is_phys_nic(name, sysdir) {
+	if (match(name, /^(lo|ifb|teql|sit|gre|erspan|tun|tap|dummy|bond|team|bat|docker|veth|virbr|ppp|wg)/))
+		return false;
+	if (match(name, /^(br-|phy)/) || match(name, /\./))
+		return false;
+	if (stat(sysdir + '/device') == null)
+		return false;
+	let real = sh(sprintf("readlink -f '%s/device' 2>/dev/null", sysdir));
+	if (real == '' || match(real, /\/virtual\//))
+		return false;
+	return true;
+}
+
+function ethtool_max_mbps(text) {
+	let max = 0;
+	let rest = text;
+	while (true) {
+		let m = match(rest, /([0-9]+)base/);
+		if (!m)
+			break;
+		let n = +m[1];
+		if (n > max)
+			max = n;
+		let idx = index(rest, m[0]);
+		if (idx < 0)
+			break;
+		rest = substr(rest, idx + length(m[0]));
+	}
+	return max;
+}
+
+function nic_slot_key(s) {
+	return replace(s || '', /^0000:/, '');
+}
+
+function fill_nic_chips(nic, pci) {
+	for (let n in nic) {
+		if (n.chip != '')
+			continue;
+		let want = nic_slot_key(n.pci_slot);
+		if (want == '')
+			continue;
+		for (let p in pci) {
+			if (nic_slot_key(p.slot) == want) {
+				n.chip = p.chip;
+				break;
+			}
+		}
+	}
+}
+
+function nics() {
+	let rows = [];
+	let names = lsdir('/sys/class/net') || [];
+	for (let name in names) {
+		let b = '/sys/class/net/' + name;
+		if (!is_phys_nic(name, b))
+			continue;
+		let pci_path = sh(sprintf("readlink -f '%s/device' 2>/dev/null", b));
+		let slot = '';
+		let pm = match(pci_path, /([0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F])$/);
+		if (pm)
+			slot = pm[1];
+		else {
+			let pm2 = match(pci_path, /([0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F])$/);
+			if (pm2)
+				slot = pm2[1];
+		}
+		let row = {
+			name,
+			mac: rf(b + '/address'),
+			operstate: rf(b + '/operstate'),
+			speed: rf(b + '/speed'),
+			duplex: rf(b + '/duplex'),
+			pci_slot: slot,
+			pci_vendor: rf(b + '/device/vendor'),
+			pci_device: rf(b + '/device/device'),
+			chip: '',
+			firmware: '',
+			port: '',
+			max_mbps: 0
+		};
+		if (have('ethtool')) {
+			let ei = sh(sprintf("ethtool -i '%s' 2>/dev/null", name));
+			let fw = match(ei, /firmware-version:[ \t]*([^\n]+)/);
+			if (fw)
+				row.firmware = trim(fw[1]);
+			let bi = match(ei, /bus-info:[ \t]*([^\n]+)/);
+			if (bi && row.pci_slot == '')
+				row.pci_slot = trim(bi[1]);
+			let et = sh(sprintf("ethtool '%s' 2>/dev/null", name));
+			let sp = match(et, /Speed:[ \t]*([^\n]+)/);
+			if (sp && (row.speed == '' || row.speed == '-1')) {
+				let sm = match(sp[1], /([0-9]+)/);
+				if (sm)
+					row.speed = sm[1];
+			}
+			let po = match(et, /Port:[ \t]*([^\n]+)/);
+			if (po)
+				row.port = trim(po[1]);
+			row.max_mbps = ethtool_max_mbps(et);
+		}
+		push(rows, row);
+	}
+	return rows;
+}
+
+function pci_list() {
+	let rows = [];
+	if (have('lspci')) {
+		let text = sh('lspci -nn 2>/dev/null');
+		for (let line in split(text, '\n')) {
+			if (line == '')
+				continue;
+			let m = match(line, /^([0-9a-fA-F:.]+) (.+) \[([0-9a-fA-F]{4})\]: (.+) \[([0-9a-fA-F]{4}):([0-9a-fA-F]{4})\](.*)$/);
+			if (m) {
+				push(rows, {
+					slot: m[1],
+					class_name: trim(m[2]),
+					class_id: m[3],
+					chip: trim(m[4]),
+					vendor_id: m[5],
+					device_id: m[6]
+				});
+				continue;
+			}
+			let m2 = match(line, /^([0-9a-fA-F:.]+) (.+): (.+)$/);
+			if (m2)
+				push(rows, {
+					slot: m2[1],
+					class_name: trim(m2[2]),
+					class_id: '',
+					chip: trim(m2[3]),
+					vendor_id: '',
+					device_id: ''
+				});
+		}
+		if (length(rows) > 0)
+			return rows;
+	}
+	let names = lsdir('/sys/bus/pci/devices') || [];
+	for (let id in names) {
+		let b = '/sys/bus/pci/devices/' + id;
+		let cls = rf(b + '/class');
+		push(rows, {
+			slot: replace(id, /^0000:/, ''),
+			class_name: '',
+			class_id: length(cls) >= 6 ? substr(cls, 2, 4) : replace(cls, /^0x/, ''),
+			chip: '',
+			vendor_id: replace(rf(b + '/vendor'), /^0x/, ''),
+			device_id: replace(rf(b + '/device'), /^0x/, '')
+		});
+	}
+	return rows;
+}
+
+function dmidecode_blocks(type) {
+	let blocks = [];
+	if (!have('dmidecode'))
+		return blocks;
+	let text = sh(sprintf("dmidecode -t %s 2>/dev/null", type));
+	let cur = null;
+	for (let line in split(text, '\n')) {
+		if (match(line, /^Handle /)) {
+			if (cur != null && length(cur) > 0)
+				push(blocks, cur);
+			cur = {};
+			continue;
+		}
+		if (cur == null)
+			continue;
+		if (!match(line, /^[\t ]/) && trim(line) != '' && !match(line, /^#/)) {
+			cur._title = trim(line);
+			continue;
+		}
+		let m = match(line, /^[\t ]+([^:]+):[\t ]*(.*)$/);
+		if (m)
+			cur[trim(m[1])] = trim(m[2]);
+	}
+	if (cur != null && length(cur) > 0)
+		push(blocks, cur);
+	return blocks;
+}
+
+function first_dmi_val(blocks, key) {
+	for (let b in blocks) {
+		if (b[key] != null && trim(b[key]) != '')
+			return trim(b[key]);
+	}
+	return '';
+}
+
+function board_extra() {
+	let o = {};
+	let bb = dmidecode_blocks('baseboard');
+	let ch = dmidecode_blocks('chassis');
+	let bios = dmidecode_blocks('bios');
+	let ma = dmidecode_blocks('16');
+	if (length(bb) > 0) {
+		o.board_type = first_dmi_val(bb, 'Type');
+		o.board_location = first_dmi_val(bb, 'Location In Chassis');
+		o.board_features = first_dmi_val(bb, 'Features');
+	}
+	if (length(ch) > 0) {
+		o.chassis_type_name = first_dmi_val(ch, 'Type');
+		o.chassis_lock = first_dmi_val(ch, 'Lock');
+		o.chassis_height = first_dmi_val(ch, 'Height');
+		o.chassis_oem = first_dmi_val(ch, 'OEM Information');
+	}
+	if (length(bios) > 0) {
+		o.bios_revision = first_dmi_val(bios, 'BIOS Revision');
+		o.firmware_revision = first_dmi_val(bios, 'Firmware Revision');
+		o.bios_rom_size = first_dmi_val(bios, 'ROM Size');
+	}
+	if (length(ma) > 0) {
+		o.memory_ecc = first_dmi_val(ma, 'Error Correction Type');
+		o.memory_array_loc = first_dmi_val(ma, 'Location');
+		o.memory_array_use = first_dmi_val(ma, 'Use');
+	}
+	return o;
+}
+
+function power_list() {
+	let rows = [];
+	for (let b in dmidecode_blocks('39')) {
+		if (!match(b._title || '', /Power Supply/i))
+			continue;
+		push(rows, {
+			name: b.Name || '',
+			manufacturer: b.Manufacturer || '',
+			model: b['Model Part Number'] || '',
+			serial: b['Serial Number'] || '',
+			revision: b.Revision || '',
+			location: b.Location || '',
+			max_power: b['Max Power Capacity'] || '',
+			status: b.Status || '',
+			type: b.Type || '',
+			input: b['Input Voltage Range Switching'] || '',
+			plugged: b.Plugged || '',
+			hot_replace: b['Hot Replaceable'] || ''
+		});
+	}
+	let ps = lsdir('/sys/class/power_supply') || [];
+	for (let n in ps) {
+		let d = '/sys/class/power_supply/' + n;
+		push(rows, {
+			name: rf(d + '/model_name') || n,
+			manufacturer: rf(d + '/manufacturer'),
+			model: rf(d + '/model_name'),
+			serial: rf(d + '/serial_number'),
+			type: rf(d + '/type'),
+			status: rf(d + '/status'),
+			max_power: rf(d + '/voltage_max_design'),
+			location: 'sysfs:' + n,
+			source: 'sysfs'
+		});
+	}
+	return rows;
+}
+
+function usb_list() {
+	let rows = [];
+	if (have('lsusb')) {
+		let text = sh('lsusb 2>/dev/null');
+		if (text != '') {
+			for (let line in split(text, '\n'))
+				if (line != '')
+					push(rows, { line });
+			return rows;
+		}
+	}
+	let names = lsdir('/sys/bus/usb/devices') || [];
+	for (let id in names) {
+		let b = '/sys/bus/usb/devices/' + id;
+		let product = rf(b + '/product');
+		if (product == '' && rf(b + '/idVendor') == '')
+			continue;
+		push(rows, {
+			id,
+			manufacturer: rf(b + '/manufacturer'),
+			product,
+			idVendor: rf(b + '/idVendor'),
+			idProduct: rf(b + '/idProduct'),
+			speed: rf(b + '/speed'),
+			version: rf(b + '/version'),
+			serial: rf(b + '/serial')
+		});
+	}
+	return rows;
+}
+
+function sensors() {
+	let rows = [];
+	let hw = lsdir('/sys/class/hwmon') || [];
+	for (let h in hw) {
+		let dir = '/sys/class/hwmon/' + h;
+		let name = rf(dir + '/name') || h;
+		let files = lsdir(dir) || [];
+		let vals = {};
+		for (let f in files) {
+			if (match(f, /^(temp|fan|in|power|curr|humidity)[0-9]+_(input|label)$/))
+				vals[f] = rf(dir + '/' + f);
+		}
+		push(rows, { hwmon: h, name, values: vals });
+	}
+	let tz = lsdir('/sys/class/thermal') || [];
+	for (let z in tz) {
+		if (!match(z, /^thermal_zone/))
+			continue;
+		push(rows, {
+			hwmon: z,
+			name: rf('/sys/class/thermal/' + z + '/type'),
+			values: { temp: rf('/sys/class/thermal/' + z + '/temp') }
+		});
+	}
+	return rows;
+}
+
+function dimm_installed(r) {
+	let sz = r.Size || '';
+	return sz != '' && sz != 'No Module Installed' && sz != 'Not Installed';
+}
+
+function dimm_kind(dimms) {
+	for (let r in dimms) {
+		if (dimm_installed(r) && r.Type != null && r.Type != '' && r.Type != 'Unknown' && r.Type != 'Other')
+			return r.Type;
+	}
+	return '';
+}
+
+function dimm_speed(dimms) {
+	for (let r in dimms) {
+		if (!dimm_installed(r))
+			continue;
+		if (r['Configured Memory Speed'] != null && r['Configured Memory Speed'] != '')
+			return r['Configured Memory Speed'];
+		if (r.Speed != null && r.Speed != '')
+			return r.Speed;
+	}
+	return '';
+}
+
+function dimm_form(dimms) {
+	for (let r in dimms) {
+		if (dimm_installed(r) && r['Form Factor'] != null && r['Form Factor'] != '' && r['Form Factor'] != 'Unknown')
+			return r['Form Factor'];
+	}
+	return '';
+}
+
+function dimm_placeholder(r) {
+	if (dimm_installed(r))
+		return false;
+	let typ = r.Type || '';
+	let spd = r.Speed || '';
+	if (spd != '' && spd != '0 MHz')
+		return false;
+	if (typ != '' && typ != 'Unknown' && typ != 'Other')
+		return false;
+	return true;
+}
+
+function filter_dimms(dimms) {
+	let o = [];
+	for (let r in dimms)
+		if (!dimm_placeholder(r))
+			push(o, r);
+	return o;
+}
+
+function socket_matches_chipset(socket, pci) {
+	if (socket == null || socket == '')
+		return false;
+	let lpc = '';
+	for (let p in pci) {
+		if (p.class_id == '0601')
+			lpc = p.chip || '';
+	}
+	if (match(lpc, /\b(HM|UM|QM|QS)[0-9]{2}/) && match(socket, /LGA(11|12|17)/))
+		return false;
+	return true;
+}
+
+function collect() {
+	let dmi_o = {};
+	try { dmi_o = dmi(); } catch (e) { dmi_o = {}; }
+	let smbios = {};
+	try { smbios = parse_smbios(); } catch (e) { smbios = {}; }
+	try {
+		if (smbios.cpu_socket)
+			dmi_o.cpu_socket = smbios.cpu_socket;
+		if (smbios.memory_spec)
+			dmi_o.memory_spec = smbios.memory_spec;
+		if (smbios.memory_ecc)
+			dmi_o.memory_ecc = smbios.memory_ecc;
+	} catch (e) {}
+	try {
+		let extra = board_extra();
+		for (let k in extra)
+			if (extra[k] != '' && dmi_o[k] == null)
+				dmi_o[k] = extra[k];
+	} catch (e) {}
+	let cpu = {};
+	try { cpu = parse_cpuinfo(); } catch (e) { cpu = {}; }
+	let mem = {};
+	try { mem = parse_meminfo(); } catch (e) { mem = {}; }
+	let dimms = [];
+	try { dimms = dimms_dmi(); } catch (e) { dimms = []; }
+	if (length(dimms) == 0 && smbios.dimms != null)
+		dimms = smbios.dimms;
+	try { dimms = filter_dimms(dimms); } catch (e) {}
+	let ecc = [];
+	try { ecc = edac(); } catch (e) { ecc = []; }
+	let disk = [];
+	try { disk = disks(); } catch (e) { disk = []; }
+	let nic = [];
+	try { nic = nics(); } catch (e) { nic = []; }
+	let pci = [];
+	try { pci = pci_list(); } catch (e) { pci = []; }
+	try { fill_nic_chips(nic, pci); } catch (e) {}
+	try {
+		if (dmi_o.cpu_socket && !socket_matches_chipset(dmi_o.cpu_socket, pci))
+			dmi_o.cpu_socket = '';
+	} catch (e) {}
+	let psu = [];
+	try { psu = power_list(); } catch (e) { psu = []; }
+	let usb = [];
+	try { usb = usb_list(); } catch (e) { usb = []; }
+	let sen = [];
+	try { sen = sensors(); } catch (e) { sen = []; }
+
+	let tools = {
+		smartctl: have('smartctl') ? 1 : 0,
+		dmidecode: have('dmidecode') ? 1 : 0,
+		lspci: have('lspci') ? 1 : 0,
+		lsusb: have('lsusb') ? 1 : 0,
+		ethtool: have('ethtool') ? 1 : 0,
+		lscpu: have('lscpu') ? 1 : 0
+	};
+
+	return {
+		collected: trim(sh("date '+%Y-%m-%d %H:%M:%S' 2>/dev/null")),
+		collected_unix: time(),
+		machine: dmi_o,
+		power: psu,
+		cpu,
+		memory: {
+			meminfo: mem,
+			dimms,
+			edac: ecc,
+			kind: dimm_kind(dimms),
+			speed: dimm_speed(dimms),
+			form: dimm_form(dimms)
+		},
+		disks: disk,
+		network: nic,
+		pci,
+		usb,
+		sensors: sen,
+		kernel: {
+			version: rf('/proc/version'),
+			cmdline: rf('/proc/cmdline'),
+			arch: sh('uname -m 2>/dev/null'),
+			uptime: split(rf('/proc/uptime'), /[ \t]+/)[0]
+		},
+		tools
+	};
+}
+
+function atomic_write(path, body) {
+	let tmp = path + '.tmp';
+	writefile(tmp, body);
+	system(sprintf("mv -f '%s' '%s'", tmp, path));
+}
+
+let data = collect();
+let body = sprintf('%J\n', data);
+atomic_write(OUT, body);
+if (stat('/data/metrics') != null)
+	try { atomic_write(OUT_DATA, body); } catch (e) {}
+print('ok\n');

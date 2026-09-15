@@ -196,7 +196,12 @@ return view.extend({
 		const btn = document.getElementById('lb-restart');
 		if (btn)
 			btn.classList.add('spinning');
-		return fs.exec('/usr/libexec/lede-mwan3-setup', ['restart']).then(r => {
+		const hashMode = (document.getElementById('lb-hash') || {}).value || 'flow';
+		const flow = hashMode !== 'ip';
+		uci.set('mwan3', 'globals', 'lede_lb_hash', flow ? 'flow' : 'ip');
+		if (flow)
+			uci.set('mwan3', 'default', 'sticky', '0');
+		return uci.save().then(() => fs.exec('/usr/libexec/lede-mwan3-setup', ['restart']).then(r => {
 			const j = this.parseJson(r);
 			if (!j.ok)
 				throw new Error(j.error || _('重启失败'));
@@ -206,7 +211,7 @@ return view.extend({
 				this.ok(_('已重启'));
 				return this.afterChange();
 			});
-		}).catch(e => this.fail(e, _('重启失败'))).finally(() => {
+		})).catch(e => this.fail(e, _('重启失败'))).finally(() => {
 			if (btn)
 				btn.classList.remove('spinning');
 		});
@@ -382,6 +387,8 @@ return view.extend({
 		(tracks.length ? tracks : DEF_TRACK).forEach(t => args.push('--track', t));
 		const sticky = document.getElementById('lb-sticky');
 		args.push('--sticky', sticky && sticky.checked ? '1' : '0');
+		const hashMode = (document.getElementById('lb-hash') || {}).value || 'flow';
+		args.push('--hash-mode', hashMode === 'ip' ? 'ip' : 'flow');
 		args.push('--timeout', String((document.getElementById('lb-timeout') || {}).value || '600'));
 		args.push('--interval', String((document.getElementById('lb-interval') || {}).value || '5'));
 		args.push('--down', String((document.getElementById('lb-down') || {}).value || '3'));
@@ -443,6 +450,7 @@ return view.extend({
 		const wans = this._wans || [];
 		const tracks = this.currentTracks();
 		const stickyOn = (uci.get('mwan3', 'default', 'sticky') !== '0');
+		const hashMode = uci.get('mwan3', 'globals', 'lede_lb_hash') || 'flow';
 		const timeout = uci.get('mwan3', 'default', 'timeout') || '600';
 		const firstIf = (uci.sections('mwan3', 'interface')[0] || {})['.name'];
 		const interval = firstIf ? (uci.get('mwan3', firstIf, 'interval') || '5') : '5';
@@ -473,10 +481,20 @@ return view.extend({
 		host.appendChild(E('div', { 'class': 'lb-head' }, [
 			E('div', { 'class': 'lb-title' }, [
 				E('h2', {}, _('负载均衡')),
-				E('span', { id: 'lb-status', 'class': 'lb-status' })
+				E('span', { id: 'lb-status', 'class': 'lb-status' }),
+				running ? E('span', {
+					id: 'lb-hash-badge',
+					'class': 'lb-status',
+					style: 'margin-left:.75em;color:#2563eb'
+				}, _('均衡') + '：' + (hashMode === 'ip' ? _('源IP') : _('连接'))) : ''
 			]),
 			E('div', { 'class': 'lb-actions' }, btns)
 		]));
+		if (running) {
+			host.appendChild(E('div', { 'class': 'cbi-map-desc', style: 'margin:0 0 1em' }, [
+				E('p', {}, _('下方「探测地址」区域的「均衡」决定默认流量如何分摊到各 WAN（连接=五元组哈希，更均匀；源IP=整 IP 固定一条线）。「分流规则」里手动添加的绑定不受此项影响。'))
+			]));
+		}
 		this.paintBadge();
 
 		const rows = wans.map(w => {
@@ -546,6 +564,21 @@ return view.extend({
 		(tracks.length ? tracks : DEF_TRACK).forEach(addTrack);
 		const sticky = E('input', { type: 'checkbox', id: 'lb-sticky' });
 		sticky.checked = stickyOn;
+		const hashSel = E('select', { id: 'lb-hash', 'class': 'lb-sel' }, [
+			E('option', { value: 'flow', selected: hashMode !== 'ip' }, _('连接（推荐）')),
+			E('option', { value: 'ip', selected: hashMode === 'ip' }, _('源IP'))
+		]);
+		const syncHashUi = () => {
+			const flow = hashSel.value !== 'ip';
+			if (flow) {
+				sticky.checked = false;
+				sticky.disabled = true;
+			} else {
+				sticky.disabled = false;
+			}
+		};
+		hashSel.addEventListener('change', syncHashUi);
+		syncHashUi();
 		host.appendChild(this.card(_('探测地址'), E('div', { 'class': 'lb-probe' }, [
 			E('div', { 'class': 'lb-probe-l' }, this._trackBox),
 			E('div', { 'class': 'lb-probe-r' }, [
@@ -568,6 +601,12 @@ return view.extend({
 					E('label', { 'class': 'lb-field' }, [sticky, ' ', _('粘滞')]),
 					this.numInput('lb-timeout', timeout, 0, 86400, '6em'),
 					E('span', {}, _('秒'))
+				]),
+				E('span', { 'class': 'lb-field' }, [
+					E('span', { 'class': 'lb-k' }, _('均衡')),
+					hashSel,
+					E('span', { id: 'lb-hash-tip', style: 'margin-left:.5em;color:#64748b;font-size:.9em' },
+						_('改后点「重启服务」生效'))
 				])
 			])
 		])));

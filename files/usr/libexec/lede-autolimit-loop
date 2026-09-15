@@ -3,5 +3,5 @@
 
 while true; do
 	/usr/libexec/lede-autolimit tick >/dev/null 2>&1 || true
-	sleep "$(uci -q get lede-autolimit.main.interval_sec 2>/dev/null || echo 30)"
+	sleep "$(uci -q get lede-autolimit.main.interval_sec 2>/dev/null || echo 60)"
 done

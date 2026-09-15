@@ -42,6 +42,10 @@ fi
 
 chmod +x /usr/sbin/wan-src-hash 2>/dev/null || true
 chmod +x /usr/sbin/wan-alert /usr/sbin/sys-alert-watch /usr/libexec/wan-alert /etc/init.d/wanalert 2>/dev/null || true
+chmod +x /usr/libexec/lede-stamp-reboot /usr/libexec/lede-log-read /usr/sbin/reboot 2>/dev/null || true
+chmod +x /usr/libexec/lede-mgmt-bind /etc/hotplug.d/iface/30-lede-mgmt-bind 2>/dev/null || true
+chmod +x /usr/libexec/lede-conntrack-tune /etc/init.d/lede-conntrack 2>/dev/null || true
+chmod +x /usr/libexec/lede-hwinfo /etc/init.d/lede-hwinfo 2>/dev/null || true
 chmod +x /etc/hotplug.d/iface/26-wan-alert 2>/dev/null || true
 if [ -x /etc/init.d/wanalert ]; then
   /etc/init.d/wanalert enable
@@ -129,11 +133,20 @@ fi
 mkdir -p /etc/crontabs
 touch /etc/crontabs/root
 sed -i '/isp-ip-update/d;/25-multiwan-main-default/d;/27-mwan3-iface-default/d;/29-mwan3-policy-live/d' /etc/crontabs/root 2>/dev/null || true
-chmod +x /usr/libexec/rpcd/wanmonitor /usr/libexec/lan-dhcp-apply /usr/libexec/lede-log-read /usr/libexec/packet-cap /etc/init.d/lan-dhcp-exclude 2>/dev/null || true
+chmod +x /usr/libexec/rpcd/wanmonitor /usr/libexec/lan-dhcp-apply /usr/libexec/lede-log-read /usr/libexec/lede-rpcd-restart /usr/libexec/packet-cap /etc/init.d/lan-dhcp-exclude 2>/dev/null || true
 mkdir -p /overlay/pcap 2>/dev/null || true
-mkdir -p /overlay/logs 2>/dev/null || true
+for s in alert syslog kernel mosdns; do
+  p="$(uci -q get lede-log.$s.path 2>/dev/null || true)"
+  [ -n "$p" ] || continue
+  p="${p%/}"
+  if [ -d "$p" ]; then
+    mkdir -p "$p" 2>/dev/null || true
+  else
+    mkdir -p "${p%/*}" 2>/dev/null || true
+  fi
+done
 if [ "$(uci -q get wanalert.main.log_path)" = "/overlay/sys-alert.log" ]; then
-  uci -q set wanalert.main.log_path='/overlay/logs/sys-alert.log'
+  uci -q set wanalert.main.log_path="$(uci -q get lede-log.alert.path)"
   uci -q commit wanalert
 fi
 if [ -f /etc/config/lede-log ]; then

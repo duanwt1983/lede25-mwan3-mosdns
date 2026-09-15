@@ -4,13 +4,28 @@
 		"read": {
 			"uci": [ "lede-log", "wanalert", "system", "mosdns" ],
 			"file": {
-				"/usr/libexec/lede-log-read": [ "exec" ]
+				"/usr/libexec/lede-log-read": [ "exec" ],
+				"/overlay": [ "list" ],
+				"/overlay/*": [ "read", "list" ],
+				"/mnt": [ "list" ],
+				"/mnt/*": [ "read", "list" ],
+				"/var/log/*": [ "read" ]
+			},
+			"ubus": {
+				"file": [ "read", "list", "stat" ]
 			}
 		},
 		"write": {
 			"uci": [ "lede-log", "wanalert", "system", "mosdns" ],
 			"file": {
-				"/usr/libexec/lede-log-read": [ "exec" ]
+				"/usr/libexec/lede-log-read": [ "exec" ],
+				"/overlay": [ "list" ],
+				"/overlay/*": [ "read", "write", "list" ],
+				"/mnt": [ "list" ],
+				"/mnt/*": [ "read", "write", "list" ]
+			},
+			"ubus": {
+				"file": [ "write" ]
 			}
 		}
 	}

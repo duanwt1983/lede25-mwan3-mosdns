@@ -1,0 +1,6 @@
+#!/bin/sh
+# First boot: LAN-only LuCI. WAN HTTPS is opt-in via 系统 → 管理权 → 远程管理.
+chmod 755 /usr/libexec/lede-wan-https /etc/init.d/lede-wan-https 2>/dev/null || true
+[ -x /etc/init.d/lede-wan-https ] && /etc/init.d/lede-wan-https enable
+[ -x /usr/libexec/lede-wan-https ] && /usr/libexec/lede-wan-https >/dev/null 2>&1 || true
+exit 0

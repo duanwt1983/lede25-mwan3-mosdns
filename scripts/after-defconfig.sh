@@ -42,6 +42,8 @@ select_wanted() {
   enable_pkg ucode-mod-fs
   enable_pkg ucode-mod-uci
   enable_pkg ucode-mod-ubus
+  enable_pkg smartmontools
+  enable_pkg dmidecode
   enable_pkg curl
   enable_pkg luci-theme-argon
   enable_pkg luci-app-argon-config
@@ -72,6 +74,9 @@ select_wanted() {
   enable_pkg kmod-sched
   enable_pkg kmod-ifb
   enable_pkg tc-full
+  enable_pkg bandix-plus
+  enable_pkg luci-app-bandix-plus
+  enable_pkg luci-i18n-bandix-plus-zh-cn
   enable_pkg luci-app-samba4
   enable_pkg luci-i18n-samba4-zh-cn
   enable_pkg samba4-server
@@ -120,7 +125,7 @@ select_wanted() {
   force_y CONFIG_TARGET_EXT4_JOURNAL
   force_n CONFIG_TARGET_ROOTFS_SQUASHFS
   sed -i '/^CONFIG_TARGET_ROOTFS_PARTSIZE=/d' .config
-  echo 'CONFIG_TARGET_ROOTFS_PARTSIZE=1024' >> .config
+  echo 'CONFIG_TARGET_ROOTFS_PARTSIZE=2048' >> .config
   force_n CONFIG_GRUB_IMAGES
   force_y CONFIG_GRUB_EFI_IMAGES
   force_y CONFIG_VMDK_IMAGES
@@ -174,7 +179,7 @@ strip_unwanted() {
     luci-app-aliyundrive-fuse \
     luci-app-istorex luci-app-store luci-app-quickstart luci-lib-taskd \
     luci-app-istore luci-i18n-quickstart-zh-cn luci-i18n-istorex-zh-cn \
-    smartmontools luci-app-smartinfo luci-app-smart mdadm luci-app-mdadm \
+    luci-app-smartinfo luci-app-smart mdadm luci-app-mdadm \
     luci-app-raid \
     firewall \
     iptables iptables-nft iptables-zz-legacy \
@@ -182,7 +187,8 @@ strip_unwanted() {
     iptables-mod-conntrack-extra iptables-mod-iprange \
     iptables-mod-socket iptables-mod-tproxy iptables-mod-extra \
     iptables-mod-fullconenat \
-    xtables-legacy xtables-nft
+    xtables-legacy xtables-nft \
+    tc-tiny
   do
     disable_pkg "$p"
   done
@@ -197,6 +203,6 @@ strip_unwanted
 select_wanted
 
 echo "==== selected extras ===="
-grep -E '^CONFIG_PACKAGE_(luci-nginx|nginx|uhttpd|luci-app-samba4|samba4-server|luci-app-passwall|luci-app-mosdns|mosdns|librespeed-go|qosmate|luci-app-qosmate|tcpdump|wireshark|luci-app-istorex|luci-app-quickstart|luci-app-fastnet|luci-app-diskman|luci-i18n-diskman-zh-cn|luci-app-filemanager|luci-app-mwan3|mwan3|parted|blkid|kmod-ixgbe|smartmontools|mdadm|nftables-json)=' .config || true
+grep -E '^CONFIG_PACKAGE_(luci-nginx|nginx|uhttpd|luci-app-samba4|samba4-server|luci-app-passwall|luci-app-mosdns|mosdns|librespeed-go|qosmate|luci-app-qosmate|bandix-plus|luci-app-bandix-plus|tcpdump|wireshark|luci-app-istorex|luci-app-quickstart|luci-app-fastnet|luci-app-diskman|luci-i18n-diskman-zh-cn|luci-app-filemanager|luci-app-mwan3|mwan3|parted|blkid|kmod-ixgbe|smartmontools|mdadm|nftables-json|ip-full|tc-full|kmod-ifb)=' .config || true
 grep -E '^CONFIG_PACKAGE_(firewall4|nftables|iptables|iptables-nft|iptables-zz-legacy|firewall)=' .config || true
 grep -E '^CONFIG_(VMDK_IMAGES|GRUB_EFI_IMAGES|TARGET_ROOTFS_PARTSIZE|TARGET_ROOTFS_EXT4FS|TARGET_IMAGES_GZIP)=' .config || true

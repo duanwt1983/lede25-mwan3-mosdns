@@ -214,7 +214,7 @@ jobs:
             echo
             echo "- Source: coolsnowwolf/lede master"
             echo "- Web: luci-nginx HTTPS (no uhttpd), Argon, default LuCI overview"
-            echo "- LAN: 192.168.9.1/24, ext4 root 1024M, EFI img + VMDK"
+            echo "- LAN: 192.168.9.1/24, ext4 root 2048M + leftover /data, EFI img + VMDK"
             echo "- Proxy: PassWall nft + mosdns (yaml, no DNS leak to Aliyun)"
             echo "- WAN: mwan3 nftables port (no iptables)"
             echo "- QoS: qosmate + luci-app-qosmate"

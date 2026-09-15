@@ -1,5 +1,5 @@
 #!/bin/sh
-# Bandix Plus: multi-interface traffic stats + rate limits (replaces qosmate/lede-limit).
+# Bandix Plus: multi-interface traffic stats + per-MAC rate limits (complements QoSmate WAN shaping).
 
 [ -x /etc/init.d/bandix-plus ] || exit 0
 

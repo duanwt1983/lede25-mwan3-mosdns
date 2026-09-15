@@ -1,0 +1,32 @@
+#!/bin/sh
+# After /data exists, point persistent stores at it. Do not override custom paths.
+
+migrate() {
+	local pkg="$1" sec="$2" opt="$3" old="$4" new="$5"
+	cur=$(uci -q get "$pkg.$sec.$opt" || true)
+	[ -n "$cur" ] || return 0
+	[ "$cur" = "$old" ] || return 0
+	uci -q set "$pkg.$sec.$opt=$new"
+}
+
+if [ ! -f /data/.lede-data ]; then
+	exit 0
+fi
+
+migrate lede-log alert path '/overlay/logs/sys-alert.log' '/data/logs/alert/sys-alert.log'
+migrate lede-log syslog path '/overlay/logs/system.log' '/data/logs/syslog/system.log'
+migrate lede-log kernel path '/overlay/logs/kernel.log' '/data/logs/kernel/kernel.log'
+migrate lede-log mosdns path '/overlay/logs/mosdns.log' '/data/logs/mosdns/mosdns.log'
+migrate wanalert main log_path '/overlay/logs/sys-alert.log' '/data/logs/alert/sys-alert.log'
+migrate packet_cap settings cap_dir '/overlay/pcap' '/data/pcap'
+
+# disk space alerts should include the data volume
+if uci -q get wanalert.main >/dev/null 2>&1; then
+	echo "$(uci -q get wanalert.main.disk_path)" | grep -q '/data' || \
+		uci -q add_list wanalert.main.disk_path='/data'
+fi
+
+uci -q commit lede-log
+uci -q commit wanalert
+uci -q commit packet_cap
+exit 0

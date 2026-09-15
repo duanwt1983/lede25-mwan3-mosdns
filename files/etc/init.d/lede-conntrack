@@ -1,0 +1,17 @@
+#!/bin/sh /etc/rc.common
+# Apply conntrack ceiling from current RAM on every boot.
+
+START=11
+
+start() {
+	[ -x /usr/libexec/lede-conntrack-tune ] || return 0
+	/usr/libexec/lede-conntrack-tune
+}
+
+boot() {
+	start
+}
+
+reload() {
+	start
+}

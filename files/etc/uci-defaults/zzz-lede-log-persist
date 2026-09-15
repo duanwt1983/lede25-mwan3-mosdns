@@ -1,0 +1,26 @@
+#!/bin/sh
+# Enable persistent stores if missing. Do not overwrite a user-set path.
+uci -q set lede-log.syslog=store
+[ -n "$(uci -q get lede-log.syslog.enabled)" ] || uci -q set lede-log.syslog.enabled=1
+[ -n "$(uci -q get lede-log.syslog.max_kb)" ] || uci -q set lede-log.syslog.max_kb='2048'
+
+uci -q set lede-log.kernel=store
+[ -n "$(uci -q get lede-log.kernel.enabled)" ] || uci -q set lede-log.kernel.enabled=1
+[ -n "$(uci -q get lede-log.kernel.max_kb)" ] || uci -q set lede-log.kernel.max_kb='2048'
+
+uci -q set wanalert.main.alert_hw=1
+[ -n "$(uci -q get wanalert.main.log_max_kb)" ] || uci -q set wanalert.main.log_max_kb='2048'
+uci -q commit lede-log
+uci -q commit wanalert
+for s in alert syslog kernel mosdns; do
+	p=$(uci -q get lede-log.$s.path)
+	[ -n "$p" ] || continue
+	p=${p%/}
+	if [ -d "$p" ]; then
+		mkdir -p "$p" 2>/dev/null || true
+	else
+		mkdir -p "${p%/*}" 2>/dev/null || true
+	fi
+done
+chmod +x /usr/libexec/lede-stamp-reboot /usr/sbin/reboot /usr/libexec/lede-log-read /usr/libexec/wan-alert 2>/dev/null || true
+exit 0

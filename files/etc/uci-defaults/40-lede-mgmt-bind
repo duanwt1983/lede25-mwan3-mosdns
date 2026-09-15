@@ -1,0 +1,4 @@
+#!/bin/sh
+chmod +x /usr/libexec/lede-mgmt-bind 2>/dev/null || true
+[ -x /usr/libexec/lede-mgmt-bind ] && /usr/libexec/lede-mgmt-bind
+exit 0

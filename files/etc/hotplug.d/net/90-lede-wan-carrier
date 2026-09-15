@@ -1,0 +1,24 @@
+#!/bin/sh
+# 物理网卡 carrier 恢复时，立即尝试对应 WAN 的 ifup（不等待 watch 轮询）。
+
+[ "$ACTION" = "linkup" ] || exit 0
+[ -n "$DEVICE" ] || exit 0
+
+[ "$(uci -q get wanalert.main.autofix)" = "1" ] || exit 0
+[ "$(uci -q get wanalert.main.autofix_wan)" = "0" ] && exit 0
+
+for iface in $(uci -q show network | sed -n 's/^network\.\([^=]*\)=interface$/\1/p'); do
+	case "$iface" in
+		loopback|lan|wan6|*_6) continue ;;
+	esac
+	dev="$(uci -q get "network.${iface}.device")"
+	[ "$dev" = "$DEVICE" ] || continue
+	en="$(uci -q get "mwan3.${iface}.enabled")"
+	[ -n "$en" ] || continue
+	[ "$en" = "0" ] || [ "$en" = "off" ] && continue
+	[ "$(uci -q get "wanalert.main.wfix_${iface}")" = "0" ] && continue
+	[ -x /usr/libexec/lede-autofix ] || exit 0
+	/usr/libexec/lede-autofix "down-${iface}" >/dev/null 2>&1 &
+done
+
+exit 0

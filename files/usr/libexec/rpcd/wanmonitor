@@ -2,13 +2,26 @@
 'use strict';
 
 import { cursor } from 'uci';
-import { readfile, writefile, popen } from 'fs';
+import { readfile, writefile, popen, stat } from 'fs';
 import * as ubus from 'ubus';
 import {
-	trim, as_bool, as_list, now_fmt, max_temp_c, cpu_pct, bytes_of, disks_overview
+	trim, as_bool, as_list, now_fmt, max_temp_c, cpu_pct, mem_percent, bytes_of, disks_overview,
+	load_rate_win
 } from '/usr/share/ucode/lede-metrics.uc';
+import {
+	bandix_load, bandix_build_maps, bandix_iface_rates, bandix_resolve_iface_rates,
+	bandix_clients_list, bandix_wan_rates, bandix_rate_meta
+} from '/usr/share/ucode/lede-bandix.uc';
+
+function ubus_close(u) {
+	if (u == null)
+		return;
+	try { u.disconnect(); } catch (e) {}
+}
 
 function iface_status(u, name) {
+	if (u == null)
+		return {};
 	try {
 		return u.call('network.interface.' + name, 'status') || {};
 	} catch (e) {
@@ -17,6 +30,8 @@ function iface_status(u, name) {
 }
 
 function mwan3_ifaces(u) {
+	if (u == null)
+		return {};
 	try {
 		let mj = u.call('mwan3', 'status');
 		if (mj && type(mj.interfaces) == 'object')
@@ -157,149 +172,19 @@ function walk_speed(dev, depth) {
 }
 
 function link_mbps(dev) {
-	return walk_speed(dev, 0);
-}
-
-function lan_pfx(ip) {
-	let p = split(`${ip}`, '.');
-	if (length(p) != 4)
-		return '';
-	return p[0] + '.' + p[1] + '.' + p[2] + '.';
-}
-
-function ensure_ct_acct() {
-	let v = trim(readfile('/proc/sys/net/netfilter/nf_conntrack_acct') || '');
-	if (v == '1')
-		return;
-	try {
-		writefile('/proc/sys/net/netfilter/nf_conntrack_acct', '1\n');
-	} catch (e) {}
-}
-
-function ct_client_bytes(lan_ip) {
-	ensure_ct_acct();
-	let pfx = lan_pfx(lan_ip);
-	let map = {};
-	if (!pfx)
-		return map;
-	let text = readfile('/proc/net/nf_conntrack') || '';
-	for (let line in split(text, '\n')) {
-		if (!line || index(line, 'src=') < 0)
-			continue;
-		let srcs = [];
-		let bytes = [];
-		for (let tok in split(trim(line), /[ \t]+/)) {
-			if (index(tok, 'src=') == 0)
-				push(srcs, substr(tok, 4));
-			else if (index(tok, 'bytes=') == 0)
-				push(bytes, +substr(tok, 6));
-		}
-		if (length(srcs) < 2 || length(bytes) < 2)
-			continue;
-		let o = srcs[0], r = srcs[1], ob = bytes[0] || 0, rb = bytes[1] || 0;
-		let o_lan = (index(o, pfx) == 0 && o != lan_ip);
-		let r_lan = (index(r, pfx) == 0 && r != lan_ip);
-		let ip = '';
-		let rx = 0, tx = 0;
-		if (o_lan && !r_lan) {
-			ip = o;
-			tx = ob;
-			rx = rb;
-		} else if (r_lan && !o_lan) {
-			ip = r;
-			rx = ob;
-			tx = rb;
-		} else
-			continue;
-		if (!map[ip])
-			map[ip] = { rx: 0, tx: 0, conns: 0 };
-		map[ip].rx += rx;
-		map[ip].tx += tx;
-		map[ip].conns++;
-	}
-	return map;
-}
-
-function mac_online(lan_dev) {
-	let set = {};
-	let p = popen(sprintf("ip -4 neigh show dev '%s' 2>/dev/null", replace(lan_dev, /'/g, '')), 'r');
-	if (!p)
-		return set;
-	let text = p.read('all') || '';
-	p.close();
-	for (let line in split(text, '\n')) {
-		if (!match(line, /lladdr/) || match(line, /FAILED/) || match(line, /INCOMPLETE/))
-			continue;
-		let f = split(trim(line), /[ \t]+/);
-		for (let i = 0; i < length(f); i++) {
-			if (f[i] == 'lladdr' && i + 1 < length(f))
-				set[lc(f[i + 1])] = true;
-		}
-	}
-	return set;
-}
-
-function arp_macs() {
-	let out = {};
-	for (let line in split(readfile('/proc/net/arp') || '', '\n')) {
-		let f = split(trim(line), /[ \t]+/);
-		if (length(f) < 4 || f[0] == 'IP')
-			continue;
-		let mac = lc(f[3]);
-		if (!match(mac, /^[0-9a-f]{2}(:[0-9a-f]{2}){5}$/) || mac == '00:00:00:00:00:00')
-			continue;
-		out[f[0]] = mac;
-	}
-	return out;
-}
-
-function dhcp_static_names(ctx) {
-	let byMac = {}, byIp = {};
-	try {
-		ctx.foreach('dhcp', 'host', (s) => {
-			let n = s.name || '';
-			if (!n)
-				return;
-			if (s.mac)
-				byMac[lc(s.mac)] = n;
-			if (s.ip)
-				byIp[s.ip] = n;
-		});
-	} catch (e) {}
-	return { byMac, byIp };
-}
-
-function host_label(lease_host, mac, ip, staticn) {
-	if (lease_host != null && lease_host != '' && lease_host != '*')
-		return lease_host;
-	if (mac && staticn.byMac[mac])
-		return staticn.byMac[mac];
-	if (ip && staticn.byIp[ip])
-		return staticn.byIp[ip];
-	return '';
-}
-
-function lc(s) {
-	s = `${s}`;
-	let out = '';
-	for (let i = 0; i < length(s); i++) {
-		let c = substr(s, i, 1);
-		let o = ord(c);
-		if (o >= 65 && o <= 90)
-			out += sprintf('%c', o + 32);
-		else
-			out += c;
-	}
-	return out;
-}
-
-function conn_by_proto() {
-	let p = popen("awk '$3==\"tcp\"{t++} $3==\"udp\"{u++} $3==\"icmp\"||$3==\"icmpv6\"{i++} END{print t+0, u+0, i+0}' /proc/net/nf_conntrack 2>/dev/null", 'r');
-	if (!p)
-		return { tcp: 0, udp: 0, icmp: 0 };
-	let f = split(trim(p.read('all') || ''), /[ \t]+/);
-	p.close();
-	return { tcp: +f[0], udp: +f[1], icmp: +f[2] };
+	if (!dev)
+		return 0;
+	let cache = {};
+	try { cache = json(readfile('/tmp/lede-link-mbps.json') || '{}') || {}; } catch (e) { cache = {}; }
+	if (type(cache) != 'object')
+		cache = {};
+	let hit = cache[dev];
+	if (hit && type(hit) == 'object' && time() - +(hit.t || 0) < 60)
+		return +(hit.n || 0);
+	let n = walk_speed(dev, 0);
+	cache[dev] = { t: time(), n };
+	try { writefile('/tmp/lede-link-mbps.json', sprintf('%J', cache)); } catch (e) {}
+	return n;
 }
 
 function skip_iface(sid) {
@@ -347,6 +232,8 @@ function collect_wan_names(ctx, u) {
 	});
 
 	try {
+		if (u == null)
+			return names;
 		let dump = u.call('network.interface', 'dump');
 		if (dump && type(dump.interface) == 'array') {
 			for (let it in dump.interface) {
@@ -369,13 +256,99 @@ function collect_wan_names(ctx, u) {
 	return names;
 }
 
+function rate_hist() {
+	let req = {};
+	try { req = json(readfile('/dev/stdin') || '{}'); } catch (e) { req = {}; }
+	let win = +(req.window || 300);
+	print(sprintf('%J\n', load_rate_win(win)));
+}
+
+function pulse() {
+	let bj = bandix_load(true);
+	let bmaps = bandix_build_maps(bj);
+	let up = split(trim(readfile('/proc/uptime') || '0'), /[ \t]+/)[0];
+	let clock = now_fmt();
+	let clock_hms = '';
+	let clock_day = '';
+	let hm = match(clock, /^([0-9-]+) ([0-9:]+)$/);
+	if (hm) {
+		clock_day = hm[1];
+		clock_hms = hm[2];
+	}
+	let la = split(trim(readfile('/proc/loadavg') || '0.00 0.00 0.00'), /[ \t]+/);
+	let conn = +(trim(readfile('/proc/sys/net/netfilter/nf_conntrack_count') || '0'));
+	let conn_max = +(trim(readfile('/proc/sys/net/netfilter/nf_conntrack_max') || '0'));
+	let lan_dev = 'br-lan';
+	let lan_ip = '';
+	if (bj && type(bj.data.interfaces) == 'array') {
+		for (let iface in bj.data.interfaces) {
+			if (iface.ifname == 'br-lan' || iface.zone == 'lan') {
+				if (iface.ifname)
+					lan_dev = iface.ifname;
+				break;
+			}
+		}
+	}
+	let lan_rates = bandix_iface_rates(bmaps, lan_dev);
+	let lan = {
+		device: lan_dev,
+		down_bps: lan_rates.down_bps,
+		up_bps: lan_rates.up_bps,
+		rx_bytes: 0,
+		tx_bytes: 0
+	};
+	let cl = bandix_clients_list(bj, lan_ip);
+	let clients = cl.clients;
+	let wan_rates = {};
+	if (bj) {
+		let u = null;
+		try { u = ubus.connect(); } catch (e) { u = null; }
+		let ctx = cursor();
+		ctx.load('network');
+		ctx.load('firewall');
+		let names = collect_wan_names(ctx, u);
+		let wans = [];
+		for (let name in names) {
+			let st = iface_status(u, name);
+			let dev = st.l3_device || ctx.get('network', name, 'device') || '';
+			push(wans, {
+				name,
+				device: dev,
+				up: (st.up == true || st.up == 1)
+			});
+		}
+		wan_rates = bandix_wan_rates(bmaps, wans);
+		ubus_close(u);
+	}
+	print(sprintf('%J\n', {
+		ts: int(+up * 1000),
+		lan,
+		clients,
+		wan_rates,
+		rate_source: 'bandix',
+		clients_sum: { online: cl.online, leases: cl.leases },
+		sys: {
+			clock, clock_hms, clock_day,
+			load_1: la[0] || '0.00',
+			load_5: la[1] || '0.00',
+			load_15: la[2] || '0.00',
+			temp_c: max_temp_c(),
+			cpu_pct: cpu_pct(),
+			mem_pct: mem_percent(),
+			conn, conn_max,
+			uptime: int(up)
+		}
+	}));
+}
+
 function snapshot() {
 	let ctx = cursor();
 	ctx.load('network');
 	ctx.load('firewall');
 	try { ctx.load('mwan3'); } catch (e) {}
 	try { ctx.load('dhcp'); } catch (e) {}
-	let u = ubus.connect();
+	let u = null;
+	try { u = ubus.connect(); } catch (e) { u = null; }
 	let names = collect_wan_names(ctx, u);
 	let mw = mwan3_ifaces(u);
 
@@ -414,56 +387,25 @@ function snapshot() {
 	if (type(la4) == 'array' && la4[0] && la4[0].address)
 		lan_ip = la4[0].address;
 	let lb = bytes_of(lan_dev);
-	let online_set = mac_online(lan_dev);
-	let online = 0;
-	for (let _ in online_set)
-		online++;
-
-	let ct = ct_client_bytes(lan_ip);
-	let clients = [];
-	let leases = 0;
 	let now = time();
-	let seen = {};
-	let arp = arp_macs();
-	let staticn = dhcp_static_names(ctx);
-	for (let line in split(readfile('/tmp/dhcp.leases') || '', '\n')) {
-		let f = split(trim(line), /[ \t]+/);
-		if (length(f) < 2)
-			continue;
-		let exp = +f[0], mac = f[1], ip = f[2], host = f[3];
-		if (mac == null || mac == '' || mac == '*')
-			continue;
-		if (exp != 0 && exp < now)
-			continue;
-		leases++;
-		mac = lc(mac);
-		if (ip && !arp[ip])
-			arp[ip] = mac;
-		let hostname = host_label(host, mac, ip, staticn);
-		let acc = (ip && ct[ip]) ? ct[ip] : { rx: 0, tx: 0, conns: 0 };
-		if (ip)
-			seen[ip] = true;
-		push(clients, {
-			mac, ip: ip || '', hostname, name: hostname || ip,
-			online: online_set[mac] ? true : false,
-			rx_bytes: acc.rx, tx_bytes: acc.tx, conns: acc.conns
-		});
-	}
-	for (let ip in ct) {
-		if (seen[ip])
-			continue;
-		let mac = arp[ip] || '';
-		let hostname = host_label('', mac, ip, staticn);
-		push(clients, {
-			mac, ip, hostname, name: hostname || ip,
-			online: mac ? (online_set[mac] ? true : false) : true,
-			rx_bytes: ct[ip].rx, tx_bytes: ct[ip].tx, conns: ct[ip].conns
-		});
+
+	let bj = bandix_load(false);
+	let bmaps = bandix_build_maps(bj);
+	let lan_rates = bandix_iface_rates(bmaps, lan_dev);
+	let cl = bandix_clients_list(bj, lan_ip);
+	let clients = cl.clients;
+	let online = cl.online;
+	let leases = cl.leases;
+	for (let i = 0; i < length(wans); i++) {
+		let dev = wans[i].device || '';
+		let name = wans[i].name || '';
+		let wr = bandix_resolve_iface_rates(bmaps, dev || name, [ name, dev ]);
+		wans[i].down_bps = wr.down_bps;
+		wans[i].up_bps = wr.up_bps;
 	}
 
 	let conn = +(trim(readfile('/proc/sys/net/netfilter/nf_conntrack_count') || '0'));
 	let conn_max = +(trim(readfile('/proc/sys/net/netfilter/nf_conntrack_max') || '0'));
-	let proto = conn_by_proto();
 	let up = split(trim(readfile('/proc/uptime') || '0'), /[ \t]+/)[0];
 	let clock = now_fmt();
 	let clock_hms = '';
@@ -473,29 +415,173 @@ function snapshot() {
 		clock_day = hm[1];
 		clock_hms = hm[2];
 	}
+	let la = split(trim(readfile('/proc/loadavg') || '0.00 0.00 0.00'), /[ \t]+/);
 
 	print(sprintf('%J\n', {
 		ts: int(+up * 1000),
 		wans,
-		lan: { device: lan_dev, ipv4: lan_ip, rx_bytes: lb.rx, tx_bytes: lb.tx, speed: link_mbps(lan_dev) },
+		lan: {
+			device: lan_dev, ipv4: lan_ip,
+			rx_bytes: lb.rx, tx_bytes: lb.tx, speed: link_mbps(lan_dev),
+			down_bps: lan_rates.down_bps, up_bps: lan_rates.up_bps
+		},
 		clients,
 		clients_sum: { online, leases },
 		sys: {
 			clock, clock_hms, clock_day,
+			load_1: la[0] || '0.00',
+			load_5: la[1] || '0.00',
+			load_15: la[2] || '0.00',
 			temp_c: max_temp_c(),
 			cpu_pct: cpu_pct(),
+			mem_pct: mem_percent(),
 			conn, conn_max,
-			conn_tcp: proto.tcp,
-			conn_udp: proto.udp,
-			conn_icmp: proto.icmp
+			conn_tcp: 0,
+			conn_udp: 0,
+			conn_icmp: 0,
+			uptime: int(up)
 		},
-		disks: disks_overview()
+		disks: [],
+		rates: bandix_rate_meta(bj, wans, lan_dev, clients),
+		rate_source: 'bandix'
 	}));
+	ubus_close(u);
+}
+
+function layout_path() {
+	return '/etc/lede-topo.json';
+}
+
+function layout_get() {
+	let data = {};
+	let raw = readfile(layout_path()) || '';
+	if (raw != '') {
+		try {
+			data = json(raw);
+		} catch (e) {
+			data = {};
+		}
+	}
+	if (type(data) != 'object')
+		data = {};
+	print(sprintf('%J\n', data));
+}
+
+function is_wan_name(ctx, name) {
+	if (type(name) != 'string' || name == '' || match(name, /[^A-Za-z0-9_]/))
+		return false;
+	if (name == 'lan' || name == 'loopback' || name == 'wan6')
+		return false;
+	if (ctx.get('mwan3', name) != null)
+		return true;
+	let proto = ctx.get('network', name, 'proto');
+	if (proto == 'pppoe' || proto == 'pptp' || proto == 'l2tp' || proto == '3g' || proto == 'qmi' || proto == 'ncm')
+		return true;
+	if (match(name, /^[Ww]an/))
+		return true;
+	return false;
+}
+
+function wan_restart() {
+	let req = {};
+	try {
+		req = json(readfile('/dev/stdin') || '{}');
+	} catch (e) {
+		req = {};
+	}
+	let name = trim(req.name || '');
+	let ctx = cursor();
+	ctx.load('network');
+	ctx.load('mwan3');
+	if (!is_wan_name(ctx, name)) {
+		print('{ "ok": false, "error": "not a wan" }\n');
+		return;
+	}
+	system(sprintf('(ifdown %s; sleep 2; ifup %s) >/dev/null 2>&1 &', name, name));
+	print('{ "ok": true, "name": "' + name + '" }\n');
+}
+
+function gateway_reboot() {
+	let src = 'overview';
+	try {
+		let req = json(readfile('/dev/stdin') || '{}');
+		if (type(req) == 'object' && req.source != null) {
+			let s = replace('' + req.source, /[^a-zA-Z0-9_-]/g, '');
+			if (s != '')
+				src = s;
+		}
+	} catch (e) {}
+	system("/usr/libexec/lede-stamp-reboot 'user-" + src + ":用户点击重启' '" + src + "' >/dev/null 2>&1");
+	system('(sleep 1; reboot) >/dev/null 2>&1 &');
+	print('{ "ok": true }\n');
+}
+
+function layout_set() {
+	let req = {};
+	try {
+		req = json(readfile('/dev/stdin') || '{}');
+	} catch (e) {
+		req = {};
+	}
+	let layout = req;
+	if (type(req) == 'object' && req.layout != null)
+		layout = req.layout;
+	if (type(layout) != 'object')
+		layout = {};
+	layout.saved = 1;
+	let body = sprintf('%J', layout);
+	if (length(body) > 262144) {
+		print('{ "ok": false, "error": "too large" }\n');
+		return;
+	}
+	writefile(layout_path(), body);
+	print('{ "ok": true }\n');
+}
+
+function hwinfo_path() {
+	if (stat('/tmp/lede-hwinfo.json') != null)
+		return '/tmp/lede-hwinfo.json';
+	if (stat('/data/metrics/lede-hwinfo.json') != null)
+		return '/data/metrics/lede-hwinfo.json';
+	return '/tmp/lede-hwinfo.json';
+}
+
+function emit_hwinfo() {
+	let path = hwinfo_path();
+	let raw = readfile(path) || '';
+	if (raw == '') {
+		system('/usr/libexec/lede-hwinfo >/dev/null 2>&1');
+		raw = readfile('/tmp/lede-hwinfo.json') || '{}';
+	}
+	if (!match(raw, /\n$/))
+		raw += '\n';
+	print(raw);
+}
+
+function hwinfo_refresh() {
+	system('/usr/libexec/lede-hwinfo >/dev/null 2>&1');
+	emit_hwinfo();
 }
 
 let cmd = ARGV[0];
 if (cmd == 'list') {
-	print('{ "snapshot": {} }\n');
+	print('{ "snapshot": {}, "pulse": {}, "rate_hist": { "window": 300 }, "layout_get": {}, "layout_set": { "layout": {} }, "wan_restart": { "name": "" }, "gateway_reboot": { "source": "" }, "hwinfo": {}, "hwinfo_refresh": {} }\n');
 } else if (cmd == 'call' && ARGV[1] == 'snapshot') {
 	snapshot();
+} else if (cmd == 'call' && ARGV[1] == 'pulse') {
+	pulse();
+} else if (cmd == 'call' && ARGV[1] == 'rate_hist') {
+	rate_hist();
+} else if (cmd == 'call' && ARGV[1] == 'layout_get') {
+	layout_get();
+} else if (cmd == 'call' && ARGV[1] == 'layout_set') {
+	layout_set();
+} else if (cmd == 'call' && ARGV[1] == 'wan_restart') {
+	wan_restart();
+} else if (cmd == 'call' && ARGV[1] == 'gateway_reboot') {
+	gateway_reboot();
+} else if (cmd == 'call' && ARGV[1] == 'hwinfo') {
+	emit_hwinfo();
+} else if (cmd == 'call' && ARGV[1] == 'hwinfo_refresh') {
+	hwinfo_refresh();
 }

@@ -1,0 +1,5 @@
+#!/bin/sh
+if [ ! -f /tmp/lede-reboot-reason ]; then
+	/usr/libexec/lede-stamp-reboot "cmd:执行了reboot命令（SSH、脚本或系统菜单）" >/dev/null 2>&1 || true
+fi
+exec /bin/busybox reboot "$@"

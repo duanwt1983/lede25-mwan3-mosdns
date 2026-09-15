@@ -1,0 +1,4 @@
+#!/bin/sh
+[ -x /etc/init.d/lede-data ] && /etc/init.d/lede-data enable
+[ -x /usr/libexec/lede-data-setup ] && /usr/libexec/lede-data-setup
+exit 0

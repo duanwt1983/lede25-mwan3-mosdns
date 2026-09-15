@@ -29,6 +29,20 @@ function cfg_get(ctx, key) {
 	return ctx.get('mosdns', 'config', key);
 }
 
+function data_ok() {
+	let m = '';
+	try { m = readfile('/proc/mounts') || ''; } catch (e) {}
+	return match(m, / \/data /) != null;
+}
+
+function mos_cache() {
+	if (data_ok()) {
+		system('mkdir -p /data/mosdns/cache');
+		return '/data/mosdns/cache';
+	}
+	return '/etc/mosdns';
+}
+
 function l3_of(u, net) {
 	try {
 		let st = u.call(`network.interface.${net}`, 'status');
@@ -106,8 +120,6 @@ function emit_pipeline(suf, cache, loc, rem, rol_ms, use_stats, no_leak) {
 	s += sprintf("  - tag: main_sequence%s\n    type: sequence\n    args:\n", suf);
 	if (use_stats)
 		s += "      - exec: $stats_collector\n";
-	if (cache != '')
-		s += sprintf("      - exec: $%s\n      - exec: jump has_resp_sequence\n", cache);
 	s += "      - exec: $hosts\n";
 	s += "      - exec: jump has_resp_sequence\n";
 	s += "      - exec: $redirect\n";
@@ -116,6 +128,8 @@ function emit_pipeline(suf, cache, loc, rem, rol_ms, use_stats, no_leak) {
 	s += "      - exec: jump has_resp_sequence\n";
 	s += "      - exec: $query_is_blocklist\n";
 	s += "      - exec: jump has_resp_sequence\n";
+	if (cache != '')
+		s += sprintf("      - exec: $%s\n      - exec: jump has_resp_sequence\n", cache);
 	s += sprintf("      - exec: $query_is_greylist%s\n", suf);
 	s += "      - exec: jump has_resp_sequence\n";
 	s += "      - exec: $query_is_ptr\n";
@@ -141,9 +155,46 @@ function cache_plugin(tag, size, ttl, dump, interval, do_dump) {
 	return s + "\n";
 }
 
+function ad_list_files(ctx) {
+	let files = [];
+	if (!as_bool(cfg_get(ctx, 'adblock'), false))
+		return files;
+	let src = as_list(cfg_get(ctx, 'ad_source'));
+	for (let url in src) {
+		if (url == 'geosite.dat') {
+			system('mkdir -p /var/mosdns');
+			system("geo2txt geosite -f /usr/share/v2ray/geosite.dat -e category-ads-all -o /var/mosdns >/dev/null 2>&1");
+			let p = '/var/mosdns/geosite_category-ads-all.txt';
+			let st = stat(p);
+			if (st && st.size > 0)
+				push(files, p);
+			continue;
+		}
+		if (match(url, /^file:\/\//)) {
+			let p = substr(url, 7);
+			let st = stat(p);
+			if (st && st.size > 0)
+				push(files, p);
+			continue;
+		}
+		let parts = split(url, '/');
+		let filename = parts[length(parts) - 1];
+		if (filename == null || filename == '' || match(filename, /[^A-Za-z0-9._-]/))
+			continue;
+		let p = '/etc/mosdns/rule/adlist/' + filename;
+		let st = stat(p);
+		if (st && st.size > 0)
+			push(files, p);
+	}
+	return files;
+}
+
 function ensure_path(path, seed) {
 	if (!path || match(path, /[^A-Za-z0-9_./-]/))
 		return;
+	let dir = replace(`${path}`, /\/[^\/]+$/, '');
+	if (dir != '' && dir != path)
+		system(sprintf("mkdir -p '%s' 2>/dev/null", dir));
 	let st = stat(path);
 	if (st && st.size > 0)
 		return;
@@ -157,7 +208,10 @@ function ensure_path(path, seed) {
 	writefile(path, '');
 }
 
-function shared_plugins() {
+function shared_plugins(adfiles) {
+	let block_files = "        - \"/etc/mosdns/rule/blocklist.txt\"\n";
+	for (let f in adfiles)
+		block_files += sprintf("        - \"%s\"\n", f);
 	return `  - tag: geosite_cn
     type: domain_set
     args:
@@ -186,8 +240,7 @@ function shared_plugins() {
     type: domain_set
     args:
       files:
-        - "/etc/mosdns/rule/blocklist.txt"
-
+${block_files}
   - tag: greylist
     type: domain_set
     args:
@@ -243,6 +296,13 @@ let listen_addr = cfg_get(ctx, 'listen_address') || '0.0.0.0';
 let api = cfg_get(ctx, 'listen_port_api') || '9091';
 let log_level = cfg_get(ctx, 'log_level') || 'info';
 let log_file = cfg_get(ctx, 'log_file') || '/var/log/mosdns.log';
+log_file = replace(`${log_file}`, /^\s+|\s+$/g, '');
+if (match(log_file, /\/$/) || !match(replace(replace(log_file, /\/+$/, ''), /.*\//, ''), /\./)) {
+	log_file = replace(log_file, /\/+$/, '');
+	if (log_file == '')
+		log_file = '/var/log';
+	log_file = log_file + '/mosdns.log';
+}
 let cache_size = cfg_get(ctx, 'cache_size') || '20000';
 let lazy_ttl = cfg_get(ctx, 'lazy_cache_ttl') || '86400';
 let stats_cap = cfg_get(ctx, 'stats_capacity') || '2000';
@@ -302,9 +362,10 @@ if (length(wans) < 1)
 
 let yaml = sprintf("log:\n  level: %s\n  file: \"%s\"\n\n", log_level, log_file);
 yaml += sprintf("api:\n  http: \"0.0.0.0:%s\"\n\ninclude: []\n\nplugins:\n", api);
+let cdir = mos_cache();
 if (use_stats)
-	yaml += sprintf("  - tag: stats_collector\n    type: stats_api\n    args:\n      capacity: %s\n      dump_file: \"/etc/mosdns/stats.dump\"\n      dump_interval: %s\n\n", stats_cap, stats_int);
-yaml += shared_plugins();
+	yaml += sprintf("  - tag: stats_collector\n    type: stats_api\n    args:\n      capacity: %s\n      dump_file: \"%s/stats.dump\"\n      dump_interval: %s\n\n", stats_cap, cdir, stats_int);
+yaml += shared_plugins(ad_list_files(ctx));
 
 let local_tags = [];
 let remote_tags = [];
@@ -328,7 +389,7 @@ if (follow) {
 		let suf = '_w' + i;
 		let ctag = use_cache ? ('lazy_cache_w' + i) : '';
 		if (use_cache)
-			yaml += cache_plugin(ctag, cache_size, lazy_ttl, '/etc/mosdns/cache_wan' + i + '.dump', dump_int, do_dump);
+			yaml += cache_plugin(ctag, cache_size, lazy_ttl, cdir + '/cache_wan' + i + '.dump', dump_int, do_dump);
 		yaml += seq_prefer('local_sequence' + suf, prefer_cn, 'fw_l' + i);
 		yaml += seq_prefer('remote_sequence' + suf, prefer_remote, 'fw_r' + i);
 		yaml += emit_pipeline(suf, ctag, 'local_sequence' + suf, 'remote_sequence' + suf, rol_ms, use_stats, no_leak);
@@ -340,7 +401,7 @@ if (follow) {
 	yaml += sprintf("  - tag: tcp_server\n    type: tcp_server\n    args:\n      entry: main_sequence_w1\n      listen: \"%s\"\n", listen);
 } else {
 	if (use_cache)
-		yaml += cache_plugin('lazy_cache', cache_size, lazy_ttl, '/etc/mosdns/cache.dump', dump_int, do_dump);
+		yaml += cache_plugin('lazy_cache', cache_size, lazy_ttl, cdir + '/cache.dump', dump_int, do_dump);
 	yaml += emit_forward('forward_sys_local', '', idle, locals, bootstrap);
 	yaml += emit_forward('forward_sys_remote', '', idle, remotes, bootstrap);
 	let fl = fold('dns_l', 'forward_sys_local', local_tags, bound_ms, sys_ms);
@@ -353,20 +414,20 @@ if (follow) {
 	yaml += sprintf("  - tag: tcp_server\n    type: tcp_server\n    args:\n      entry: main_sequence\n      listen: \"%s\"\n", listen);
 }
 
-system('mkdir -p /var/etc /var/log /etc/mosdns');
+system('mkdir -p /var/etc /var/log /etc/mosdns ' + cdir);
 ensure_path(log_file);
 if (use_stats)
-	ensure_path('/etc/mosdns/stats.dump');
+	ensure_path(cdir + '/stats.dump');
 if (use_cache && do_dump) {
 	let seed = '/usr/share/mosdns/cache.dump';
 	if (follow) {
 		let n = 0;
 		for (let w in wans) {
 			n++;
-			ensure_path('/etc/mosdns/cache_wan' + n + '.dump', seed);
+			ensure_path(cdir + '/cache_wan' + n + '.dump', seed);
 		}
 	} else {
-		ensure_path('/etc/mosdns/cache.dump', seed);
+		ensure_path(cdir + '/cache.dump', seed);
 	}
 }
 writefile('/var/etc/mosdns.yaml', yaml);

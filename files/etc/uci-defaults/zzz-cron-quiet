@@ -1,0 +1,6 @@
+#!/bin/sh
+# BusyBox crond logs every job at err. Keep only real failures.
+uci -q set system.@system[0].cronloglevel='9'
+uci -q commit system
+/etc/init.d/cron restart >/dev/null 2>&1 || true
+exit 0

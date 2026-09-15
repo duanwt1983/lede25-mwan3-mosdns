@@ -1,0 +1,13 @@
+{
+	"admin/system/admin/remote": {
+		"title": "远程管理",
+		"order": 20,
+		"action": {
+			"type": "view",
+			"path": "system/remote"
+		},
+		"depends": {
+			"acl": [ "luci-lede-remote" ]
+		}
+	}
+}

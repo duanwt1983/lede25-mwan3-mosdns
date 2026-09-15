@@ -5,11 +5,19 @@
 'require poll';
 'require dom';
 
-function levelClass(lv) {
-	if (lv === '严重') return 'danger';
-	if (lv === '中等') return 'warning';
-	if (lv === '一般') return 'notice';
-	return 'info';
+function levelLook(lv) {
+	if (lv === '严重') return { bg: '#c62828', fg: '#fff', row: '#fdecea' };
+	if (lv === '中等') return { bg: '#ef6c00', fg: '#fff', row: '#fff4e5' };
+	if (lv === '一般') return { bg: '#0277bd', fg: '#fff', row: '' };
+	if (lv === '调试') return { bg: '#546e7a', fg: '#fff', row: '' };
+	return { bg: '#607d8b', fg: '#fff', row: '' };
+}
+
+function levelBadge(lv) {
+	const c = levelLook(lv);
+	return E('span', {
+		style: 'display:inline-block;min-width:2.6em;text-align:center;padding:.12em .5em;border-radius:4px;font-weight:700;font-size:12px;background:' + c.bg + ';color:' + c.fg
+	}, lv || '');
 }
 
 function parseJson(stdout) {
@@ -23,27 +31,50 @@ function parseJson(stdout) {
 	}
 }
 
+function colStyle(kind) {
+	const base = 'box-sizing:border-box;vertical-align:top;overflow:hidden;';
+	if (kind === 'time')
+		return base + 'width:15%;white-space:nowrap;text-overflow:ellipsis;';
+	if (kind === 'level')
+		return base + 'width:8%;white-space:nowrap;';
+	if (kind === 'cat')
+		return base + 'width:8%;white-space:nowrap;';
+	if (kind === 'title')
+		return base + 'width:16%;word-break:break-word;white-space:normal;';
+	return base + 'width:53%;word-break:break-word;overflow-wrap:anywhere;white-space:normal;';
+}
+
 function renderTable(rows) {
-	const body = (rows || []).slice().reverse().map(r => E('tr', { 'class': 'tr', 'title': r.raw || '' }, [
-		E('td', { 'class': 'td', 'style': 'white-space:nowrap' }, r.time || ''),
-		E('td', { 'class': 'td' }, E('span', { 'class': 'label label-' + levelClass(r.level) }, r.level || '')),
-		E('td', { 'class': 'td' }, r.cat || ''),
-		E('td', { 'class': 'td' }, E('strong', {}, r.title || '')),
-		E('td', { 'class': 'td' }, r.detail || '')
-	]));
+	const body = [];
+	const list = (rows || []).slice().reverse();
+	for (let i = 0; i < list.length; i++) {
+		const r = list[i];
+		const look = levelLook(r.level);
+		body.push(E('tr', {
+			'class': 'tr',
+			'title': r.raw || '',
+			'style': look.row ? ('background:' + look.row) : ''
+		}, [
+			E('td', { 'class': 'td', 'style': colStyle('time') }, r.time || ''),
+			E('td', { 'class': 'td', 'style': colStyle('level') }, levelBadge(r.level)),
+			E('td', { 'class': 'td', 'style': colStyle('cat') }, r.cat || ''),
+			E('td', { 'class': 'td', 'style': colStyle('title') }, E('strong', {}, r.title || '')),
+			E('td', { 'class': 'td', 'style': colStyle('detail') }, r.detail || '')
+		]));
+	}
 	if (!body.length)
 		body.push(E('tr', { 'class': 'tr' },
 			E('td', { 'class': 'td', colspan: 5 },
 				_('还没有报警记录。请到「系统报警」打开写入日志，并确认钉钉/阈值会触发。存储路径在「日志中心」。'))));
-	return E('table', { 'class': 'table cbi-section-table' }, [
-		E('tr', { 'class': 'tr table-titles' }, [
-			E('th', { 'class': 'th' }, _('时间')),
-			E('th', { 'class': 'th' }, _('级别')),
-			E('th', { 'class': 'th' }, _('类型')),
-			E('th', { 'class': 'th' }, _('发生了什么')),
-			E('th', { 'class': 'th' }, _('说明'))
-		]),
-		...body
+	const head = E('tr', { 'class': 'tr table-titles' }, [
+		E('th', { 'class': 'th', 'style': colStyle('time') }, _('时间')),
+		E('th', { 'class': 'th', 'style': colStyle('level') }, _('级别')),
+		E('th', { 'class': 'th', 'style': colStyle('cat') }, _('分类')),
+		E('th', { 'class': 'th', 'style': colStyle('title') }, _('事件')),
+		E('th', { 'class': 'th', 'style': colStyle('detail') }, _('说明'))
+	]);
+	return E('div', { 'style': 'overflow-x:auto' }, [
+		E('table', { 'class': 'table cbi-section-table', 'style': 'table-layout:fixed;width:100%' }, [head].concat(body))
 	]);
 }
 

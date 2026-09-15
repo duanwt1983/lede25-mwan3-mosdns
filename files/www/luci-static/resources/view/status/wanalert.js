@@ -1,15 +1,4 @@
 'use strict';
-'require view';
-'require uci';
-'require view.status.alertmap as AlertMap';
+'require view.status.wanalert-page as WanPage';
 
-return view.extend({
-	load() {
-		return uci.load('wanalert');
-	},
-
-	render() {
-		this.map = AlertMap.makeMap();
-		return this.map.render();
-	}
-});
+return WanPage;

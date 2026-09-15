@@ -1,5 +1,5 @@
 #!/bin/bash
-# Lean 25 extras: PassWall + mosdns, LibreSpeed LAN, qosmate, samba4, nginx, nft mwan3.
+# Lean 25 extras: PassWall + mosdns, LibreSpeed LAN, qosmate, bandix-plus, samba4, nginx, nft mwan3.
 
 set -euo pipefail
 
@@ -90,6 +90,34 @@ cp -a "$_OVERLAY/package/wireshark" package/wireshark
 chmod 755 package/mosdns-mwan/files/usr/libexec/* package/mosdns-mwan/files/usr/sbin/* \
   package/mosdns-mwan/files/usr/share/mosdns/gen-config-custom \
   package/mosdns-mwan/files/etc/hotplug.d/iface/* 2>/dev/null || true
+chmod 755 files/usr/libexec/lede-wan-https files/etc/init.d/lede-wan-https \
+  files/etc/uci-defaults/zzz-wan-https-10443 \
+  files/usr/libexec/lede-stamp-reboot files/usr/sbin/reboot files/usr/libexec/wan-alert \
+  files/usr/libexec/rpcd/wanmonitor files/etc/hotplug.d/iface/99-lede-netlog \
+  files/usr/libexec/lede-data-setup files/etc/init.d/lede-data files/etc/uci-defaults/zzz-lede-data-paths \
+  files/etc/uci-defaults/10-lede-data-enable \
+  files/etc/init.d/lede-ubus-limits files/etc/uci-defaults/10-lede-ubus-limits \
+  files/usr/libexec/lede-conntrack-tune files/etc/init.d/lede-conntrack \
+  files/etc/uci-defaults/10-lede-conntrack \
+  files/usr/libexec/lede-hwinfo files/etc/init.d/lede-hwinfo \
+  files/etc/uci-defaults/10-lede-hwinfo \
+  files/usr/libexec/lede-mgmt-bind files/etc/uci-defaults/40-lede-mgmt-bind \
+  files/etc/hotplug.d/iface/30-lede-mgmt-bind 2>/dev/null || true
+
+# ubusd/rpcd default nofile=1024; long-open topology + WAN monitor exhausts it.
+lede_bump_ubus_nofile() {
+  local f
+  while IFS= read -r f; do
+    [ -f "$f" ] || continue
+    grep -q 'nofile=' "$f" && continue
+    grep -q 'procd_set_param respawn' "$f" || continue
+    sed -i '/procd_set_param respawn/a\
+	procd_set_param limits nofile="65535 65535"
+' "$f" || true
+  done < <(find package feeds -name 'ubus.init' -o -name 'rpcd.init' 2>/dev/null || true)
+}
+lede_bump_ubus_nofile
+
 _MOSDNS_PATCH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/patches/luci-app-mosdns/apply.sh"
 if [ -x "$_MOSDNS_PATCH" ] || [ -f "$_MOSDNS_PATCH" ]; then
   sh "$_MOSDNS_PATCH" "$(pwd)"
@@ -107,7 +135,7 @@ sed -i 's|include ../../lang/golang/golang-package.mk|include $(TOPDIR)/feeds/pa
 [ -f package/librespeed-go/Makefile ] || { echo "ERROR: librespeed-go Makefile missing"; exit 1; }
 rm -rf feeds/luci/applications/luci-app-netspeedtest package/feeds/luci/luci-app-netspeedtest || true
 
-# QoSmate: CAKE/HFSC QoS on firewall4 + nftables.
+# QoSmate: CAKE/HFSC line shaping on firewall4 + nftables (WAN ingress/egress).
 rm -rf package/qosmate package/luci-app-qosmate
 clone_once package/qosmate https://github.com/hudra0/qosmate
 clone_once package/luci-app-qosmate https://github.com/hudra0/luci-app-qosmate
@@ -131,6 +159,14 @@ PY
 fi
 rm -rf feeds/luci/applications/luci-app-qosmate package/feeds/luci/luci-app-qosmate || true
 
+# Bandix Plus: eBPF per-device traffic stats + per-MAC rate limits.
+rm -rf package/openwrt-bandix-plus package/luci-app-bandix-plus
+clone_once package/openwrt-bandix-plus https://github.com/timsaya/openwrt-bandix-plus
+clone_once package/luci-app-bandix-plus https://github.com/timsaya/luci-app-bandix-plus
+rm -rf feeds/luci/applications/luci-app-bandix-plus package/feeds/luci/luci-app-bandix-plus || true
+_LUCI_BANDIX_PATCH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/patches/luci-app-bandix-plus/apply.sh"
+[ -x "$_LUCI_BANDIX_PATCH" ] && "$_LUCI_BANDIX_PATCH" || bash "$_LUCI_BANDIX_PATCH" 2>/dev/null || true
+
 rm -rf package/ddns-go package/luci-app-ddns-go /tmp/luci-app-ddns-go
 git clone --depth=1 https://github.com/sirpdboy/luci-app-ddns-go /tmp/luci-app-ddns-go
 if [ -d /tmp/luci-app-ddns-go/ddns-go ]; then
@@ -151,7 +187,6 @@ for mk in package/luci-theme-argon/Makefile package/luci-app-argon-config/Makefi
     sed -i 's|include $(TOPDIR)/feeds/luci/luci.mk|PKGARCH:=all\ninclude $(TOPDIR)/feeds/luci/luci.mk|' "$mk"
   fi
 done
-
 # Lean luci already ships diskman; that copy hard-depends on smartmontools.
 # Using only lisaac's tree lets us drop SMART/RAID deps without breaking install.
 rm -rf feeds/luci/applications/luci-app-diskman package/feeds/luci/luci-app-diskman
@@ -338,6 +373,28 @@ if [ -f files/www/luci-static/resources/view/network/packetcap.js ]; then
   done
 fi
 
+if [ -f files/www/luci-static/resources/view/system/remote.js ]; then
+  find feeds/luci package -path '*/view/system/system.js' -type f 2>/dev/null | while read -r f; do
+    case "$f" in
+      */luci-mod-system/*)
+        cp files/www/luci-static/resources/view/system/remote.js "$(dirname "$f")/remote.js"
+        echo "remote: installed $(dirname "$f")/remote.js"
+        ;;
+    esac
+  done
+fi
+
+if [ -f files/www/luci-static/resources/view/system/crontab.js ]; then
+  find feeds/luci package -path '*/view/system/crontab.js' -type f 2>/dev/null | while read -r f; do
+    case "$f" in
+      */luci-mod-system/*)
+        cp files/www/luci-static/resources/view/system/crontab.js "$f"
+        echo "crontab: replaced $f"
+        ;;
+    esac
+  done
+fi
+
 if [ -f files/www/luci-static/resources/view/status/index.js ]; then
   find feeds/luci package -path '*/view/status/index.js' -type f 2>/dev/null | while read -r f; do
     case "$f" in
@@ -352,7 +409,7 @@ if [ -f files/www/luci-static/resources/view/status/index.js ]; then
           cp files/www/luci-static/resources/view/status/syslog.js "$(dirname "$f")/syslog.js"
           echo "syslog: replaced $f with readable syslog.js"
         fi
-        for extra in logcenter.js alertlog.js wanmonitor.js wanalert.js alertmap.js; do
+        for extra in logcenter.js loghub.js alertlog.js wanmonitor.js wanalert.js alertmap.js mosdnscache.js; do
           if [ -f "files/www/luci-static/resources/view/status/$extra" ]; then
             cp "files/www/luci-static/resources/view/status/$extra" "$(dirname "$f")/$extra"
             echo "status: installed $(dirname "$f")/$extra"
@@ -366,16 +423,17 @@ fi
 python3 - <<'PY' || true
 from pathlib import Path
 import json
-hide = {"admin/status/syslog", "admin/status/alertlog"}
+hide = {"admin/status/syslog", "admin/status/alertlog", "admin/status/logs", "admin/status/logs/syslog", "admin/status/logs/dmesg"}
+realtime_views = ("load.js", "bandwidth.js", "wireless.js", "connections.js")
 for p in Path(".").glob("**/luci-mod-status/**/menu.d/*.json"):
     try:
         data = json.loads(p.read_text(encoding="utf-8"))
     except Exception:
         continue
     changed = False
-    for k in hide:
-        if k in data and data[k].get("enabled") is not False:
-            data[k]["enabled"] = False
+    for k in list(data):
+        if k in hide or k.startswith("admin/status/realtime"):
+            del data[k]
             changed = True
     if "admin/status/overview" in data:
         dep = data["admin/status/overview"].setdefault("depends", {})
@@ -385,7 +443,25 @@ for p in Path(".").glob("**/luci-mod-status/**/menu.d/*.json"):
             changed = True
     if changed:
         p.write_text(json.dumps(data, indent="\t", ensure_ascii=False) + "\n", encoding="utf-8")
-        print("hid status log menus", p)
+        print("hid status log/realtime menus", p)
+
+for p in Path(".").glob("**/luci-mod-status/**/rpcd/acl.d/luci-mod-status.json"):
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        continue
+    if "luci-mod-status-realtime" in data:
+        del data["luci-mod-status-realtime"]
+        p.write_text(json.dumps(data, indent="\t", ensure_ascii=False) + "\n", encoding="utf-8")
+        print("removed luci-mod-status-realtime acl", p)
+
+for name in realtime_views:
+    for p in Path(".").glob(f"**/luci-mod-status/**/view/status/{name}"):
+        try:
+            p.unlink()
+            print("removed realtime view", p)
+        except Exception:
+            pass
 
 for p in Path(".").glob("**/rpcd/acl.d/luci-mod-status-index.json"):
     try:
@@ -397,10 +473,47 @@ for p in Path(".").glob("**/rpcd/acl.d/luci-mod-status-index.json"):
         continue
     ubus = idx.setdefault("read", {}).setdefault("ubus", {})
     methods = ubus.get("wanmonitor") or []
-    if "snapshot" not in methods:
-        ubus["wanmonitor"] = list(methods) + ["snapshot"]
+    for extra in ("snapshot", "layout_get"):
+        if extra not in methods:
+            methods.append(extra)
+    ubus["wanmonitor"] = methods
+    wubus = idx.setdefault("write", {}).setdefault("ubus", {})
+    wmethods = wubus.get("wanmonitor") or []
+    if "layout_set" not in wmethods:
+        wmethods.append("layout_set")
+    for extra in ("wan_restart", "gateway_reboot"):
+        if extra not in wmethods:
+            wmethods.append(extra)
+    wubus["wanmonitor"] = wmethods
+    p.write_text(json.dumps(data, indent="\t", ensure_ascii=False) + "\n", encoding="utf-8")
+    print("acl: wanmonitor layout on", p)
+
+for p in Path(".").glob("**/luci-app-samba4/**/menu.d/*.json"):
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        continue
+    if "admin/nas/samba4" not in data and "admin/services/samba4" not in data:
+        continue
+    data.pop("admin/nas/samba4", None)
+    data["admin/services/samba4"] = {
+        "title": "网络共享",
+        "order": 80,
+        "action": {"type": "view", "path": "samba4"},
+        "depends": {"acl": ["luci-app-samba4"], "uci": {"samba4": True}},
+    }
+    p.write_text(json.dumps(data, indent="\t", ensure_ascii=False) + "\n", encoding="utf-8")
+    print("samba menu -> services", p)
+
+for p in Path(".").glob("**/luci-base/**/menu.d/*.json"):
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        continue
+    if "admin/nas" in data and data["admin/nas"].get("enabled") is not False:
+        data["admin/nas"]["enabled"] = False
         p.write_text(json.dumps(data, indent="\t", ensure_ascii=False) + "\n", encoding="utf-8")
-        print("acl: wanmonitor snapshot on", p)
+        print("disabled NAS menu", p)
 PY
 
 # Only install packages that still live in feeds. Names already cloned into
@@ -434,6 +547,8 @@ assert_pkg luci-app-argon-config
 assert_pkg librespeed-go
 assert_pkg qosmate
 assert_pkg luci-app-qosmate
+assert_pkg bandix-plus
+assert_pkg luci-app-bandix-plus
 assert_pkg luci-app-diskman
 assert_pkg mwan3
 assert_pkg luci-app-mwan3
@@ -441,6 +556,7 @@ assert_pkg luci-app-passwall
 assert_pkg luci-app-samba4
 assert_pkg tcpdump
 assert_pkg wireshark
+assert_pkg ip-full
 
 rm -rf feeds/luci/applications/luci-app-diskman package/feeds/luci/luci-app-diskman
 if grep -q '+smartmontools' package/luci-app-diskman/Makefile; then

@@ -1,0 +1,21 @@
+#!/bin/sh
+[ -f /etc/config/wanalert ] || exit 0
+
+seed() {
+	uci -q get "wanalert.main.$1" >/dev/null 2>&1 && return 0
+	uci set "wanalert.main.$1=$2"
+}
+
+for o in alert_down alert_up alert_all_down alert_cpu alert_load alert_mem \
+	alert_disk alert_temp alert_conntrack alert_dhcp alert_arp alert_overlay alert_hw; do
+	seed "$o" 1
+done
+
+for o in alert_track alert_link_speed alert_ppp_fail alert_wan_bw alert_new_mac \
+	alert_burst_down alert_burst_up alert_login_fail alert_isp \
+	alert_smart alert_dns; do
+	seed "$o" 0
+done
+
+uci commit wanalert
+exit 0

@@ -32,15 +32,34 @@ cmd_stop() {
 	exit 0
 }
 
+sync_lb_mode() {
+	local mode
+	mode="$(uci -q get mwan3.globals.lede_lb_hash)"
+	[ "$mode" = ip ] || mode=flow
+	uci -q set mwan3.globals.lede_lb_hash="$mode"
+	if [ "$mode" = flow ] && [ "$(uci -q get mwan3.default.sticky)" = 1 ]; then
+		uci -q set mwan3.default.sticky='0'
+	fi
+}
+
+flush_sticky() {
+	nft flush set inet mwan3 mwan3_sticky_v4_default_1 2>/dev/null || true
+	nft flush set inet mwan3 mwan3_sticky_v4_default_2 2>/dev/null || true
+	nft flush set inet mwan3 mwan3_sticky_v4_default_3 2>/dev/null || true
+}
+
 cmd_restart() {
 	printf '{"ok":true,"running":1}\n'
 	(
 		sync_mac_rules
 		shorten_extra_rules
+		sync_lb_mode
 		uci commit mwan3 >/dev/null 2>&1 || true
 		/etc/init.d/mwan3 enable >/dev/null 2>&1 || true
 		/etc/init.d/mwan3 restart >/tmp/lede-mwan3-setup.log 2>&1 || true
-		[ -x /usr/libexec/wan-src-hash ] && /usr/libexec/wan-src-hash >>/tmp/lede-mwan3-setup.log 2>&1 || true
+		flush_sticky
+		[ -x /usr/libexec/wan-src-hash ] && /usr/libexec/wan-src-hash >>/tmp/lede-mwan3-setup.log 2>&1 || ucode /usr/libexec/wan-src-hash >>/tmp/lede-mwan3-setup.log 2>&1 || true
+		ACTION= /bin/sh /etc/hotplug.d/iface/27-mwan3-iface-default >>/tmp/lede-mwan3-setup.log 2>&1 || true
 	) >/dev/null 2>&1 &
 	exit 0
 }
@@ -142,6 +161,22 @@ shorten_extra_rules() {
 		echo "$new" | grep -q '^[A-Za-z0-9_]\{1,15\}$' || continue
 		uci_rename_rule "$sid" "$new"
 	done
+}
+
+prune_orphan_iface_policy() {
+	local pol sid
+	pol=$1
+	case "$pol" in
+		p_*) ;;
+		*) return 0 ;;
+	esac
+	[ "$pol" = balanced ] && return 0
+	[ "$(uci -q get "mwan3.$pol")" = policy ] || return 0
+	[ "$(uci -q get "mwan3.$pol.lede_auto")" = 1 ] && return 0
+	for sid in $(uci -q show mwan3 | sed -n 's/^mwan3\.\([^=]*\)=rule$/\1/p'); do
+		[ "$(uci -q get "mwan3.$sid.use_policy")" = "$pol" ] && return 0
+	done
+	uci -q delete "mwan3.$pol"
 }
 
 ensure_iface_policy() {
@@ -361,7 +396,7 @@ cmd_extra_isp() {
 }
 
 cmd_extra_del() {
-	local name=""
+	local name="" pol=""
 	while [ $# -gt 0 ]; do
 		case "$1" in
 			--name) name=$2; shift 2 ;;
@@ -380,7 +415,9 @@ cmd_extra_del() {
 		echo '{"ok":false,"error":"系统基础规则请用「删除负载」清掉"}'
 		exit 1
 	}
+	pol=$(uci -q get "mwan3.$name.use_policy")
 	uci -q delete "mwan3.$name"
+	prune_orphan_iface_policy "$pol"
 	uci commit mwan3
 	maybe_reload
 	printf '{"ok":true}\n'
@@ -411,6 +448,7 @@ TIMEOUT=600
 INTERVAL=5
 DOWN=3
 UP=3
+HASH_MODE="flow"
 
 while [ $# -gt 0 ]; do
 	case "$1" in
@@ -441,6 +479,13 @@ while [ $# -gt 0 ]; do
 			shift 2
 			;;
 		--sticky) STICKY=$2; shift 2 ;;
+		--hash-mode)
+			case "$2" in
+				ip|flow) HASH_MODE=$2 ;;
+				*) HASH_MODE=flow ;;
+			esac
+			shift 2
+			;;
 		--timeout) TIMEOUT=$2; shift 2 ;;
 		--interval) INTERVAL=$2; shift 2 ;;
 		--down) DOWN=$2; shift 2 ;;
@@ -515,6 +560,7 @@ uci -q delete mwan3.default 2>/dev/null || true
 
 uci -q set mwan3.globals=globals
 uci -q set mwan3.globals.mmx_mask='0x3F00'
+uci -q set mwan3.globals.lede_lb_hash="$HASH_MODE"
 
 # Same network.metric on several WANs → equal-cost defaults in main.
 # mwan3 still marks LAN, but rtmon/copy-from-main and router-own
@@ -591,6 +637,9 @@ uci set mwan3.default=rule
 uci set mwan3.default.family=ipv4
 uci set mwan3.default.proto=all
 uci set mwan3.default.src_ip="$SRC"
+if [ "$HASH_MODE" = flow ]; then
+	STICKY=0
+fi
 uci set mwan3.default.sticky="$STICKY"
 uci set mwan3.default.timeout="$TIMEOUT"
 uci set mwan3.default.use_policy=balanced

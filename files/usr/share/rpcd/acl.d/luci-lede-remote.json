@@ -1,0 +1,17 @@
+{
+	"luci-lede-remote": {
+		"description": "Toggle WAN HTTPS for LuCI",
+		"read": {
+			"uci": [ "lede-remote" ],
+			"file": {
+				"/usr/libexec/lede-wan-https": [ "exec" ]
+			}
+		},
+		"write": {
+			"uci": [ "lede-remote" ],
+			"file": {
+				"/usr/libexec/lede-wan-https": [ "exec" ]
+			}
+		}
+	}
+}

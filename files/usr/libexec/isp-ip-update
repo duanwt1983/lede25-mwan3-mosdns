@@ -85,11 +85,29 @@ migrate_url_lists url_other
 
 echo "FAIL running" > "$STATUS"
 
+proxy_url() {
+	local url="$1"
+	local proxy
+	proxy="$(uci_get github_proxy)"
+	proxy="${proxy%/}"
+	[ -n "$proxy" ] || { echo "$url"; return 0; }
+	case "$url" in
+		https://github.com/*|https://raw.githubusercontent.com/*|https://gist.githubusercontent.com/*|http://github.com/*|http://raw.githubusercontent.com/*)
+			echo "${proxy}/${url}"
+			;;
+		*)
+			echo "$url"
+			;;
+	esac
+}
+
 fetch() {
-	local url="$1" out="$2"
+	local orig="$1" out="$2" url
+	url="$(proxy_url "$orig")"
 	if ! ip -4 route show default 2>/dev/null | grep -q .; then
 		return 1
 	fi
+	[ "$url" = "$orig" ] || log "proxy $orig -> $url"
 	if command -v curl >/dev/null 2>&1; then
 		curl -4 -fsSL --max-time 40 --connect-timeout 12 "$url" -o "$out"
 	else

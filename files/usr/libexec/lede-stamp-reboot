@@ -1,0 +1,94 @@
+#!/bin/sh
+# Record why we are about to reboot. Do not overwrite a more specific mark.
+reason=${1:-cmd:执行了reboot命令（SSH、脚本或系统菜单）}
+via=${2:-}
+store_dir() {
+	p=$(uci -q get lede-log.alert.path 2>/dev/null)
+	[ -z "$p" ] && p=$(uci -q get wanalert.main.log_path 2>/dev/null)
+	[ -z "$p" ] && p=$(uci -q get lede-log.syslog.path 2>/dev/null)
+	[ -z "$p" ] && return 1
+	p=${p%/}
+	if [ -d "$p" ]; then
+		echo "$p"
+		return 0
+	fi
+	echo "${p%/*}"
+}
+mkdir -p /tmp
+dir=$(store_dir)
+[ -n "$dir" ] || dir=/tmp
+mkdir -p "$dir" 2>/dev/null || dir=/tmp
+mark="$dir/.shutdown-mark"
+if [ -f "$mark" ]; then
+	echo "$reason" > /tmp/lede-reboot-reason 2>/dev/null || true
+	exit 0
+fi
+
+lookup_mac() {
+	ip="$1"
+	[ -n "$ip" ] || return 0
+	mac=$(awk -v ip="$ip" '$1==ip {print $4; exit}' /proc/net/arp 2>/dev/null)
+	if [ -n "$mac" ] && [ "$mac" != "00:00:00:00:00:00" ]; then
+		echo "$mac"
+		return 0
+	fi
+	if [ -f /tmp/dhcp.leases ]; then
+		awk -v ip="$ip" '$3==ip {print $2; exit}' /tmp/dhcp.leases
+	fi
+}
+
+lookup_name() {
+	ip="$1"
+	[ -n "$ip" ] || return 0
+	if [ -f /tmp/dhcp.leases ]; then
+		awk -v ip="$ip" '$3==ip { if ($4!="" && $4!="*") print $4; exit }' /tmp/dhcp.leases
+	fi
+}
+
+peer_ips() {
+	if command -v netstat >/dev/null 2>&1; then
+		netstat -tn 2>/dev/null | awk '
+			$1=="tcp" && $6=="ESTABLISHED" {
+				n=split($4, a, ":"); lp=a[n];
+				n=split($5, b, ":"); rip=b[1];
+				if (n==2 && (lp=="22" || lp=="80" || lp=="443" || lp=="10443" || lp=="81"))
+					print rip;
+			}'
+	fi
+	if [ -n "$SSH_CONNECTION" ]; then
+		echo "$SSH_CONNECTION" | awk '{print $1}'
+	fi
+}
+
+ops=""
+seen="|"
+for ip in $(peer_ips | awk 'NF && $0 !~ /^127\./' | sort -u); do
+	case "$seen" in
+	*"|$ip|"*) continue ;;
+	esac
+	seen="${seen}${ip}|"
+	mac=$(lookup_mac "$ip")
+	hn=$(lookup_name "$ip")
+	bit="ip=$ip"
+	[ -n "$mac" ] && bit="$bit mac=$mac"
+	[ -n "$hn" ] && bit="$bit name=$hn"
+	if [ -n "$ops" ]; then
+		ops="$ops | $bit"
+	else
+		ops="$bit"
+	fi
+done
+if [ -z "$ops" ]; then
+	ops="未能解析到对端MAC（本机脚本、串口，或连接已断开）"
+fi
+
+{
+	echo "time=$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null)"
+	echo "epoch=$(date +%s 2>/dev/null)"
+	echo "reason=$reason"
+	echo "uptime=$(cut -d. -f1 /proc/uptime 2>/dev/null)"
+	echo "operator=$ops"
+	[ -n "$via" ] && echo "via=$via"
+} > "$mark"
+echo "$reason" > /tmp/lede-reboot-reason 2>/dev/null || true
+exit 0

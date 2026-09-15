@@ -3,6 +3,8 @@
 
 import { cursor } from 'uci';
 import { popen, stat, readfile } from 'fs';
+import { ensure_log_file, list_archives, configured_path, logread_cmd } from '/usr/share/ucode/lede-log.uc';
+import { format_kmsg } from '/usr/share/ucode/lede-diag.uc';
 
 function out(obj) {
 	print(sprintf('%J', obj));
@@ -31,14 +33,33 @@ function pri_level(pri) {
 	return '一般';
 }
 
-function ident_cat(ident) {
+function is_cron_ident(ident) {
+	return match(lc(ident || ''), /^(cron|crond)$/) ? true : false;
+}
+
+function is_cron_run_line(msg) {
+	if (match(msg, /^USER \S+ pid [0-9]+ cmd /))
+		return true;
+	if (match(msg, /^CMD \(/))
+		return true;
+	return false;
+}
+
+function is_cron_fail(msg) {
+	return match(msg, /fail|error|can't|cannot|denied|abnormal|not found|No such|unable|refused/i) ? true : false;
+}
+
+function ident_cat(ident, msg) {
 	let id = lc(ident);
-	if (match(id, /mwan3|netifd|pppd|pppoe|odhcp6c|network/))
-		return '网络';
-	if (match(id, /dnsmasq|odhcpd|dhcp/))
-		return 'DHCP';
-	if (match(id, /dropbear|sshd|luci|rpcd|nginx|uhttpd/))
+	let blob = lc((ident || '') + ' ' + (msg || ''));
+	if (match(id, /lede-login|dropbear|sshd/) ||
+	    match(blob, /password auth|login (succeeded|failed)|luci 登录|ssh 登录|auth succeeded|bad password|login attempt/))
 		return '登录';
+	if (match(id, /lede-dhcp|dnsmasq|odhcpd|dhcp/) || match(blob, /dhcpack|dhcpdiscover|dhcprequest|dhcpinform|no address available/))
+		return 'DHCP';
+	if (match(id, /lede-net|mwan3|netifd|pppd|pppoe|odhcp6c|network/) ||
+	    match(blob, /interface .* is now|link is (up|down)|lost tracking|has gone offline|has come online/))
+		return '网络';
 	if (match(id, /hostapd|wpa_|mac80211|wifi/))
 		return '无线';
 	if (match(id, /kernel|kmod/))
@@ -104,11 +125,23 @@ function explain(ident, msg) {
 	m = match(msg, /Auth succeeded.*from ([0-9.]+)/);
 	if (m)
 		return { title: '登录成功', detail: msg };
+	m = match(msg, /LuCI 登录\s*(.*)$/);
+	if (m)
+		return { title: '登录成功', detail: trim(m[1]) != '' ? trim(m[1]) : '网页管理登录' };
+	m = match(msg, /SSH 登录\s*(.*)$/);
+	if (m)
+		return { title: '登录成功', detail: trim(m[1]) };
 	if (match(msg, /Bad password|Login attempt|auth(entication)? fail/i))
 		return { title: '登录失败', detail: msg };
 	m = match(msg, /Exit \(([^)]+)\) from ([0-9.]+)/);
 	if (m)
 		return { title: '退出登录', detail: sprintf('%s 从 %s 断开', m[1], m[2]) };
+	m = match(msg, /分配了地址\s+(\S+)\s+→\s+(\S+)/);
+	if (m)
+		return { title: '分配了地址', detail: msg };
+	m = match(msg, /在租\s+(\S+)\s+→\s+(\S+)/);
+	if (m)
+		return { title: '当前租约', detail: msg };
 
 	if (match(msg, /Out of memory|oom-kill/i))
 		return { title: '内存不够', detail: '有进程被杀掉或分配失败，该查谁占内存。' };
@@ -125,6 +158,11 @@ function explain(ident, msg) {
 		return { title: 'MosDNS 已启动', detail: msg };
 	if (match(msg, /starting pid|started/) && match(id, /procd|init/))
 		return { title: '服务启动', detail: msg };
+	if (is_cron_ident(id)) {
+		if (is_cron_fail(msg))
+			return { title: '定时任务失败', detail: msg };
+		return { title: '定时任务', detail: msg };
+	}
 
 	let pretty = id;
 	if (id == 'netifd')
@@ -150,31 +188,205 @@ function explain(ident, msg) {
 	return { title: pretty, detail: short };
 }
 
+function month_num(mon) {
+	if (mon == 'Jan') return '01';
+	if (mon == 'Feb') return '02';
+	if (mon == 'Mar') return '03';
+	if (mon == 'Apr') return '04';
+	if (mon == 'May') return '05';
+	if (mon == 'Jun') return '06';
+	if (mon == 'Jul') return '07';
+	if (mon == 'Aug') return '08';
+	if (mon == 'Sep') return '09';
+	if (mon == 'Oct') return '10';
+	if (mon == 'Nov') return '11';
+	if (mon == 'Dec') return '12';
+	return '01';
+}
+
+function fmt_wall(ts) {
+	ts = +ts;
+	if (!(ts > 0))
+		return '';
+	try {
+		let t = localtime(ts);
+		if (!t)
+			return '';
+		let mon = +t.mon;
+		if (mon == 0)
+			mon = 1;
+		return sprintf('%04d-%02d-%02d %02d:%02d:%02d', t.year, mon, t.mday, t.hour, t.min, t.sec);
+	} catch (e) {
+		return '';
+	}
+}
+
+function fmt_log_time(s) {
+	s = trim(s);
+	if (s == '')
+		return '';
+	let m = match(s, /^(\w{3}) (\w{3})\s+(\d+) (\d{2}:\d{2}:\d{2}) (\d{4})$/);
+	if (m)
+		return sprintf('%s-%s-%02d %s', m[5], month_num(m[2]), +m[3], m[4]);
+	m = match(s, /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})/);
+	if (m)
+		return m[1] + ' ' + m[2];
+	return s;
+}
+
+let boot_epoch = 0;
+function kernel_wall(line) {
+	let m = match(line, /^\[\s*([0-9]+)\./);
+	if (!m)
+		return '';
+	if (boot_epoch <= 0) {
+		let up = split(trim(readfile('/proc/uptime') || '0'), '.')[0];
+		boot_epoch = time() - +up;
+	}
+	return fmt_wall(boot_epoch + +m[1]);
+}
+
+function count_lines(path) {
+	if (path == null || path == '' || stat(path) == null)
+		return 0;
+	let p = popen(sprintf("wc -l < '%s' 2>/dev/null", path), 'r');
+	if (!p)
+		return 0;
+	let n = +trim(p.read('all') || '0');
+	p.close();
+	return n > 0 ? n : 0;
+}
+
+function tail_file(path, limit) {
+	limit = +limit || 200;
+	if (limit < 1)
+		limit = 1;
+	if (limit > 4000)
+		limit = 4000;
+	if (path == null || path == '' || stat(path) == null)
+		return [];
+	let p = popen(sprintf("tail -n %d '%s' 2>/dev/null", limit, path), 'r');
+	if (!p)
+		return [];
+	let text = replace(p.read('all') || '', /\r/g, '');
+	p.close();
+	if (text == '')
+		return [];
+	return split(text, '\n');
+}
+
+function drop_empty(lines) {
+	let out = [];
+	for (let i = 0; i < length(lines); i++) {
+		if (trim(lines[i]) != '')
+			push(out, lines[i]);
+	}
+	return out;
+}
+
+function popen_lines(cmd) {
+	let p = popen(cmd, 'r');
+	if (!p)
+		return [];
+	let text = replace(p.read('all') || '', /\r/g, '');
+	p.close();
+	if (text == '')
+		return [];
+	return drop_empty(split(text, '\n'));
+}
+
+function page_parse(suffix, page, size, parser, total) {
+	page = +page;
+	size = +size;
+	if (!(page > 0))
+		page = 1;
+	if (!(size > 0))
+		size = 20;
+	let n = length(suffix);
+	let t = (total != null && +total > 0) ? +total : n;
+	let pages = int((t + size - 1) / size);
+	if (pages < 1)
+		pages = 1;
+	if (page > pages)
+		page = pages;
+	let end = n - (page - 1) * size;
+	if (end > n)
+		end = n;
+	if (end <= 0)
+		return { rows: [], more: false, page: 1, pages, total: t, page_size: size };
+	let start = end - size;
+	if (start < 0)
+		start = 0;
+	let out = [];
+	for (let i = start; i < end; i++) {
+		let row = parser(suffix[i]);
+		if (row)
+			push(out, row);
+	}
+	return { rows: out, more: page < pages, page, pages, total: t, page_size: size };
+}
+
 function parse_logread_line(line) {
 	line = trim(line);
 	if (line == '')
 		return null;
-	let m = match(line, /^(\w{3} \w{3}\s+\d+ \d{2}:\d{2}:\d{2} \d{4}) ([a-z]+)\.([a-z]+) ([^:[\s]+)(?:\[(\d+)\])?: (.*)$/);
+	let time = '';
+	let rest = line;
+	let m = match(line, /^(\w{3} \w{3}\s+\d+ \d{2}:\d{2}:\d{2} \d{4})\s+(.*)$/);
 	if (!m)
-		return { time: '', level: '一般', cat: '其它', title: '系统', detail: line, raw: line };
-	let ident = m[4];
-	ident = replace(ident, /^.*\//, '');
-	let msg = m[6];
+		m = match(line, /^(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2})\S*\s+(.*)$/);
+	if (m) {
+		time = m[1];
+		rest = m[2];
+	}
+	let ident = '';
+	let msg = rest;
+	let facm = match(rest, /^([a-z]+)\.([a-z]+)[ \t]+([A-Za-z0-9._\/-]+)(\[[0-9]+\])?:[ \t]+(.*)$/);
+	if (!facm)
+		facm = match(rest, /^\S+[ \t]+([a-z]+)\.([a-z]+)[ \t]+([A-Za-z0-9._\/-]+)(\[[0-9]+\])?:[ \t]+(.*)$/);
+	if (facm) {
+		ident = facm[3];
+		ident = replace(ident, /^.*\//, '');
+		msg = facm[5];
+	}
+	if (is_cron_ident(ident) && (is_cron_run_line(msg) || !is_cron_fail(msg)))
+		return null;
 	let ex = explain(ident, msg);
 	return {
-		time: m[1],
-		level: pri_level(m[3]),
-		cat: ident_cat(ident),
+		time: fmt_log_time(time),
+		level: facm ? pri_level(facm[2]) : '一般',
+		cat: ident_cat(ident, msg),
 		title: ex.title,
 		detail: ex.detail,
 		raw: line
 	};
 }
 
+function join_pipe(p, from) {
+	let s = '';
+	for (let i = from; i < length(p); i++) {
+		if (i > from)
+			s += '|';
+		s += p[i];
+	}
+	return s;
+}
+
 function parse_alert_line(line) {
 	line = trim(line);
 	if (line == '')
 		return null;
+	let p = split(line, '|');
+	if (length(p) >= 5 && match(p[0], /^\d{4}-\d{2}-\d{2} /)) {
+		return {
+			time: fmt_log_time(p[0]),
+			level: p[1],
+			cat: p[2],
+			title: p[3],
+			detail: join_pipe(p, 4),
+			raw: line
+		};
+	}
 	let m = match(line, /^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s+(ALERT|WAN|INFO|TEST)\s+(.*)$/);
 	if (!m)
 		return { time: '', level: '一般', cat: '告警', title: '记录', detail: line, raw: line };
@@ -210,16 +422,16 @@ function parse_alert_line(line) {
 		cat = '采样';
 		title = '状态采样';
 	}
-	return { time: m[1], level, cat, title, detail: msg, raw: line };
+	return { time: fmt_log_time(m[1]), level, cat, title, detail: msg, raw: line };
 }
 
 function read_logread(limit) {
-	limit = +limit || 400;
+	limit = +limit || 200;
 	if (limit < 20)
 		limit = 20;
-	if (limit > 2000)
-		limit = 2000;
-	let p = popen(sprintf('logread -l %d 2>/dev/null', limit), 'r');
+	if (limit > 400)
+		limit = 400;
+	let p = popen(logread_cmd(sprintf('-l %d', limit)), 'r');
 	let rows = [];
 	if (!p)
 		return rows;
@@ -234,16 +446,11 @@ function read_logread(limit) {
 }
 
 function read_file_lines(path, limit) {
-	limit = +limit || 400;
-	let raw = readfile(path);
-	if (raw == null || raw == '')
-		return [];
-	let parts = split(raw, /\n/);
-	let n = length(parts);
-	let start = n > limit ? n - limit : 0;
+	limit = +limit || 200;
+	let lines = tail_file(path, limit);
 	let rows = [];
-	for (let i = start; i < n; i++) {
-		let row = parse_alert_line(parts[i]);
+	for (let i = 0; i < length(lines); i++) {
+		let row = parse_alert_line(lines[i]);
 		if (row)
 			push(rows, row);
 	}
@@ -255,23 +462,30 @@ function filter_rows(rows, filt) {
 		return rows;
 	let out = [];
 	for (let r in rows) {
-		if (filt == 'alarm' && (r.cat == '告警' || r.cat == '线路' || r.cat == '测试'))
+		if (filt == 'alarm') {
+			if (r.title == '状态采样' || r.cat == '采样')
+				continue;
+			if (r.title == '系统启动' || match(r.detail || '', /告警服务已启动/))
+				continue;
 			push(out, r);
+		}
 		else if (filt == 'alert' && (r.level == '严重' || r.level == '中等' || r.cat == '告警' || r.cat == '线路'))
 			push(out, r);
 		else if (filt == 'event' && r.title != '状态采样')
 			push(out, r);
 		else if (filt == 'sample' && r.title == '状态采样')
 			push(out, r);
-		else if (filt == 'net' && r.cat == '网络')
+		else if (filt == 'net' && (r.cat == '网络' || r.cat == '线路' || r.cat == '无线'))
 			push(out, r);
 		else if (filt == 'dhcp' && r.cat == 'DHCP')
 			push(out, r);
-		else if (filt == 'auth' && r.cat == '登录')
+		else if (filt == 'auth' && (r.cat == '登录' || r.title == '登录成功' || r.title == '登录失败' || r.title == '退出登录'))
 			push(out, r);
 		else if (filt == 'kern' && r.cat == '内核')
 			push(out, r);
 		else if (filt == 'svc' && (r.cat == '服务' || r.cat == 'DNS' || r.cat == '文件共享' || r.cat == '代理'))
+			push(out, r);
+		else if (r.cat == filt || r.level == filt)
 			push(out, r);
 	}
 	return out;
@@ -292,29 +506,21 @@ function store_info(id, title, path, max_kb, persist) {
 
 function cmd_list() {
 	let ctx = cursor();
-	ctx.load('wanalert');
-	ctx.load('system');
-	try { ctx.load('mosdns'); } catch (e) {}
+	try { ctx.load('wanalert'); } catch (e) {}
 	try { ctx.load('lede-log'); } catch (e) {}
 
-	let alert_path = ctx.get('wanalert', 'main', 'log_path') || '/overlay/logs/sys-alert.log';
-	let alert_max = ctx.get('wanalert', 'main', 'log_max_kb') || 512;
-	let sys_path = '';
-	ctx.foreach('system', 'system', (s) => {
-		if (sys_path == '')
-			sys_path = s.log_file || '';
-	});
-	let sys_max = 64;
-	ctx.foreach('system', 'system', (s) => {
-		if (s.log_size)
-			sys_max = s.log_size;
-	});
-	let mos_path = ctx.get('mosdns', 'config', 'log_file') || '/var/log/mosdns.log';
+	let alert_path = configured_path('alert');
+	let alert_max = ctx.get('wanalert', 'main', 'log_max_kb') || ctx.get('lede-log', 'alert', 'max_kb') || 2048;
+	let sys_path = configured_path('syslog');
+	let sys_max = ctx.get('lede-log', 'syslog', 'max_kb') || 2048;
+	let kern_path = configured_path('kernel');
+	let mos_path = configured_path('mosdns');
 
 	out([
 		store_info('alert', '报警日志', alert_path, alert_max, true),
-		store_info('syslog', '系统日志 logd', sys_path, sys_max, sys_path != '' && !match(sys_path, /^\/(tmp|var)\//)),
-		store_info('mosdns', 'MosDNS', mos_path, ctx.get('lede-log', 'mosdns', 'max_kb') || 256, mos_path != '' && !match(mos_path, /^\/(tmp|var)\//))
+		store_info('syslog', '系统日志', sys_path, sys_max, sys_path != '' && !match(sys_path, /^\/(tmp|var)\//)),
+		store_info('kernel', '内核日志', kern_path, ctx.get('lede-log', 'kernel', 'max_kb') || 2048, true),
+		store_info('mosdns', 'MosDNS', mos_path, ctx.get('lede-log', 'mosdns', 'max_kb') || 2048, mos_path != '' && !match(mos_path, /^\/(tmp|var)\//))
 	]);
 }
 
@@ -322,19 +528,22 @@ function last_bits(rows, n) {
 	let out = [];
 	let i = length(rows) - 1;
 	while (i >= 0 && length(out) < n) {
-		if (rows[i].title != '状态采样' && rows[i].title != 'DNS 查询')
+		if (rows[i].title != '状态采样' && rows[i].title != 'DNS 查询' &&
+		    rows[i].title != '系统启动' && !match(rows[i].detail || '', /告警服务已启动/))
 			push(out, rows[i].title + '：' + rows[i].detail);
 		i--;
 	}
 	return out;
 }
 
+function page_slice(rows, page, size) {
+	return page_parse(rows, page, size, function(r) { return r; }, length(rows));
+}
+
 function cmd_summary() {
-	let ctx = cursor();
-	ctx.load('wanalert');
-	let alert_path = ctx.get('wanalert', 'main', 'log_path') || '/overlay/logs/sys-alert.log';
+	let alert_path = configured_path('alert');
 	let sys = read_logread(120);
-	let al = read_file_lines(alert_path, 80);
+	let al = alert_path != '' ? read_file_lines(alert_path, 80) : [];
 	out({
 		syslog: last_bits(sys, 4),
 		alert: last_bits(al, 3),
@@ -342,21 +551,125 @@ function cmd_summary() {
 	});
 }
 
-function cmd_read(id, limit, filt) {
-	let ctx = cursor();
+function parse_kern_line(line) {
+	line = trim(line);
+	if (line == '')
+		return null;
+	let f = format_kmsg(line);
+	let tm = kernel_wall(line);
+	if (tm == '')
+		tm = fmt_log_time(line);
+	return {
+		time: tm,
+		level: f.level || '一般',
+		cat: f.cat || '内核',
+		title: f.title || '内核',
+		detail: f.detail || line,
+		raw: line
+	};
+}
+
+function filt_all(filt) {
+	return filt == null || filt == '' || filt == 'all';
+}
+
+function cmd_read(id, limit, filt, page) {
+	page = +page || 1;
+	if (page < 1)
+		page = 1;
+	if (page > 200)
+		page = 200;
+	limit = +limit || 20;
+	if (limit < 10)
+		limit = 10;
+	if (limit > 100)
+		limit = 100;
+	let need = page * limit;
+	if (need < limit)
+		need = limit;
+	if (need > 4000)
+		need = 4000;
+	let window = 2000;
 	if (id == 'syslog') {
-		out(filter_rows(read_logread(limit), filt));
+		let sp = configured_path('syslog');
+		let skip = "grep -vF ']: USER '";
+		if (filt_all(filt)) {
+			let total = 0;
+			if (sp != '' && stat(sp) != null) {
+				let pc = popen(sprintf("%s '%s' 2>/dev/null | wc -l", skip, sp), 'r');
+				if (pc) {
+					total = +trim(pc.read('all') || '0');
+					pc.close();
+				}
+			}
+			let lines = [];
+			if (sp != '' && stat(sp) != null)
+				lines = popen_lines(sprintf("%s '%s' 2>/dev/null | tail -n %d", skip, sp, total > 0 ? need : window));
+			if (length(lines) == 0)
+				lines = popen_lines(sprintf("%s | %s", logread_cmd(sprintf('-l %d', window)), skip));
+			out(page_parse(lines, page, limit, parse_logread_line, total > 0 ? total : length(lines)));
+			return;
+		}
+		let rows = [];
+		let lines = [];
+		if (sp != '' && stat(sp) != null)
+			lines = popen_lines(sprintf("%s '%s' 2>/dev/null | tail -n %d", skip, sp, window));
+		if (length(lines) == 0)
+			lines = popen_lines(sprintf("%s | %s", logread_cmd(sprintf('-l %d', window)), skip));
+		for (let i = 0; i < length(lines); i++) {
+			let row = parse_logread_line(lines[i]);
+			if (row)
+				push(rows, row);
+		}
+		out(page_slice(filter_rows(rows, filt), page, limit));
+		return;
+	}
+	if (id == 'kernel') {
+		let kp = configured_path('kernel');
+		let total = count_lines(kp);
+		let lines = drop_empty(tail_file(kp, total > 0 ? need : window));
+		if (length(lines) == 0)
+			lines = popen_lines(sprintf('dmesg 2>/dev/null | tail -n %d', window));
+		out(page_parse(lines, page, limit, parse_kern_line, total > 0 ? total : length(lines)));
 		return;
 	}
 	if (id == 'alert') {
-		ctx.load('wanalert');
-		let path = ctx.get('wanalert', 'main', 'log_path') || '/overlay/logs/sys-alert.log';
-		out(filter_rows(read_file_lines(path, limit), filt));
+		let path = configured_path('alert');
+		if (path == '') {
+			out({ rows: [], more: false, page: 1, pages: 1, total: 0, page_size: limit });
+			return;
+		}
+		let af = filt;
+		if (af == '' || af == 'all')
+			af = 'alarm';
+		if (af == 'alarm') {
+			let cmd = sprintf("grep -v '|状态采样|' '%s' 2>/dev/null | grep -v '|采样|'", path);
+			let total = 0;
+			let pc = popen(cmd + ' | wc -l', 'r');
+			if (pc) {
+				total = +trim(pc.read('all') || '0');
+				pc.close();
+			}
+			let lines = popen_lines(cmd + sprintf(' | tail -n %d', need));
+			out(page_parse(lines, page, limit, parse_alert_line, total > 0 ? total : length(lines)));
+			return;
+		}
+		let rows = [];
+		let lines = popen_lines(sprintf("tail -n %d '%s' 2>/dev/null", window, path));
+		for (let i = 0; i < length(lines); i++) {
+			let row = parse_alert_line(lines[i]);
+			if (row)
+				push(rows, row);
+		}
+		out(page_slice(filter_rows(rows, af), page, limit));
 		return;
 	}
 	if (id == 'mosdns') {
-		try { ctx.load('mosdns'); } catch (e) {}
-		let path = ctx.get('mosdns', 'config', 'log_file') || '/var/log/mosdns.log';
+		let path = configured_path('mosdns');
+		if (path == '') {
+			out([]);
+			return;
+		}
 		let raw = readfile(path) || '';
 		let parts = split(raw, /\n/);
 		let n = length(parts);
@@ -373,12 +686,26 @@ function cmd_read(id, limit, filt) {
 	out([]);
 }
 
+function cmd_prep(kind, path) {
+	let names = {
+		alert: 'sys-alert.log',
+		syslog: 'system.log',
+		kernel: 'kernel.log',
+		mosdns: 'mosdns.log'
+	};
+	let def = names[kind] || 'app.log';
+	let outp = ensure_log_file(path, def);
+	out({ path: outp, ok: outp != '' });
+}
+
 let cmd = ARGV[0] || 'list';
 if (cmd == 'list')
 	cmd_list();
 else if (cmd == 'summary')
 	cmd_summary();
 else if (cmd == 'read')
-	cmd_read(ARGV[1] || 'syslog', ARGV[2] || '400', ARGV[3] || 'all');
+	cmd_read(ARGV[1] || 'syslog', ARGV[2] || '20', ARGV[3] || 'all', ARGV[4] || '1');
+else if (cmd == 'prep')
+	cmd_prep(ARGV[1] || 'alert', ARGV[2] || '');
 else
 	out({ error: 'unknown command' });

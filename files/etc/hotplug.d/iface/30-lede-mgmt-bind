@@ -1,0 +1,5 @@
+#!/bin/sh
+[ "$INTERFACE" = lan ] || exit 0
+[ "$ACTION" = ifup ] || [ "$ACTION" = ifupdate ] || exit 0
+[ -x /usr/libexec/lede-mgmt-bind ] && /usr/libexec/lede-mgmt-bind
+exit 0

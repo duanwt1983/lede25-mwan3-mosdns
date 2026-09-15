@@ -1,0 +1,50 @@
+#!/bin/sh
+# Bind Dropbear and LAN nginx to the LAN IPv4 only. WAN HTTPS (10443)
+# stays on lede-wan-https / wan-https.conf.
+set +e
+LAN_IP=$(uci -q get network.lan.ipaddr)
+[ -n "$LAN_IP" ] || exit 0
+case "$LAN_IP" in
+	*[!0-9.]*) exit 0 ;;
+esac
+
+chg=0
+for sid in $(uci -q show dropbear 2>/dev/null | sed -n 's/^dropbear\.\([^.]*\)=dropbear$/\1/p'); do
+	[ "$(uci -q get "dropbear.$sid.Interface")" = lan ] && continue
+	uci -q set "dropbear.$sid.Interface=lan"
+	chg=1
+done
+if [ "$chg" = 1 ]; then
+	uci commit dropbear
+	if [ -x /etc/init.d/dropbear ]; then
+		/etc/init.d/dropbear reload >/dev/null 2>&1 || /etc/init.d/dropbear restart >/dev/null 2>&1 || true
+	fi
+fi
+
+ngx=0
+if uci -q get nginx._lan >/dev/null 2>&1; then
+	want443="${LAN_IP}:443 ssl default_server"
+	cur=$(uci -q get nginx._lan.listen)
+	if [ "$cur" != "$want443" ]; then
+		uci -q delete nginx._lan.listen
+		uci -q delete nginx._lan.listen2
+		uci add_list nginx._lan.listen="$want443"
+		ngx=1
+	fi
+fi
+if uci -q get nginx._redirect2ssl >/dev/null 2>&1; then
+	want80="${LAN_IP}:80"
+	cur=$(uci -q get nginx._redirect2ssl.listen)
+	if [ "$cur" != "$want80" ]; then
+		uci -q delete nginx._redirect2ssl.listen
+		uci add_list nginx._redirect2ssl.listen="$want80"
+		ngx=1
+	fi
+fi
+if [ "$ngx" = 1 ]; then
+	uci commit nginx
+	if [ -x /etc/init.d/nginx ]; then
+		/etc/init.d/nginx restart >/dev/null 2>&1 || /etc/init.d/nginx reload >/dev/null 2>&1 || true
+	fi
+fi
+exit 0

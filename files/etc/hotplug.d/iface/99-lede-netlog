@@ -1,0 +1,4 @@
+#!/bin/sh
+[ "$ACTION" = ifup ] || [ "$ACTION" = ifdown ] || exit 0
+logger -t lede-net "接口 ${INTERFACE:-?} ${ACTION} 设备 ${DEVICE:-}"
+exit 0

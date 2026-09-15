@@ -42,6 +42,36 @@ function lan_ifname(ctx, u) {
 	return 'br-lan';
 }
 
+function member_weight(ctx, ifname) {
+	let w = 1;
+	ctx.foreach('mwan3', 'member', (m) => {
+		if (m.interface == ifname)
+			w = +(m.weight || 1);
+	});
+	if (w < 1)
+		w = 1;
+	if (w > 100)
+		w = 100;
+	return w;
+}
+
+/* flow: 五元组哈希，同一终端多连接可分摊到各 WAN；ip: 旧行为，整 IP 固定一条线 */
+function hash_fields(mode) {
+	if (mode == 'ip')
+		return 'ip saddr';
+	return 'ip saddr . ip daddr . th sport . th dport';
+}
+
+function weighted_slots(live, ctx) {
+	let slots = [];
+	for (let w in live) {
+		let n = member_weight(ctx, w.ifname);
+		for (let i = 0; i < n; i++)
+			push(slots, w);
+	}
+	return slots;
+}
+
 system('lock /var/run/wan-src-hash.lock');
 
 let ctx = cursor();
@@ -66,7 +96,7 @@ ctx.foreach('mwan3', 'interface', (s) => {
 	let mark = table << 8;
 	let port = 5300 + table;
 	if (iface_up(u, sid))
-		push(live, { mark, port, table });
+		push(live, { mark, port, table, ifname: sid });
 	else
 		push(dead_tables, table);
 });
@@ -74,18 +104,26 @@ ctx.foreach('mwan3', 'interface', (s) => {
 let pol = ctx.get('mwan3', 'default', 'use_policy') || 'balanced';
 let chain = 'mwan3_policy_' + pol;
 let live_n = length(live);
+let lb_mode = ctx.get('mwan3', 'globals', 'lede_lb_hash') || 'flow';
+if (lb_mode != 'ip')
+	lb_mode = 'flow';
+let hash = hash_fields(lb_mode);
 
 if (live_n > 0) {
 	nft(sprintf('flush chain inet mwan3 %s\n', chain));
-	let i = 0;
-	for (let w in live) {
-		let rule;
-		if (live_n == 1)
-			rule = sprintf('add rule inet mwan3 %s meta nfproto ipv4 meta mark & 0x00003f00 == 0x00000000 meta mark set meta mark & 0xffffc0ff | %d\n', chain, w.mark);
-		else
-			rule = sprintf('add rule inet mwan3 %s meta nfproto ipv4 meta mark & 0x00003f00 == 0x00000000 jhash ip saddr mod %d == %d meta mark set meta mark & 0xffffc0ff | %d\n', chain, live_n, i, w.mark);
-		nft(rule);
-		i++;
+	if (live_n == 1) {
+		nft(sprintf('add rule inet mwan3 %s meta nfproto ipv4 meta mark & 0x00003f00 == 0x00000000 meta mark set meta mark & 0xffffc0ff | %d\n',
+			chain, live[0].mark));
+	} else {
+		let slots = weighted_slots(live, ctx);
+		let total = length(slots);
+		if (total < 2)
+			total = live_n;
+		for (let i = 0; i < total; i++) {
+			let w = slots[i] || live[i % live_n];
+			nft(sprintf('add rule inet mwan3 %s meta nfproto ipv4 meta mark & 0x00003f00 == 0x00000000 jhash %s mod %d == %d meta mark set meta mark & 0xffffc0ff | %d\n',
+				chain, hash, total, i, w.mark));
+		}
 	}
 	for (let t in dead_tables)
 		nft(sprintf('flush set inet mwan3 mwan3_sticky_v4_default_%d\n', t));
@@ -98,16 +136,19 @@ if (!follow || live_n < 2) {
 	let listen = ctx.get('mosdns', 'config', 'listen_port') || '5335';
 	let lan = lan_ifname(ctx, u);
 	let body = '';
-	let i = 0;
-	for (let w in live) {
-		let sel = sprintf('jhash ip saddr mod %d == %d redirect to :%d', live_n, i, w.port);
+	let slots = weighted_slots(live, ctx);
+	let total = length(slots);
+	if (total < 2)
+		total = live_n;
+	for (let i = 0; i < total; i++) {
+		let w = slots[i] || live[i % live_n];
+		let sel = sprintf('jhash ip saddr mod %d == %d redirect to :%d', total, i, w.port);
 		body += sprintf('\t\tmeta nfproto ipv4 iifname "%s" udp dport { 53, %s } fib daddr type local %s\n', lan, listen, sel);
 		body += sprintf('\t\tmeta nfproto ipv4 iifname "%s" tcp dport { 53, %s } fib daddr type local %s\n', lan, listen, sel);
-		i++;
 	}
 	nft('delete table inet dns_follow_wan\n');
 	nft(sprintf('table inet dns_follow_wan {\n\tchain prerouting {\n\t\ttype nat hook prerouting priority -150; policy accept;\n%s\t}\n}\n', body));
 }
 
-printf('wan-src-hash: live=%d follow=%s\n', live_n, follow ? '1' : '0');
+printf('wan-src-hash: live=%d mode=%s follow=%s\n', live_n, lb_mode, follow ? '1' : '0');
 system('lock -u /var/run/wan-src-hash.lock');
