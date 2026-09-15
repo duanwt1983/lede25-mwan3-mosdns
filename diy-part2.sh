@@ -142,19 +142,20 @@ clone_once package/luci-app-qosmate https://github.com/hudra0/luci-app-qosmate
 if [ -f package/luci-app-qosmate/Makefile ]; then
   python3 - <<'PY'
 from pathlib import Path
+import re
 p = Path("package/luci-app-qosmate/Makefile")
 t = p.read_text(encoding="utf-8", errors="replace")
-idx = t.find("include $(TOPDIR)/feeds/luci/luci.mk")
-if idx < 0:
-    raise SystemExit("luci-app-qosmate Makefile missing luci.mk include")
-head = t[: idx + len("include $(TOPDIR)/feeds/luci/luci.mk")]
-if "PKGARCH:=all" not in head:
-    head = head.replace(
+# Keep upstream custom install (view/qosmate/*.js) but drop duplicate BuildPackage eval.
+t = re.sub(r"\n\$\(eval \$\(call BuildPackage.*\)\)\s*$", "", t, flags=re.S)
+if "LUCI_PKGARCH:=all" not in t and "PKGARCH:=all" not in t:
+    t = t.replace(
         "include $(TOPDIR)/feeds/luci/luci.mk",
         "LUCI_PKGARCH:=all\ninclude $(TOPDIR)/feeds/luci/luci.mk",
     )
-p.write_text(head.rstrip() + "\n\n# call BuildPackage - OpenWrt buildroot signature\n", encoding="utf-8")
-print("qosmate luci: use luci.mk only")
+if not t.rstrip().endswith("# call BuildPackage - OpenWrt buildroot signature"):
+    t = t.rstrip() + "\n\n# call BuildPackage - OpenWrt buildroot signature\n"
+p.write_text(t, encoding="utf-8")
+print("qosmate luci: keep custom install, drop duplicate BuildPackage")
 PY
 fi
 rm -rf feeds/luci/applications/luci-app-qosmate package/feeds/luci/luci-app-qosmate || true
