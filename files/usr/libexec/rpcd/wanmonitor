@@ -6,7 +6,7 @@ import { readfile, writefile, popen, stat } from 'fs';
 import * as ubus from 'ubus';
 import {
 	trim, as_bool, as_list, now_fmt, max_temp_c, cpu_pct, mem_percent, bytes_of, disks_overview,
-	load_rate_win
+	load_rate_win, iface_rate_bps, pick_iface_rates
 } from '/usr/share/ucode/lede-metrics.uc';
 import {
 	bandix_load, bandix_build_maps, bandix_iface_rates, bandix_resolve_iface_rates,
@@ -43,23 +43,17 @@ function mwan3_ifaces(u) {
 function wan_health(name, up, ip, ifaces) {
 	let d = ifaces[name];
 	let st = d && d.status ? d.status : '';
-	if (st == 'online')
-		return { health: 'ok', text: '正常' };
-	if (st == 'offline')
-		return { health: 'bad', text: '异常' };
-	if (st == 'disabled')
-		return { health: 'warn', text: '未启用' };
-	if (st == 'notracking') {
-		if (up && ip)
-			return { health: 'ok', text: '正常' };
-		if (up)
-			return { health: 'warn', text: '无地址' };
-		return { health: 'bad', text: '掉线' };
-	}
+	/* Physical link + address first: mwan3 ping can flap while PPPoE still carries traffic. */
 	if (!up)
 		return { health: 'bad', text: '掉线' };
 	if (!ip)
 		return { health: 'warn', text: '无地址' };
+	if (st == 'disabled')
+		return { health: 'warn', text: '未启用' };
+	if (st == 'offline')
+		return { health: 'warn', text: '探测异常' };
+	if (st == 'online' || st == 'notracking' || st == '')
+		return { health: 'ok', text: '正常' };
 	return { health: 'ok', text: '正常' };
 }
 
@@ -289,7 +283,7 @@ function pulse() {
 			}
 		}
 	}
-	let lan_rates = bandix_iface_rates(bmaps, lan_dev);
+	let lan_rates = pick_iface_rates(bandix_iface_rates(bmaps, lan_dev), iface_rate_bps(lan_dev));
 	let lan = {
 		device: lan_dev,
 		down_bps: lan_rates.down_bps,
@@ -318,6 +312,14 @@ function pulse() {
 			});
 		}
 		wan_rates = bandix_wan_rates(bmaps, wans);
+		for (let w in wans) {
+			let name = w.name || '';
+			let dev = w.device || '';
+			if (!name || !dev)
+				continue;
+			let wr = wan_rates[name] || { down_bps: 0, up_bps: 0 };
+			wan_rates[name] = pick_iface_rates(wr, iface_rate_bps(dev));
+		}
 		ubus_close(u);
 	}
 	print(sprintf('%J\n', {
@@ -391,7 +393,7 @@ function snapshot() {
 
 	let bj = bandix_load(false);
 	let bmaps = bandix_build_maps(bj);
-	let lan_rates = bandix_iface_rates(bmaps, lan_dev);
+	let lan_rates = pick_iface_rates(bandix_iface_rates(bmaps, lan_dev), iface_rate_bps(lan_dev));
 	let cl = bandix_clients_list(bj, lan_ip);
 	let clients = cl.clients;
 	let online = cl.online;
@@ -399,7 +401,10 @@ function snapshot() {
 	for (let i = 0; i < length(wans); i++) {
 		let dev = wans[i].device || '';
 		let name = wans[i].name || '';
-		let wr = bandix_resolve_iface_rates(bmaps, dev || name, [ name, dev ]);
+		let wr = pick_iface_rates(
+			bandix_resolve_iface_rates(bmaps, dev || name, [ name, dev ]),
+			iface_rate_bps(dev)
+		);
 		wans[i].down_bps = wr.down_bps;
 		wans[i].up_bps = wr.up_bps;
 	}

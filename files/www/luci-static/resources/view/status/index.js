@@ -402,9 +402,9 @@ function holdRate(prev, next, zeros, key) {
 		zeros[key] = 0;
 		return next;
 	}
-	if (p > 8000) {
+	if (p > 2000) {
 		zeros[key] = (zeros[key] || 0) + 1;
-		if (zeros[key] < 5)
+		if (zeros[key] < 12)
 			return p;
 	}
 	zeros[key] = 0;
@@ -3583,7 +3583,7 @@ return view.extend({
 					rx: row.rx, tx: row.tx,
 					bw_down: row.w.bw_down, bw_up: row.w.bw_up
 				});
-				if (row.w.up === false || row.health === 'bad')
+				if (row.w.up === false)
 					this.drawLinkFault(labels, mid);
 			});
 			if (m.wans.length >= 2) {
