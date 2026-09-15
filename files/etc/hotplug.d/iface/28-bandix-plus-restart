@@ -1,0 +1,30 @@
+#!/bin/sh
+# PPPoE 重拨后 ifindex 会变，Bandix eBPF 需重启才能重新统计该 WAN 速率。
+
+case "$ACTION" in
+	ifup) ;;
+	*) exit 0 ;;
+esac
+
+case "$INTERFACE" in
+	''|loopback|lan|wan6|*_6) exit 0 ;;
+esac
+
+enabled=$(uci -q get "mwan3.${INTERFACE}.enabled")
+[ -n "$enabled" ] || exit 0
+[ "$enabled" = 0 ] && exit 0
+[ "$enabled" = off ] && exit 0
+
+[ -x /etc/init.d/bandix-plus ] || exit 0
+
+LOCK=/tmp/lede-bandix-restart.lock
+[ -f "$LOCK" ] && exit 0
+: > "$LOCK"
+
+(
+	sleep 2
+	/etc/init.d/bandix-plus restart >/dev/null 2>&1
+	rm -f "$LOCK"
+) &
+
+exit 0

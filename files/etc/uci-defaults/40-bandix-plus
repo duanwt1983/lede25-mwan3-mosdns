@@ -1,0 +1,35 @@
+#!/bin/sh
+# Bandix Plus: multi-interface traffic stats + rate limits (replaces qosmate/lede-limit).
+
+[ -x /etc/init.d/bandix-plus ] || exit 0
+
+touch /etc/config/bandix_plus
+
+uci -q set bandix_plus.general=bandix_plus
+uci -q set bandix_plus.general.enable_traffic='1'
+uci -q set bandix_plus.general.tc_order='last'
+uci -q set bandix_plus.general.tc_backend='auto'
+uci -q set bandix_plus.general.port='8787'
+uci -q set bandix_plus.general.host='127.0.0.1'
+
+uci -q delete bandix_plus.general.iface 2>/dev/null || true
+uci -q add_list bandix_plus.general.iface='br-lan'
+
+# Attach all PPPoE / logical WAN devices (names vary by image).
+if command -v ubus >/dev/null 2>&1; then
+	ubus call network.interface dump 2>/dev/null | \
+		sed -n 's/.*"device"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | \
+		sort -u | while read -r dev; do
+			[ -z "$dev" ] && continue
+			case "$dev" in
+				br-lan|lo|ifb*) continue ;;
+			esac
+			uci -q add_list bandix_plus.general.iface="$dev"
+		done
+fi
+
+uci -q commit bandix_plus
+/etc/init.d/bandix-plus enable
+/etc/init.d/bandix-plus restart >/dev/null 2>&1 || true
+
+exit 0

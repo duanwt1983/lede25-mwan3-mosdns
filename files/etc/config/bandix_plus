@@ -1,0 +1,13 @@
+
+config bandix_plus 'general'
+	option enable_traffic '1'
+	list iface 'br-lan'
+	option log_level 'info'
+	option tc_backend 'auto'
+	option tc_order 'last'
+	option netlink_priority '0'
+	option traffic_enable_storage '0'
+	option port '8787'
+	option data_dir '/usr/share/bandix-plus'
+	option host '127.0.0.1'
+	option history_window_minutes '10'
