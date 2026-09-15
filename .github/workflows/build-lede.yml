@@ -188,9 +188,13 @@ jobs:
           vmdk=$(ls -1 *ext4-combined-efi.vmdk *ext4-combined-efi.vmdk.gz 2>/dev/null | head -1 || true)
           [ -n "$img" ] && mv -v "$img" "lede-${rev}-${day}.img${img##*.img}"
           [ -n "$vmdk" ] && mv -v "$vmdk" "lede-${rev}-${day}.vmdk${vmdk##*.vmdk}"
-          if [ -f sha256sums ]; then
-            mv -v sha256sums "sha256sums-lede-${rev}-${day}.txt"
+          # GitHub Releases reject single assets >= 2 GiB; gzip raw images for release.
+          if [ -f "lede-${rev}-${day}.img" ]; then
+            echo "gzip release image (GitHub 2GiB asset limit)"
+            gzip -9 "lede-${rev}-${day}.img"
           fi
+          rm -f sha256sums
+          sha256sum lede-${rev}-${day}.* > "sha256sums-lede-${rev}-${day}.txt"
           echo "FIRMWARE=$PWD" >> $GITHUB_ENV
           echo "status=success" >> $GITHUB_OUTPUT
           ls -lh
@@ -214,7 +218,8 @@ jobs:
             echo
             echo "- Source: coolsnowwolf/lede master"
             echo "- Web: luci-nginx HTTPS (no uhttpd), Argon, default LuCI overview"
-            echo "- LAN: 192.168.9.1/24, ext4 root 2048M + leftover /data, EFI img + VMDK"
+            echo "- LAN: 192.168.9.1/24, ext4 root 2048M + leftover /data, EFI img.gz + VMDK"
+            echo "- IMG 超过 GitHub 2GiB 限制时已 gzip；解压: \`gunzip -k lede-*.img.gz\`"
             echo "- Proxy: PassWall nft + mosdns (yaml, no DNS leak to Aliyun)"
             echo "- WAN: mwan3 nftables port (no iptables)"
             echo "- QoS: qosmate + luci-app-qosmate"
@@ -233,7 +238,11 @@ jobs:
           tag_name: ${{ steps.tag.outputs.release_tag }}
           name: ${{ steps.tag.outputs.release_tag }}
           body_path: release.txt
-          files: ${{ env.FIRMWARE }}/*
+          files: |
+            ${{ env.FIRMWARE }}/*.img.gz
+            ${{ env.FIRMWARE }}/*.vmdk
+            ${{ env.FIRMWARE }}/*.vmdk.gz
+            ${{ env.FIRMWARE }}/sha256sums*.txt
           fail_on_unmatched_files: true
           draft: false
           prerelease: false
