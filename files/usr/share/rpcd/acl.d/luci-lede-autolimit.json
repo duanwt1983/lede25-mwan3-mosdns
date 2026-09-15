@@ -1,0 +1,20 @@
+{
+	"luci-lede-autolimit": {
+		"description": "Auto rate limit status and release",
+		"read": {
+			"ubus": {
+				"lede-autolimit": [ "status" ]
+			},
+			"uci": [ "lede-autolimit" ]
+		},
+		"write": {
+			"ubus": {
+				"lede-autolimit": [ "release" ]
+			},
+			"uci": [ "lede-autolimit" ],
+			"file": {
+				"/etc/init.d/lede-autolimit": [ "exec" ]
+			}
+		}
+	}
+}

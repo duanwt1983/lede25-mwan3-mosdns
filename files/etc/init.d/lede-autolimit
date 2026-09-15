@@ -1,0 +1,19 @@
+#!/bin/sh /etc/rc.common
+
+START=85
+STOP=15
+USE_PROCD=1
+
+start_service() {
+	[ -x /usr/libexec/lede-autolimit-loop ] || return 0
+	procd_open_instance
+	procd_set_param command /usr/libexec/lede-autolimit-loop
+	procd_set_param respawn 5 15 0
+	procd_set_param file /etc/config/lede-autolimit
+	procd_close_instance
+}
+
+reload_service() {
+	stop
+	start
+}

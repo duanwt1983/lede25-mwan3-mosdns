@@ -1,0 +1,51 @@
+#!/bin/sh
+# Auto rate-limit daemon (Bandix schedules). Independent from wanalert burst.
+
+[ -x /usr/libexec/lede-autolimit ] || exit 0
+[ -x /etc/init.d/bandix-plus ] || exit 0
+
+chmod +x /usr/libexec/lede-autolimit /usr/libexec/lede-autolimit-loop 2>/dev/null || true
+chmod +x /usr/libexec/rpcd/lede-autolimit 2>/dev/null || true
+
+touch /etc/config/lede-autolimit
+mkdir -p /data/metrics 2>/dev/null || true
+
+# Defaults (only set if missing).
+def() {
+	local opt="$1" val="$2"
+	local cur
+	cur="$(uci -q get "lede-autolimit.main.$opt" 2>/dev/null || true)"
+	[ -n "$cur" ] || uci -q set "lede-autolimit.main.$opt=$val"
+}
+
+def enabled 0
+def down_threshold_kbps 100000
+def up_threshold_kbps 30000
+def down_sustain_minutes 20
+def up_sustain_minutes 20
+def limit_down_kbps 10000
+def limit_up_kbps 1000
+def limit_minutes 30
+def penalty_window_minutes 30
+def penalty_limit_minutes 60
+def interval_sec 30
+def iface br-lan
+
+# Gateway MAC on LAN (br-lan) as default whitelist entry.
+if ! uci show lede-autolimit 2>/dev/null | grep -q '\.whitelist='; then
+	lan_dev="$(uci -q get network.lan.device 2>/dev/null || true)"
+	[ -n "$lan_dev" ] || lan_dev=br-lan
+	gwmac="$(ip link show dev "$lan_dev" 2>/dev/null | awk '/link\/ether/ {print $2; exit}')"
+	if [ -n "$gwmac" ]; then
+		sid="$(uci add lede-autolimit whitelist)"
+		uci -q set "lede-autolimit.$sid.mac=$gwmac"
+		uci -q set "lede-autolimit.$sid.name=br-lan"
+	fi
+fi
+
+uci -q commit lede-autolimit
+
+/etc/init.d/lede-autolimit enable
+/etc/init.d/lede-autolimit start >/dev/null 2>&1 || true
+
+exit 0

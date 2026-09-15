@@ -1,13 +1,56 @@
 {
 	"admin/status/overview": {
-		"title": "Overview",
+		"title": "概览",
 		"order": 1,
+		"action": {
+			"type": "firstchild"
+		},
+		"depends": {
+			"acl": [ "luci-mod-status-index", "luci-app-wan-monitor" ]
+		}
+	},
+	"admin/status/overview/topo": {
+		"title": "拓扑图",
+		"order": 10,
 		"action": {
 			"type": "template",
 			"path": "admin_status/index"
 		},
 		"depends": {
 			"acl": [ "luci-mod-status-index", "luci-app-wan-monitor" ]
+		}
+	},
+	"admin/status/overview/cache": {
+		"title": "Mosdns缓存",
+		"order": 20,
+		"action": {
+			"type": "view",
+			"path": "status/mosdnscache"
+		},
+		"depends": {
+			"acl": [ "luci-app-mosdns" ]
+		}
+	},
+	"admin/status/overview/autolimit": {
+		"title": "自动限速",
+		"order": 30,
+		"action": {
+			"type": "view",
+			"path": "status/autolimit"
+		},
+		"depends": {
+			"acl": [ "luci-app-wan-monitor" ]
+		}
+	},
+	"admin/status/overview/hwinfo": {
+		"title": "硬件信息",
+		"order": 40,
+		"action": {
+			"type": "view",
+			"path": "status/hwinfo"
+		},
+		"depends": {
+			"acl": [ "luci-app-wan-monitor" ]
 		}
 	}
 }

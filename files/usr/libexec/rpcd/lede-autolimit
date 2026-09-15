@@ -1,0 +1,29 @@
+#!/bin/sh
+# rpcd plugin: delegate to lede-autolimit CLI (stdin JSON from ubus)
+
+case "$1" in
+	list)
+		echo '{"status":{},"release":{"mac":""}}'
+		;;
+	call)
+		case "$2" in
+			status)
+				/usr/libexec/lede-autolimit status
+				;;
+			release)
+				read -r input
+				mac="$(printf '%s' "$input" | jsonfilter -e '@.mac' 2>/dev/null)"
+				[ -n "$mac" ] || mac="$(printf '%s' "$input" | sed -n 's/.*"mac"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+				/usr/libexec/lede-autolimit release "$mac"
+				;;
+			*)
+				echo '{"ok":false,"error":"unknown method"}'
+				exit 1
+				;;
+		esac
+		;;
+	*)
+		echo '{"ok":false,"error":"unknown command"}'
+		exit 1
+		;;
+esac

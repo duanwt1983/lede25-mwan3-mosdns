@@ -1,0 +1,31 @@
+#!/usr/bin/ucode
+'use strict';
+
+import {
+	autolimit_tick,
+	autolimit_release_mac,
+	autolimit_status
+} from '/usr/share/ucode/lede-autolimit.uc';
+
+let cmd = ARGV[0];
+
+if (cmd == 'tick') {
+	let r = autolimit_tick();
+	print(sprintf('%J\n', r));
+	exit(r && r.ok ? 0 : 1);
+}
+
+if (cmd == 'release') {
+	let mac = ARGV[1] || '';
+	let r = autolimit_release_mac(mac);
+	print(sprintf('%J\n', r));
+	exit(r && r.ok ? 0 : 1);
+}
+
+if (cmd == 'status') {
+	print(sprintf('%J\n', autolimit_status()));
+	exit(0);
+}
+
+warn('usage: lede-autolimit tick|release <mac>|status\n');
+exit(2);

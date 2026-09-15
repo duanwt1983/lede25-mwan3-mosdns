@@ -3,19 +3,27 @@
 		"description": "Grant access to WAN monitor and system alerts",
 		"read": {
 			"ubus": {
-				"wanmonitor": [ "snapshot" ]
+				"wanmonitor": [ "snapshot", "pulse", "rate_hist", "layout_get", "hwinfo" ],
+				"luci.bandix_plus": [ "getDevices", "getSchedules" ],
+				"lede-autolimit": [ "status" ]
 			},
-			"uci": [ "wanalert", "lede-log", "system", "mosdns" ],
+			"uci": [ "wanalert", "lede-log", "system", "mosdns", "passwall", "network", "mwan3", "firewall", "lede-autolimit" ],
 			"file": {
 				"/usr/sbin/wan-alert": [ "exec" ],
 				"/usr/libexec/lede-log-read": [ "exec" ]
 			}
 		},
 		"write": {
-			"uci": [ "wanalert", "lede-log", "system", "mosdns" ],
+			"ubus": {
+				"wanmonitor": [ "layout_set", "wan_restart", "gateway_reboot", "hwinfo_refresh" ],
+				"luci.bandix_plus": [ "deleteDevice" ],
+				"lede-autolimit": [ "release" ]
+			},
+			"uci": [ "wanalert", "lede-log", "system", "mosdns", "lede-autolimit" ],
 			"file": {
 				"/usr/sbin/wan-alert": [ "exec" ],
-				"/usr/libexec/lede-log-read": [ "exec" ]
+				"/usr/libexec/lede-log-read": [ "exec" ],
+				"/etc/init.d/lede-autolimit": [ "exec" ]
 			}
 		}
 	}
