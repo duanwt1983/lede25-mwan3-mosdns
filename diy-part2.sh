@@ -570,7 +570,6 @@ assert_pkg luci-app-passwall
 assert_pkg luci-app-samba4
 assert_pkg tcpdump
 assert_pkg wireshark
-assert_pkg ip-full
 
 rm -rf feeds/luci/applications/luci-app-diskman package/feeds/luci/luci-app-diskman
 if grep -q '+smartmontools' package/luci-app-diskman/Makefile; then
