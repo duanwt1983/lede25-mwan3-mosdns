@@ -172,7 +172,7 @@ jobs:
           fi
           echo "==== image manifest (diskman / ixgbe / parted) ===="
           grep -E 'luci-app-diskman|luci-i18n-diskman|parted|blkid|kmod-ixgbe' "$mf" || true
-          for need in luci-app-diskman parted kmod-ixgbe luci-app-qosmate qosmate; do
+          for need in luci-app-diskman parted kmod-ixgbe luci-app-qosmate qosmate smartmontools; do
             if ! grep -E "^${need}([[:space:]]|-)" "$mf"; then
               echo "IMAGE FAIL: ${need} not in $mf"
               cat "$mf"

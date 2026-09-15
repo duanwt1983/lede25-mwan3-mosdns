@@ -39,7 +39,7 @@ GitHub Actions 工作流显示名保持：`Build Lean 25 x86-64 PassWall samba4`
 | 网页终端 | ttyd |
 | 主题 | Argon |
 | 文件共享 | samba4 |
-| 磁盘管理 | luci-app-diskman（不带 smartmontools） |
+| 磁盘管理 | luci-app-diskman + **smartmontools**（硬件信息页 SMART 健康度） |
 | 文件管理 | luci-app-filemanager |
 
 **不装**：iStore / FastNet、uhttpd、iperf3、Homebox、旧版 luci-app-ddns、SSR Plus、以及 iptables 那一套。

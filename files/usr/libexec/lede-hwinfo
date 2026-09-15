@@ -422,7 +422,7 @@ function edac() {
 
 function smart_of(dev) {
 	if (!have('smartctl'))
-		return { available: false, note: '当前固件未带 smartctl，SMART 需下一版加入 smartmontools。' };
+		return { available: false, note: '未找到 smartctl，请确认固件已安装 smartmontools。' };
 	let info = sh(sprintf("smartctl -n standby -i '%s' 2>/dev/null", dev));
 	let health = sh(sprintf("smartctl -n standby -H '%s' 2>/dev/null", dev));
 	let attr = sh(sprintf("smartctl -n standby -A '%s' 2>/dev/null", dev));

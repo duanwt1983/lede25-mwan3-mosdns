@@ -160,9 +160,23 @@ fi
 rm -rf feeds/luci/applications/luci-app-qosmate package/feeds/luci/luci-app-qosmate || true
 
 # Bandix Plus: eBPF per-device traffic stats + per-MAC rate limits.
-rm -rf package/openwrt-bandix-plus package/luci-app-bandix-plus
-clone_once package/openwrt-bandix-plus https://github.com/timsaya/openwrt-bandix-plus
-clone_once package/luci-app-bandix-plus https://github.com/timsaya/luci-app-bandix-plus
+# Upstream repos now nest the OpenWrt package one level down (…/openwrt-bandix-plus/, …/luci-app-bandix-plus/).
+rm -rf package/bandix-plus package/luci-app-bandix-plus package/openwrt-bandix-plus /tmp/openwrt-bandix-plus /tmp/luci-app-bandix-plus
+git clone --depth=1 https://github.com/timsaya/openwrt-bandix-plus /tmp/openwrt-bandix-plus
+git clone --depth=1 https://github.com/timsaya/luci-app-bandix-plus /tmp/luci-app-bandix-plus
+if [ -f /tmp/openwrt-bandix-plus/openwrt-bandix-plus/Makefile ]; then
+  cp -a /tmp/openwrt-bandix-plus/openwrt-bandix-plus package/bandix-plus
+else
+  echo "ERROR: openwrt-bandix-plus nested Makefile missing"
+  exit 1
+fi
+if [ -f /tmp/luci-app-bandix-plus/luci-app-bandix-plus/Makefile ]; then
+  cp -a /tmp/luci-app-bandix-plus/luci-app-bandix-plus package/luci-app-bandix-plus
+else
+  echo "ERROR: luci-app-bandix-plus nested Makefile missing"
+  exit 1
+fi
+rm -rf /tmp/openwrt-bandix-plus /tmp/luci-app-bandix-plus
 rm -rf feeds/luci/applications/luci-app-bandix-plus package/feeds/luci/luci-app-bandix-plus || true
 _LUCI_BANDIX_PATCH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/patches/luci-app-bandix-plus/apply.sh"
 [ -x "$_LUCI_BANDIX_PATCH" ] && "$_LUCI_BANDIX_PATCH" || bash "$_LUCI_BANDIX_PATCH" 2>/dev/null || true

@@ -24,6 +24,7 @@ must_y=(
   CONFIG_PACKAGE_parted
   CONFIG_PACKAGE_blkid
   CONFIG_PACKAGE_kmod-ixgbe
+  CONFIG_PACKAGE_smartmontools
   CONFIG_PACKAGE_luci-app-filemanager
   CONFIG_PACKAGE_luci-app-ddns-go
   CONFIG_PACKAGE_ddns-go

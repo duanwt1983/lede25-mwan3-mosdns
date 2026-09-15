@@ -3,7 +3,7 @@
 
 set -e
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-PKG="package/luci-app-bandix-plus/luci-app-bandix-plus/htdocs/luci-static/resources/view/bandix_plus/index.js"
+PKG="package/luci-app-bandix-plus/htdocs/luci-static/resources/view/bandix_plus/index.js"
 SRC="$ROOT/tmp-bandix-index.js"
 OUT="$ROOT/files/www/luci-static/resources/view/bandix_plus/index.js"
 PATCH="$ROOT/patches/luci-app-bandix-plus/patch-index.py"
