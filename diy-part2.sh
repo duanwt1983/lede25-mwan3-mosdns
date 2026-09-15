@@ -201,6 +201,8 @@ for mk in package/luci-theme-argon/Makefile package/luci-app-argon-config/Makefi
     sed -i 's|include $(TOPDIR)/feeds/luci/luci.mk|PKGARCH:=all\ninclude $(TOPDIR)/feeds/luci/luci.mk|' "$mk"
   fi
 done
+_LUCI_ARGON_PATCH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/patches/luci-theme-argon/apply.sh"
+[ -x "$_LUCI_ARGON_PATCH" ] && "$_LUCI_ARGON_PATCH" || bash "$_LUCI_ARGON_PATCH" 2>/dev/null || true
 # Lean luci already ships diskman; that copy hard-depends on smartmontools.
 # Using only lisaac's tree lets us drop SMART/RAID deps without breaking install.
 rm -rf feeds/luci/applications/luci-app-diskman package/feeds/luci/luci-app-diskman
