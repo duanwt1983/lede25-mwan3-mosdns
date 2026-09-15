@@ -162,13 +162,9 @@ mount_uuid() {
 	if data_mounted; then
 		return 0
 	fi
-	if command -v block >/dev/null 2>&1; then
-		block mount >/dev/null 2>&1 || true
-	fi
-	if data_mounted; then
-		return 0
-	fi
-	mount -t ext4 -o rw,noatime,nofail "UUID=$uuid" /data 2>/dev/null || \
+	# Do not call "block mount" here: it probes every fstype on /data and floods
+	# dmesg with F2FS/exFAT errors when fstype is not pinned in UCI.
+	mount -t ext4 -o rw,noatime "UUID=$uuid" /data 2>/dev/null || \
 		mount -t ext4 -o rw,noatime "/dev/disk/by-uuid/$uuid" /data 2>/dev/null || \
 		return 1
 }

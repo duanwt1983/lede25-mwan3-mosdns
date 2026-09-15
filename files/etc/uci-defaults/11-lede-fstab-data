@@ -1,0 +1,9 @@
+#!/bin/sh
+# /data must mount as ext4 explicitly. Without fstype, block mount probes F2FS/exFAT
+# and spams dmesg with Magic Mismatch / invalid boot record / Unknown parameter discard.
+sid=$(uci -q show fstab 2>/dev/null | awk -F'[.=]' "/target='\\/data'/{print \$2; exit}")
+[ -n "$sid" ] || exit 0
+uci -q set "fstab.$sid.fstype=ext4"
+uci -q set "fstab.$sid.options=rw,noatime,nofail"
+uci -q commit fstab
+exit 0

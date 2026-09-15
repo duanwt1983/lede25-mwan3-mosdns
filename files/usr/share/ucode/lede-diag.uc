@@ -122,8 +122,16 @@ export function format_kmsg(line) {
 	if (match(body, /ata[0-9].*FAILED|NVMe.*timeout/i))
 		return { title: '磁盘控制器异常', level: '严重', cat: '硬件', detail: body, raw };
 
+	if (match(body, /F2FS-fs.*Magic Mismatch|Unknown parameter 'discard'/))
+		return {
+			title: '挂载探测提示',
+			level: '一般',
+			cat: '内核',
+			detail: 'block 挂载时尝试识别文件系统产生的提示；/data 已是 ext4 时可忽略，不是磁盘损坏。',
+			raw
+		};
 	if (match(body, /exFAT-fs|ntfs3\(|failed to recognize|Primary boot signature is not NTFS|try to read out of volume/))
-		return { title: '磁盘分区无法识别', level: '一般', cat: '内核', detail: '这块分区不是当前内核认识的文件系统（或分区表对不上），不是整机崩溃。' + body, raw };
+		return { title: '磁盘分区无法识别', level: '一般', cat: '内核', detail: '这块分区不是当前内核识别的文件系统（或分区表对不上），不是整机崩溃。' + body, raw };
 	if (m)
 		return { title: 'USB 设备拔出', level: '一般', cat: '内核', detail: body, raw };
 	if (match(body, /new (high-speed|SuperSpeed|full-speed) USB|USB device found/i))

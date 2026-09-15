@@ -1,0 +1,7 @@
+#!/bin/sh
+# Ensure nginx ubus body-buffer workaround is active after upgrade.
+[ -f /etc/nginx/conf.d/00-lede-http.conf ] || exit 0
+if [ -x /etc/init.d/nginx ]; then
+	/etc/init.d/nginx restart >/dev/null 2>&1 || /etc/init.d/nginx reload >/dev/null 2>&1 || true
+fi
+exit 0
