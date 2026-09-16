@@ -128,7 +128,9 @@ jobs:
             echo "===== qemu-img ====="
             command -v qemu-img || echo "qemu-img missing"
             echo "===== collected errors ====="
-            grep -R "ERROR:\|Error 1\|requires go\|Cannot satisfy\|Collected errors\|No space" logs tmp 2>/dev/null | tail -n 160 || true
+            grep -R "ERROR:\|Error 1\|requires go\|Cannot satisfy\|Collected errors\|No space\|is installed by\|File clash" logs tmp 2>/dev/null | tail -n 160 || true
+            echo "===== package/install V=s (last 250 lines) ====="
+            make package/install -j1 V=s 2>&1 | tail -n 250 || true
             failpkg=$(grep -R "ERROR: package/.* failed to build" logs 2>/dev/null | tail -n 1 | sed -n 's/.*ERROR: package\/\(.*\) failed to build.*/\1/p' || true)
             [ -z "$failpkg" ] && failpkg=wireshark
             echo "===== ${failpkg} CMake logs ====="

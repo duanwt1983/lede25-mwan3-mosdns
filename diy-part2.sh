@@ -277,14 +277,8 @@ if [ -f files/lib/functions/lede-mwan3.sh ]; then
     echo "mwan3: installed lede-mwan3.sh"
   fi
 fi
-for _lede_mod in lede-theme-page.js lede-fullwidth.js; do
-  [ -f "files/www/luci-static/resources/$_lede_mod" ] || continue
-  _MWAN3_RES="$(find package/luci-app-mwan3 -path '*/luci-static/resources' -type d 2>/dev/null | head -n 1)"
-  if [ -n "$_MWAN3_RES" ]; then
-    cp "files/www/luci-static/resources/$_lede_mod" "$_MWAN3_RES/$_lede_mod"
-    echo "mwan3 resource: $_MWAN3_RES/$_lede_mod"
-  fi
-done
+# lede-theme-page.js / lede-fullwidth.js live in files/ overlay only.
+# Baking them into both luci-app-mwan3 and luci-mod-status IPKs breaks opkg at package/install.
 if [ -f files/etc/hotplug.d/dhcp/30-lede-mwan3-mac ]; then
   mkdir -p package/mwan3/files/etc/hotplug.d/dhcp 2>/dev/null || true
   if [ -d package/mwan3/files/etc/hotplug.d/dhcp ]; then
@@ -444,13 +438,6 @@ if [ -f files/www/luci-static/resources/view/status/index.js ]; then
           if [ -f "files/www/luci-static/resources/view/status/$extra" ]; then
             cp "files/www/luci-static/resources/view/status/$extra" "$(dirname "$f")/$extra"
             echo "status: installed $(dirname "$f")/$extra"
-          fi
-        done
-        _STATUS_RES="$(dirname "$(dirname "$(dirname "$f")")")"
-        for _lede_mod in lede-theme-page.js lede-fullwidth.js; do
-          if [ -f "files/www/luci-static/resources/$_lede_mod" ]; then
-            cp "files/www/luci-static/resources/$_lede_mod" "$_STATUS_RES/$_lede_mod"
-            echo "status resource: $_STATUS_RES/$_lede_mod"
           fi
         done
         ;;
@@ -695,11 +682,8 @@ _MWAN3_TAB_PKG=$(find package/luci-app-mwan3 \
 [ -n "$_MWAN3_TAB_PKG" ] || { echo "ERROR: mwan3 menu json not found in luci-app-mwan3 package"; exit 1; }
 assert_grep '自动配置' "$_MWAN3_TAB_PKG"
 echo "package OK: $_MWAN3_TAB_PKG"
-_MWAN3_TPAGE=$(find package/luci-app-mwan3 -path '*/resources/lede-theme-page.js' -type f 2>/dev/null | head -n 1 || true)
-_STATUS_TPAGE=$(find package/luci-mod-status feeds/luci -path '*/resources/lede-theme-page.js' -type f 2>/dev/null | head -n 1 || true)
-[ -n "$_MWAN3_TPAGE" ] || { echo "ERROR: lede-theme-page.js not installed in luci-app-mwan3"; exit 1; }
-[ -n "$_STATUS_TPAGE" ] || { echo "ERROR: lede-theme-page.js not installed in luci-mod-status"; exit 1; }
-echo "package OK: lede-theme-page.js (mwan3 + status)"
+assert_grep 'lede-theme-page' "$_LEDE_FILES/www/luci-static/resources/lede-theme-page.js"
+echo "overlay OK: lede-theme-page.js (single copy, avoids opkg clash)"
 
 _SYSJS=$(find feeds/luci package -path '*/view/system/system.js' -type f 2>/dev/null | head -n 1 || true)
 [ -n "$_SYSJS" ] || { echo "ERROR: system.js not found after luci-mod-system patch"; exit 1; }
