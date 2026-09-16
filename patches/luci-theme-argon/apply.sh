@@ -43,9 +43,16 @@ fi
 mkdir -p "$SHARE_OVERLAY"
 for f in sysauth.ut header.ut header_login.ut; do
 	[ -f "$SRC/$f" ] || continue
-	install -D -m 0644 "$SRC/$f" "$DEST/$f"
-	install -D -m 0644 "$SRC/$f" "$SHARE_OVERLAY/$f"
-	echo "argon theme: overlay $f -> package + files/usr/share"
+	_src="$SRC/$f"
+	_pkg="$DEST/$f"
+	_overlay="$SHARE_OVERLAY/$f"
+	install -D -m 0644 "$_src" "$_pkg"
+	if [ "$_src" != "$_overlay" ]; then
+		install -D -m 0644 "$_src" "$_overlay"
+		echo "argon theme: overlay $f -> package + files/usr/share"
+	else
+		echo "argon theme: overlay $f -> package (files/usr/share already present)"
+	fi
 done
 
 install -D -m 0644 "$CSS_SRC" "$CSS_DEST"
