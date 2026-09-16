@@ -620,13 +620,14 @@ assert_grep() {
   echo "content OK: $needle"
 }
 
-assert_pkg_grep() {
+assert_pkg_file() {
   local needle="$1"
   shift
   local f
   f=$(find "$@" -type f 2>/dev/null | head -n 1 || true)
-  [ -n "$f" ] || { echo "ERROR: package file not found for: $needle ($*)"; exit 1; }
+  [ -n "$f" ] || { echo "ERROR: package file not found ($*)"; exit 1; }
   assert_grep "$needle" "$f"
+  echo "package OK: $f"
 }
 
 for _rel in \
@@ -657,14 +658,27 @@ assert_grep '自动配置' "$_LEDE_FILES/usr/share/luci/menu.d/zzz-luci-mwan3-ta
 assert_grep 'font-size: 2.85rem' "$_LEDE_FILES/www/luci-static/argon/css/lede-brand-font.css"
 assert_grep 'font-size: 30px' "$_LEDE_FILES/www/luci-static/argon/css/lede-brand-font.css"
 
-assert_pkg_grep 'commitDisableToUci' package/luci-app-mwan3
-assert_pkg_grep 'lede-theme-page' package/luci-app-mwan3
-assert_pkg_grep 'lede-theme-page' package/luci-mod-status feeds/luci
-assert_pkg_grep 'wanalert-page' package/luci-mod-status feeds/luci
-assert_pkg_grep 'DuanNingMaoBi' package/luci-theme-argon
-assert_pkg_grep 'displayName' package/luci-theme-argon
-assert_pkg_grep 'lede-mwan3-setup' package/mwan3
-assert_pkg_grep '自动配置' package/luci-app-mwan3 "$_LEDE_FILES/usr/share/luci/menu.d"
+assert_pkg_file 'commitDisableToUci' \
+  package/luci-app-mwan3 -path '*/view/mwan3/network/globals.js'
+assert_pkg_file 'lede-theme-page' \
+  package/luci-app-mwan3 -path '*/view/mwan3/network/globals.js'
+assert_pkg_file 'lede-theme-page' \
+  package/luci-mod-status feeds/luci -path '*/view/status/index.js'
+assert_pkg_file 'lede-theme-page' \
+  package/luci-mod-status feeds/luci -path '*/view/status/wanalert-page.js'
+assert_pkg_file 'DuanNingMaoBi' \
+  package/luci-theme-argon -path '*/css/lede-brand-font.css'
+assert_pkg_file 'displayName' \
+  package/luci-theme-argon -path '*/template/themes/argon/header.ut'
+assert_pkg_file 'lede-mwan3-setup' \
+  package/mwan3 -path '*/usr/libexec/lede-mwan3-setup'
+_MWAN3_TAB_PKG=$(find package/luci-app-mwan3 \
+  -path '*/menu.d/zzz-luci-mwan3-tab.json' -type f 2>/dev/null | head -n 1 || true)
+[ -n "$_MWAN3_TAB_PKG" ] || _MWAN3_TAB_PKG=$(find package/luci-app-mwan3 \
+  -path '*/menu.d/luci-app-mwan3.json' -type f 2>/dev/null | head -n 1 || true)
+[ -n "$_MWAN3_TAB_PKG" ] || { echo "ERROR: mwan3 menu json not found in luci-app-mwan3 package"; exit 1; }
+assert_grep '自动配置' "$_MWAN3_TAB_PKG"
+echo "package OK: $_MWAN3_TAB_PKG"
 _MWAN3_TPAGE=$(find package/luci-app-mwan3 -path '*/resources/lede-theme-page.js' -type f 2>/dev/null | head -n 1 || true)
 _STATUS_TPAGE=$(find package/luci-mod-status feeds/luci -path '*/resources/lede-theme-page.js' -type f 2>/dev/null | head -n 1 || true)
 [ -n "$_MWAN3_TPAGE" ] || { echo "ERROR: lede-theme-page.js not installed in luci-app-mwan3"; exit 1; }
