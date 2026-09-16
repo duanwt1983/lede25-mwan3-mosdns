@@ -13,15 +13,18 @@ json_escape() {
 }
 
 cmd_status() {
-	local running=0 n=0 names="" sid en
-	/etc/init.d/mwan3 running >/dev/null 2>&1 && running=1
+	local svc=0 active=0 n=0 names="" sid en
+	/etc/init.d/mwan3 running >/dev/null 2>&1 && svc=1
 	for sid in $(uci -q show mwan3 | sed -n 's/^mwan3\.\([^=]*\)=interface$/\1/p'); do
 		en=$(uci -q get "mwan3.$sid.enabled")
 		[ "$en" = 1 ] || continue
 		n=$((n + 1))
 		names="${names}${names:+,}$sid"
 	done
-	printf '{"ok":true,"running":%s,"enabled":%s,"ifaces":"%s"}\n' "$running" "$n" "$(json_escape "$names")"
+	# running = 多线负载已启用：服务在跑且至少两条 WAN 参与负载
+	[ "$svc" = 1 ] && [ "$n" -ge 2 ] && active=1
+	printf '{"ok":true,"running":%s,"service":%s,"enabled":%s,"ifaces":"%s"}\n' \
+		"$active" "$svc" "$n" "$(json_escape "$names")"
 	exit 0
 }
 

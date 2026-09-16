@@ -174,3 +174,25 @@ if [ -f "$ZH" ]; then
 		fi
 	done
 fi
+
+MENU="$(find "$APP" -path '*/menu.d/luci-app-mwan3.json' -type f | head -n 1)"
+if [ -n "$MENU" ]; then
+	python3 - "$MENU" <<'PY'
+import json, sys
+from pathlib import Path
+p = Path(sys.argv[1])
+data = json.loads(p.read_text(encoding="utf-8"))
+key = "admin/network/mwan3/globals"
+if key in data:
+    data[key]["title"] = "自动配置"
+    p.write_text(json.dumps(data, indent="\t", ensure_ascii=False) + "\n", encoding="utf-8")
+    print("menu globals tab -> 自动配置", p)
+PY
+fi
+
+TAB_OVR="$(cd "$(dirname "$0")/../.." && pwd)/files/usr/share/luci/menu.d/zzz-luci-mwan3-tab.json"
+if [ -f "$TAB_OVR" ]; then
+	mkdir -p "$APP/root/usr/share/luci/menu.d"
+	cp "$TAB_OVR" "$APP/root/usr/share/luci/menu.d/zzz-luci-mwan3-tab.json"
+	echo "menu override: zzz-luci-mwan3-tab.json"
+fi

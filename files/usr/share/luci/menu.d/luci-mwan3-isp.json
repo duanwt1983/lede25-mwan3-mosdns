@@ -1,12 +1,4 @@
 {
-	"admin/network/mwan3/globals": {
-		"title": "负载均衡",
-		"order": 10,
-		"action": {
-			"type": "view",
-			"path": "mwan3/network/globals"
-		}
-	},
 	"admin/network/mwan3/ispip": {
 		"title": "运营商地址库",
 		"order": 51,

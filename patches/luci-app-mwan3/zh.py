@@ -156,7 +156,7 @@ def zh_menu(path: Path) -> None:
         "Diagnostics": "诊断",
         "Troubleshooting": "排障",
         "Routing": "路由",
-        "Globals": "全局",
+        "Globals": "自动配置",
         "Interface": "接口",
         "Member": "成员",
         "Policy": "策略",

@@ -1,5 +1,6 @@
 'use strict';
 'require view';
+'require form';
 'require ui';
 'require uci';
 'require fs';
@@ -21,17 +22,17 @@ function skipNet(name, proto, device) {
 }
 
 return view.extend({
-	handleSaveApply: null,
-	handleSave: null,
-	handleReset: null,
-
 	load() {
 		return Promise.all([
 			uci.load('network'),
 			uci.load('mwan3'),
 			network.getNetworks(),
 			fs.exec('/usr/libexec/lede-mwan3-setup', ['status']).then(r => this.parseJson(r)).catch(() => ({ running: 0 }))
-		]);
+		]).then(data => {
+			if (ui.changes && typeof ui.changes.init === 'function')
+				ui.changes.init();
+			return data;
+		});
 	},
 
 	collectWans(nets) {
@@ -94,6 +95,8 @@ return view.extend({
 		const j = raw.lastIndexOf('}');
 		if (i < 0 || j <= i) {
 			const code = r && r.code != null ? String(r.code) : '';
+			if (code === '127')
+				return { ok: false, error: _('后端脚本未安装，请更新固件或联系管理员') };
 			return { ok: false, error: raw.trim() || (code ? _('执行失败 (%s)').format(code) : _('没有返回')) };
 		}
 		try {
@@ -103,10 +106,72 @@ return view.extend({
 		}
 	},
 
-	paintBadge() {
-		const badge = document.getElementById('lb-status');
+	isLbActive(st) {
+		st = st || this._st || {};
+		if (Number(st.running) !== 1)
+			return false;
+		const n = Number(st.enabled);
+		if (!isNaN(n) && n >= 0)
+			return n >= 2;
+		return true;
+	},
+
+	hasEnoughWans() {
+		return ((this._wans || []).length >= 2);
+	},
+
+	forEachFooterAction(fn) {
+		document.querySelectorAll('#view .cbi-page-actions').forEach(fn);
+	},
+
+	setFooterControl(el, can) {
+		if (!el || el.id === 'lb-wipe')
+			return;
+		if (can) {
+			el.removeAttribute('disabled');
+			el.removeAttribute('aria-disabled');
+		} else {
+			el.setAttribute('disabled', '');
+			el.setAttribute('aria-disabled', 'true');
+		}
+	},
+
+	updateFooterActions() {
+		const can = this.hasEnoughWans();
+		this.forEachFooterAction(actions => {
+			actions.classList.toggle('lb-actions-locked', !can);
+			actions.querySelectorAll('button, .cbi-dropdown, .cbi-button').forEach(el => {
+				this.setFooterControl(el, can);
+			});
+		});
+		this.updateWipeButton();
+	},
+
+	scheduleFooterLock() {
+		const tick = L.bind(this.updateFooterActions, this);
+		tick();
+		setTimeout(tick, 0);
+		setTimeout(tick, 100);
+	},
+
+	updateWipeButton() {
+		const btn = document.getElementById('lb-wipe');
+		if (!btn)
+			return;
+		btn.disabled = !this.hasEnoughWans() || !this.isLbActive();
+	},
+
+	paintRunStatus() {
+		const badge = document.getElementById('lb-run-status');
 		if (!badge)
 			return;
+		if (!this.hasEnoughWans()) {
+			badge.textContent = _('不可用');
+			badge.style.color = '#9ca3af';
+			badge.setAttribute('title', _('系统中 WAN 口少于 2 个，无法启用多线负载'));
+			this.updateWipeButton();
+			return;
+		}
 		if (this._phase === 'starting') {
 			badge.textContent = _('启动中......');
 			badge.style.color = '#d97706';
@@ -122,16 +187,20 @@ return view.extend({
 				badge.removeAttribute('title');
 			return;
 		}
-		const on = !!(this._st && Number(this._st.running) === 1);
-		badge.textContent = on ? _('运行中') : _('未运行');
+		const on = this.isLbActive(this._st);
+		badge.textContent = on ? _('运行中') : _('关闭');
 		badge.style.color = on ? '#16a34a' : '#dc2626';
-		badge.removeAttribute('title');
+		if (!on && this._st && Number(this._st.service) === 1 && Number(this._st.enabled) < 2)
+			badge.setAttribute('title', _('mwan3 服务在运行，但未配置多线负载'));
+		else
+			badge.removeAttribute('title');
+		this.updateWipeButton();
 	},
 
 	refreshStatus() {
 		return fs.exec('/usr/libexec/lede-mwan3-setup', ['status']).then(r => {
 			this._st = this.parseJson(r);
-			this.paintBadge();
+			this.paintRunStatus();
 			return this._st;
 		}).catch(() => this._st);
 	},
@@ -140,7 +209,7 @@ return view.extend({
 		const self = this;
 		function step() {
 			return self.refreshStatus().then(st => {
-				const on = !!(st && Number(st.running) === 1);
+				const on = self.isLbActive(st);
 				if (on === want)
 					return st;
 				if (tries <= 0)
@@ -153,10 +222,21 @@ return view.extend({
 	},
 
 	afterChange() {
-		uci.unload('mwan3');
 		return uci.load('mwan3').then(() => {
 			this._wans = this.collectWans(this._nets);
-			return this.refreshStatus().then(() => this.renderPage());
+			return this.refreshStatus().then(() => {
+				if (this._host)
+					this.renderPageContent(this._host);
+				this.paintRunStatus();
+				const hashSel = document.getElementById('lb-hash-mode');
+				if (hashSel) {
+					const hm = uci.get('mwan3', 'globals', 'lede_lb_hash') || 'flow';
+					hashSel.value = hm === 'ip' ? 'ip' : 'flow';
+				}
+				this.syncStickyControls();
+				if (ui.changes && typeof ui.changes.init === 'function')
+					ui.changes.init();
+			});
 		});
 	},
 
@@ -166,6 +246,167 @@ return view.extend({
 
 	fail(e, fallback) {
 		ui.addNotification(null, E('p', {}, (e && e.message) || fallback), 'error');
+	},
+
+	bumpDirty() {
+		if (ui.changes && typeof ui.changes.init === 'function')
+			ui.changes.init();
+		const el = this._mapNode && this._mapNode.querySelector('[data-name="lede_cfg_rev"] input');
+		if (el) {
+			el.value = String(Date.now());
+			el.dispatchEvent(new Event('change', { bubbles: true }));
+		}
+	},
+
+	bindDirty(root) {
+		if (!root)
+			return;
+		const self = this;
+		root.querySelectorAll('input,select').forEach(el => {
+			el.addEventListener('change', () => self.bumpDirty());
+			el.addEventListener('input', () => self.bumpDirty());
+		});
+	},
+
+	readForm() {
+		const rows = this._wans || [];
+		const ifaces = [];
+		rows.forEach(w => {
+			const ck = document.getElementById('lb-ck-' + w.name);
+			if (!ck || !ck.checked)
+				return;
+			const wt = document.getElementById('lb-wt-' + w.name);
+			let v = Number(wt && wt.value);
+			if (!(v >= 1 && v <= 100))
+				v = 1;
+			ifaces.push({ name: w.name, weight: v });
+		});
+		const tracks = [];
+		if (this._trackBox)
+			(this._trackBox.querySelectorAll('input') || []).forEach(inp => {
+				const v = String(inp.value || '').trim();
+				if (v)
+					tracks.push(v);
+			});
+		const hashEl = document.getElementById('lb-hash-mode');
+		const hashMode = hashEl ? hashEl.value : (uci.get('mwan3', 'globals', 'lede_lb_hash') || 'flow');
+		return {
+			enabled: !!(document.getElementById('lb-enable') || {}).checked,
+			ifaces,
+			tracks: tracks.length ? tracks : DEF_TRACK.slice(),
+			sticky: !!(document.getElementById('lb-sticky') || {}).checked,
+			hashMode: hashMode === 'ip' ? 'ip' : 'flow',
+			timeout: String((document.getElementById('lb-timeout') || {}).value || '600'),
+			interval: String((document.getElementById('lb-interval') || {}).value || '5'),
+			down: String((document.getElementById('lb-down') || {}).value || '3'),
+			up: String((document.getElementById('lb-up') || {}).value || '3')
+		};
+	},
+
+	commitProbeToUci(f) {
+		f = f || this.readForm();
+		uci.set('mwan3', 'globals', 'lede_lb_hash', f.hashMode === 'ip' ? 'ip' : 'flow');
+		uci.set('mwan3', 'default', 'sticky', (f.sticky && f.hashMode === 'ip') ? '1' : '0');
+		uci.set('mwan3', 'default', 'timeout', f.timeout);
+		uci.sections('mwan3', 'interface').forEach(s => {
+			const name = s['.name'];
+			uci.set('mwan3', name, 'interval', f.interval);
+			uci.set('mwan3', name, 'down', f.down);
+			uci.set('mwan3', name, 'up', f.up);
+		});
+	},
+
+	buildApplyArgs(f) {
+		const args = ['apply'];
+		f.ifaces.forEach(w => {
+			args.push('--iface', w.name, '--weight', String(w.weight));
+		});
+		f.tracks.forEach(t => args.push('--track', t));
+		args.push('--sticky', f.sticky && f.hashMode === 'ip' ? '1' : '0');
+		args.push('--hash-mode', f.hashMode === 'ip' ? 'ip' : 'flow');
+		args.push('--timeout', f.timeout);
+		args.push('--interval', f.interval);
+		args.push('--down', f.down);
+		args.push('--up', f.up);
+		return args;
+	},
+
+	applyBackend() {
+		if (!this.hasEnoughWans())
+			throw new Error(_('系统中 WAN 口少于 2 个，无法配置多线负载'));
+
+		const f = this.readForm();
+		const running = this.isLbActive(this._st);
+
+		if (!f.enabled) {
+			this._phase = null;
+			this._phaseErr = '';
+			if (!running)
+				return Promise.resolve();
+			return fs.exec('/usr/libexec/lede-mwan3-setup', ['stop']).then(r => {
+				const j = this.parseJson(r);
+				if (!j.ok)
+					throw new Error(j.error || _('关闭失败'));
+				return this.waitRunning(false, 20);
+			});
+		}
+
+		if (f.ifaces.length < 2)
+			throw new Error(_('请至少选择两条 WAN 后再启用多线负载'));
+
+		this._phase = 'starting';
+		this._phaseErr = '';
+		this.paintRunStatus();
+		return fs.exec('/usr/libexec/lede-mwan3-setup', this.buildApplyArgs(f)).then(r => {
+			const j = this.parseJson(r);
+			if (!j.ok)
+				throw new Error(j.error || _('应用失败'));
+			return this.waitRunning(true, 25).then(st => {
+				if (!this.isLbActive(st))
+					throw new Error(_('服务未起来'));
+				this._phase = null;
+				this._phaseErr = '';
+			});
+		}).catch(e => {
+			this._phase = 'start_fail';
+			this._phaseErr = (e && e.message) || _('应用失败');
+			throw e;
+		});
+	},
+
+	handleSave(ev) {
+		if (!this.hasEnoughWans()) {
+			this.fail(null, _('系统中 WAN 口少于 2 个，无法配置多线负载'));
+			return Promise.reject(new Error('wan'));
+		}
+		const self = this;
+		return this.map.save().then(function() {
+			self.commitProbeToUci();
+			return uci.save();
+		});
+	},
+
+	handleSaveApply(ev, mode) {
+		const self = this;
+		return this.handleSave(ev).then(function() {
+			return ui.changes.apply(mode == '0');
+		}).then(function() {
+			return self.applyBackend();
+		}).then(function() {
+			self.ok(_('已保存并应用'));
+			return self.afterChange();
+		}).catch(function(e) {
+			self.fail(e, _('保存并应用失败'));
+			return self.afterChange();
+		});
+	},
+
+	handleReset(ev) {
+		if (!this.hasEnoughWans()) {
+			this.fail(null, _('系统中 WAN 口少于 2 个，无法配置多线负载'));
+			return Promise.reject(new Error('wan'));
+		}
+		return this.map.reset().then(() => this.afterChange());
 	},
 
 	stopLb(ev) {
@@ -179,39 +420,12 @@ return view.extend({
 			if (!j.ok)
 				throw new Error(j.error || _('关闭失败'));
 			return this.waitRunning(false, 20).then(st => {
-				if (st && Number(st.running) === 1)
+				if (this.isLbActive(st))
 					throw new Error(_('已发出关闭，但服务仍在运行'));
 				this.ok(_('已关闭'));
 				return this.afterChange();
 			});
 		}).catch(e => this.fail(e, _('关闭失败'))).finally(() => {
-			if (btn)
-				btn.classList.remove('spinning');
-		});
-	},
-
-	restartLb(ev) {
-		if (ev)
-			ev.preventDefault();
-		const btn = document.getElementById('lb-restart');
-		if (btn)
-			btn.classList.add('spinning');
-		const hashMode = (document.getElementById('lb-hash') || {}).value || 'flow';
-		const flow = hashMode !== 'ip';
-		uci.set('mwan3', 'globals', 'lede_lb_hash', flow ? 'flow' : 'ip');
-		if (flow)
-			uci.set('mwan3', 'default', 'sticky', '0');
-		return uci.save().then(() => fs.exec('/usr/libexec/lede-mwan3-setup', ['restart']).then(r => {
-			const j = this.parseJson(r);
-			if (!j.ok)
-				throw new Error(j.error || _('重启失败'));
-			return this.waitRunning(true, 25).then(st => {
-				if (!(st && Number(st.running) === 1))
-					throw new Error(_('已发出重启，但服务未起来'));
-				this.ok(_('已重启'));
-				return this.afterChange();
-			});
-		})).catch(e => this.fail(e, _('重启失败'))).finally(() => {
 			if (btn)
 				btn.classList.remove('spinning');
 		});
@@ -267,6 +481,10 @@ return view.extend({
 	extraAdd(ev) {
 		if (ev)
 			ev.preventDefault();
+		if (!this.hasEnoughWans()) {
+			this.fail(null, _('系统中 WAN 口少于 2 个，无法配置多线负载'));
+			return;
+		}
 		const kind = String((document.getElementById('lb-kind') || {}).value || 'ip');
 		const ifc = String((document.getElementById('lb-rule-wan') || {}).value || '');
 		if (!ifc) {
@@ -327,6 +545,10 @@ return view.extend({
 			ev.preventDefault();
 		if (!name)
 			return;
+		if (!this.hasEnoughWans()) {
+			this.fail(null, _('系统中 WAN 口少于 2 个，无法配置多线负载'));
+			return;
+		}
 		return fs.exec('/usr/libexec/lede-mwan3-setup', ['extra', 'del', '--name', name]).then(r => {
 			const j = this.parseJson(r);
 			if (!j.ok)
@@ -339,6 +561,10 @@ return view.extend({
 	wipeLb(ev) {
 		if (ev)
 			ev.preventDefault();
+		if (!this.hasEnoughWans())
+			return;
+		if (!this.isLbActive(this._st))
+			return;
 		if (!window.confirm(_('停止服务并删除全部规则，确定？')))
 			return;
 		const btn = document.getElementById('lb-wipe');
@@ -351,71 +577,6 @@ return view.extend({
 			this.ok(_('已删除'));
 			return this.afterChange();
 		}).catch(e => this.fail(e, _('删除失败'))).finally(() => {
-			if (btn)
-				btn.classList.remove('spinning');
-		});
-	},
-
-	applyLb(ev) {
-		if (ev)
-			ev.preventDefault();
-		const rows = this._wans || [];
-		const args = ['apply'];
-		let n = 0;
-		rows.forEach(w => {
-			const ck = document.getElementById('lb-ck-' + w.name);
-			if (!ck || !ck.checked)
-				return;
-			n++;
-			args.push('--iface', w.name);
-			const wt = document.getElementById('lb-wt-' + w.name);
-			let v = Number(wt && wt.value);
-			if (!(v >= 1 && v <= 100))
-				v = 1;
-			args.push('--weight', String(v));
-		});
-		if (n < 2) {
-			this.fail(null, _('至少勾选两条宽带'));
-			return;
-		}
-		const tracks = [];
-		(this._trackBox.querySelectorAll('input') || []).forEach(inp => {
-			const v = String(inp.value || '').trim();
-			if (v)
-				tracks.push(v);
-		});
-		(tracks.length ? tracks : DEF_TRACK).forEach(t => args.push('--track', t));
-		const sticky = document.getElementById('lb-sticky');
-		args.push('--sticky', sticky && sticky.checked ? '1' : '0');
-		const hashMode = (document.getElementById('lb-hash') || {}).value || 'flow';
-		args.push('--hash-mode', hashMode === 'ip' ? 'ip' : 'flow');
-		args.push('--timeout', String((document.getElementById('lb-timeout') || {}).value || '600'));
-		args.push('--interval', String((document.getElementById('lb-interval') || {}).value || '5'));
-		args.push('--down', String((document.getElementById('lb-down') || {}).value || '3'));
-		args.push('--up', String((document.getElementById('lb-up') || {}).value || '3'));
-
-		const btn = document.getElementById('lb-apply');
-		if (btn)
-			btn.classList.add('spinning');
-		this._phase = 'starting';
-		this._phaseErr = '';
-		this.paintBadge();
-		return fs.exec('/usr/libexec/lede-mwan3-setup', args).then(r => {
-			const j = this.parseJson(r);
-			if (!j.ok)
-				throw new Error(j.error || _('启动失败'));
-			return this.waitRunning(true, 25).then(st => {
-				if (!(st && Number(st.running) === 1))
-					throw new Error(_('服务未起来'));
-				this._phase = null;
-				this._phaseErr = '';
-				return this.afterChange();
-			});
-		}).catch(e => {
-			this._phase = 'start_fail';
-			this._phaseErr = (e && e.message) || _('启动失败');
-			return this.afterChange();
-		}).finally(() => {
 			if (btn)
 				btn.classList.remove('spinning');
 		});
@@ -435,67 +596,148 @@ return view.extend({
 		]);
 	},
 
+	modCard(title, body, extraClass) {
+		const cls = 'lb-card lb-mod-card' + (extraClass ? (' ' + extraClass) : '');
+		const row = E('div', { 'class': 'lb-mod-grid' + (title ? '' : ' lb-mod-grid-only') });
+		if (title)
+			row.appendChild(E('h3', { 'class': 'lb-mod-title' }, title));
+		row.appendChild(E('div', { 'class': 'lb-mod-body' }, body));
+		return E('section', { 'class': cls }, [row]);
+	},
+
+	sectionCard(title, body) {
+		return E('section', { 'class': 'lb-card lb-section-card' }, [
+			E('div', { 'class': 'lb-section-grid' }, [
+				E('h3', { 'class': 'lb-section-title' }, title),
+				E('div', { 'class': 'lb-section-body' }, body)
+			])
+		]);
+	},
+
 	wanSelect(id) {
 		const sel = E('select', { id: id, 'class': 'lb-sel' });
 		this.wanChoices().forEach(n => sel.appendChild(E('option', { value: n }, n)));
 		return sel;
 	},
 
-	renderPage() {
-		const host = this._host || document.getElementById('lb-root');
+	hashSelect(val) {
+		const sel = E('select', {
+			id: 'lb-hash-mode',
+			'class': 'lb-sel lb-hash-sel',
+			style: 'width:240px;min-width:240px;max-width:240px;box-sizing:border-box;'
+		}, [
+			E('option', { value: 'ip' }, _('源IP')),
+			E('option', { value: 'flow' }, _('连接数'))
+		]);
+		sel.value = (val === 'ip') ? 'ip' : 'flow';
+		sel.addEventListener('change', L.bind(function() {
+			this.bumpDirty();
+			this.syncStickyControls(sel.value === 'ip');
+		}, this));
+		const wrap = E('div', { 'class': 'lb-hash-sel-wrap' }, sel);
+		wrap._hashSel = sel;
+		return wrap;
+	},
+
+	stickyDefaultOn() {
+		const stickyUci = uci.get('mwan3', 'default', 'sticky');
+		return !(stickyUci === '0' || stickyUci === false);
+	},
+
+	syncStickyControls(autoCheck) {
+		const can = this.hasEnoughWans();
+		const modeEl = document.getElementById('lb-hash-mode');
+		const stickyEl = document.getElementById('lb-sticky');
+		if (!stickyEl)
+			return;
+		const ip = !!(modeEl && modeEl.value === 'ip');
+		stickyEl.disabled = !can || !ip;
+		if (!ip) {
+			stickyEl.checked = false;
+		} else if (autoCheck || this.stickyDefaultOn()) {
+			stickyEl.checked = true;
+		}
+		if (!can)
+			stickyEl.setAttribute('title', _('系统中 WAN 口少于 2 个，无法配置'));
+		else if (!ip)
+			stickyEl.setAttribute('title', _('请先选择「源IP」负载模式'));
+		else
+			stickyEl.removeAttribute('title');
+	},
+
+	addFooter() {
+		const footer = this.super('addFooter', []);
+		const actions = footer.querySelector('.cbi-page-actions');
+		if (actions && !actions.querySelector('#lb-wipe')) {
+			actions.appendChild(E('button', {
+				type: 'button',
+				id: 'lb-wipe',
+				'class': 'cbi-button cbi-button-remove important',
+				disabled: true,
+				click: L.bind(this.wipeLb, this)
+			}, _('删除负载')));
+		}
+		this.scheduleFooterLock();
+		return footer;
+	},
+
+	renderPageContent(host) {
 		if (!host)
 			return;
-		const running = !!(this._st && Number(this._st.running) === 1);
+		const canConfig = this.hasEnoughWans();
+		const running = canConfig && this.isLbActive(this._st);
 		host.innerHTML = '';
+		const body = E('div', { 'class': 'lb-page-body' });
+		if (!canConfig) {
+			host.appendChild(E('div', { 'class': 'cbi-map-desc lb-wan-hint' }, [
+				E('p', {}, _('系统中 WAN 口少于 2 个，多线负载暂不可用，请先配置第二条 WAN。'))
+			]));
+		}
+		host.appendChild(body);
 		const wans = this._wans || [];
 		const tracks = this.currentTracks();
-		const stickyOn = (uci.get('mwan3', 'default', 'sticky') !== '0');
 		const hashMode = uci.get('mwan3', 'globals', 'lede_lb_hash') || 'flow';
+		const hashSelWrap = this.hashSelect(hashMode);
+		const sticky = E('input', { type: 'checkbox', id: 'lb-sticky' });
+		sticky.checked = hashMode === 'ip' && this.stickyDefaultOn();
+		sticky.addEventListener('change', L.bind(this.bumpDirty, this));
 		const timeout = uci.get('mwan3', 'default', 'timeout') || '600';
 		const firstIf = (uci.sections('mwan3', 'interface')[0] || {})['.name'];
 		const interval = firstIf ? (uci.get('mwan3', firstIf, 'interval') || '5') : '5';
 		const down = firstIf ? (uci.get('mwan3', firstIf, 'down') || '3') : '3';
 		const up = firstIf ? (uci.get('mwan3', firstIf, 'up') || '3') : '3';
 
-		const btns = [];
-		if (running) {
-			btns.push(E('button', {
-				id: 'lb-stop', 'class': 'cbi-button cbi-button-reset',
-				click: L.bind(this.stopLb, this)
-			}, _('关闭负载')));
-			btns.push(E('button', {
-				id: 'lb-restart', 'class': 'cbi-button cbi-button-save',
-				click: L.bind(this.restartLb, this)
-			}, _('重启服务')));
-		} else {
-			btns.push(E('button', {
-				id: 'lb-apply', 'class': 'cbi-button cbi-button-save',
-				click: L.bind(this.applyLb, this)
-			}, _('启用负载')));
-		}
-		btns.push(E('button', {
-			id: 'lb-wipe', 'class': 'cbi-button cbi-button-remove',
-			click: L.bind(this.wipeLb, this)
-		}, _('删除负载')));
+		const enableCk = E('input', { type: 'checkbox', id: 'lb-enable' });
+		enableCk.checked = running;
+		enableCk.disabled = !canConfig;
+		enableCk.addEventListener('change', L.bind(this.bumpDirty, this));
 
-		host.appendChild(E('div', { 'class': 'lb-head' }, [
-			E('div', { 'class': 'lb-title' }, [
-				E('h2', {}, _('负载均衡')),
-				E('span', { id: 'lb-status', 'class': 'lb-status' }),
-				running ? E('span', {
-					id: 'lb-hash-badge',
-					'class': 'lb-status',
-					style: 'margin-left:.75em;color:#2563eb'
-				}, _('均衡') + '：' + (hashMode === 'ip' ? _('源IP') : _('连接'))) : ''
-			]),
-			E('div', { 'class': 'lb-actions' }, btns)
+		body.appendChild(E('div', { 'class': 'lb-top-mods' }, [
+			this.modCard('', E('div', { 'class': 'lb-run-line' }, [
+				E('div', { 'class': 'lb-enable-group' }, [
+					E('span', { 'class': 'lb-enable-text' }, _('多线负载')),
+					enableCk
+				]),
+				E('span', { id: 'lb-run-status', 'class': 'lb-status' })
+			]), 'lb-mod-run'),
+			this.modCard(_('负载模式'), E('div', { 'class': 'lb-hash-row' }, [
+				hashSelWrap,
+				E('div', { 'class': 'lb-sticky-field' }, [
+					E('div', { 'class': 'lb-sticky-ck' }, [
+						sticky,
+						E('label', { 'class': 'lb-sticky-lbl', 'for': 'lb-sticky' }, _('粘滞'))
+					]),
+					this.numInput('lb-timeout', timeout, 0, 86400, '6em'),
+					E('span', { 'class': 'lb-sticky-unit' }, _('秒'))
+				])
+			]), 'lb-mod-hash lb-mod-hash-row')
 		]));
+
 		if (running) {
-			host.appendChild(E('div', { 'class': 'cbi-map-desc', style: 'margin:0 0 1em' }, [
-				E('p', {}, _('下方「探测地址」区域的「均衡」决定默认流量如何分摊到各 WAN（连接=五元组哈希，更均匀；源IP=整 IP 固定一条线）。「分流规则」里手动添加的绑定不受此项影响。'))
+			body.appendChild(E('div', { 'class': 'cbi-map-desc', style: 'margin:0 0 1em' }, [
+				E('p', {}, _('下方「探测地址」用于检测各 WAN 是否在线。「分流规则」里手动添加的绑定不受负载模式影响。'))
 			]));
 		}
-		this.paintBadge();
 
 		const rows = wans.map(w => {
 			const ck = E('input', { type: 'checkbox', id: 'lb-ck-' + w.name });
@@ -510,7 +752,7 @@ return view.extend({
 				E('td', { 'class': 'td' }, this.numInput('lb-wt-' + w.name, w.weight || '1', 1, 100))
 			]);
 		});
-		host.appendChild(this.card(_('宽带'), E('table', { 'class': 'table' }, [
+		body.appendChild(this.card(_('宽带'), E('table', { 'class': 'table' }, [
 			E('tr', { 'class': 'tr table-titles' }, [
 				E('th', { 'class': 'th' }, _('使用')),
 				E('th', { 'class': 'th' }, _('接口')),
@@ -562,24 +804,8 @@ return view.extend({
 		};
 		this._trackBox.appendChild(addBtn);
 		(tracks.length ? tracks : DEF_TRACK).forEach(addTrack);
-		const sticky = E('input', { type: 'checkbox', id: 'lb-sticky' });
-		sticky.checked = stickyOn;
-		const hashSel = E('select', { id: 'lb-hash', 'class': 'lb-sel' }, [
-			E('option', { value: 'flow', selected: hashMode !== 'ip' }, _('连接（推荐）')),
-			E('option', { value: 'ip', selected: hashMode === 'ip' }, _('源IP'))
-		]);
-		const syncHashUi = () => {
-			const flow = hashSel.value !== 'ip';
-			if (flow) {
-				sticky.checked = false;
-				sticky.disabled = true;
-			} else {
-				sticky.disabled = false;
-			}
-		};
-		hashSel.addEventListener('change', syncHashUi);
-		syncHashUi();
-		host.appendChild(this.card(_('探测地址'), E('div', { 'class': 'lb-probe' }, [
+
+		body.appendChild(this.sectionCard(_('探测地址'), E('div', { 'class': 'lb-probe' }, [
 			E('div', { 'class': 'lb-probe-l' }, this._trackBox),
 			E('div', { 'class': 'lb-probe-r' }, [
 				E('span', { 'class': 'lb-field' }, [
@@ -596,20 +822,11 @@ return view.extend({
 					E('span', { 'class': 'lb-k' }, _('成功')),
 					this.numInput('lb-up', up, 1, 20, '4em'),
 					E('span', {}, _('次'))
-				]),
-				E('span', { 'class': 'lb-field' }, [
-					E('label', { 'class': 'lb-field' }, [sticky, ' ', _('粘滞')]),
-					this.numInput('lb-timeout', timeout, 0, 86400, '6em'),
-					E('span', {}, _('秒'))
-				]),
-				E('span', { 'class': 'lb-field' }, [
-					E('span', { 'class': 'lb-k' }, _('均衡')),
-					hashSel,
-					E('span', { id: 'lb-hash-tip', style: 'margin-left:.5em;color:#64748b;font-size:.9em' },
-						_('改后点「重启服务」生效'))
 				])
 			])
 		])));
+
+		this.syncStickyControls();
 
 		const rules = uci.sections('mwan3', 'rule').map(s => this.ruleSummary(s));
 		const kind = E('select', { id: 'lb-kind', 'class': 'lb-sel' }, [
@@ -623,7 +840,7 @@ return view.extend({
 			mid.innerHTML = '';
 			mid.appendChild(this.ruleMid(k));
 		});
-		host.appendChild(this.card(_('分流规则'), E('div', {}, [
+		body.appendChild(this.sectionCard(_('分流规则'), E('div', {}, [
 			E('div', { 'class': 'lb-rule-form' }, [
 				kind,
 				mid,
@@ -634,48 +851,258 @@ return view.extend({
 					click: L.bind(this.extraAdd, this)
 				}, _('添加'))
 			]),
-			E('table', { 'class': 'table' }, [
-				E('tr', { 'class': 'tr table-titles' }, [
-					E('th', { 'class': 'th' }, _('规则')),
-					E('th', { 'class': 'th' }, _('匹配')),
-					E('th', { 'class': 'th' }, _('策略')),
-					E('th', { 'class': 'th' }, '')
-				]),
-				...(rules.length ? rules.map(r => E('tr', { 'class': 'tr' }, [
-					E('td', { 'class': 'td' }, r.auto ? _('基础') : r.name),
-					E('td', { 'class': 'td' }, r.match),
-					E('td', { 'class': 'td' }, r.pol),
-					E('td', { 'class': 'td lb-op' }, r.auto ? '' : E('button', {
-						'class': 'cbi-button cbi-button-remove',
-						click: ev => this.extraDel(ev, r.name)
-					}, _('删除')))
-				])) : [
-					E('tr', { 'class': 'tr' },
-						E('td', { 'class': 'td', colspan: 4 }, _('暂无')))
+			E('div', { 'class': 'lb-rule-table-wrap' }, [
+				E('table', { 'class': 'table lb-rule-table' }, [
+					E('tr', { 'class': 'tr table-titles' }, [
+						E('th', { 'class': 'th lb-rule-col', style: 'text-align:left' }, _('规则')),
+						E('th', { 'class': 'th lb-rule-col', style: 'text-align:left' }, _('匹配')),
+						E('th', { 'class': 'th lb-rule-col', style: 'text-align:left' }, _('策略')),
+						E('th', { 'class': 'th lb-op' }, '')
+					]),
+					...(rules.length ? rules.map(r => E('tr', { 'class': 'tr' }, [
+						E('td', { 'class': 'td lb-rule-col', style: 'text-align:left' }, r.auto ? _('基础') : r.name),
+						E('td', { 'class': 'td lb-rule-col', style: 'text-align:left' }, r.match),
+						E('td', { 'class': 'td lb-rule-col', style: 'text-align:left' }, r.pol),
+						E('td', { 'class': 'td lb-op' }, r.auto ? '' : E('button', {
+							'class': 'cbi-button cbi-button-remove',
+							click: ev => this.extraDel(ev, r.name)
+						}, _('删除')))
+					])) : [
+						E('tr', { 'class': 'tr' },
+							E('td', {
+								'class': 'td lb-rule-col',
+								colspan: 4,
+								style: 'text-align:left'
+							}, _('暂无')))
+					])
 				])
 			])
 		])));
+
+		if (!canConfig)
+			body.classList.add('lb-root-disabled');
+		this.bindDirty(body);
+		this.scheduleFooterLock();
 	},
 
 	render(data) {
+		this._lastData = data;
 		this._nets = data && data[2];
 		this._st = data && data[3] && data[3].ok === false ? { running: 0 } : (data && data[3]) || { running: 0 };
 		this._wans = this.collectWans(this._nets);
-		this._host = E('div', { id: 'lb-root', 'class': 'lb-page' });
-		this.renderPage();
-		if (!this._poll) {
-			this._poll = true;
-			poll.add(L.bind(this.refreshStatus, this), 5);
-		}
-		return E('div', {}, [
-			this._host,
-			E('style', {}, `
-				.lb-page { max-width: 1080px; }
-				.lb-head { display:flex; justify-content:space-between; align-items:center;
-					gap:12px; flex-wrap:wrap; margin:0 0 16px; }
-				.lb-title { display:flex; align-items:baseline; gap:10px; }
-				.lb-title h2 { margin:0; font-size:1.45em; }
-				.lb-status { font-size:14px; font-weight:700; }
+
+		const m = new form.Map('mwan3', _('多线负载'));
+		this.map = m;
+
+		const sg = m.section(form.NamedSection, 'globals', 'globals');
+		sg.anonymous = true;
+		sg.addremove = false;
+
+		const oRev = sg.option(form.Value, 'lede_cfg_rev', ' ');
+		oRev.datatype = 'uinteger';
+		oRev.cfgvalue = () => '0';
+		oRev.write = function() {};
+		oRev.rmempty = true;
+
+		const oBody = sg.option(form.DummyValue, 'lede_lb_body', null);
+		oBody.cfgvalue = function() { return ''; };
+		oBody.write = function() {};
+		oBody.render = L.bind(function() {
+			const host = E('div', { id: 'lb-root', 'class': 'lb-page' });
+			this._host = host;
+			return host;
+		}, this);
+
+		return m.render().then(L.bind(function(mapNode) {
+			this._mapNode = mapNode;
+			const title = mapNode.querySelector('.cbi-map > h2');
+			if (title)
+				title.remove();
+			this.renderPageContent(this._host);
+			this.paintRunStatus();
+			this.scheduleFooterLock();
+			if (!this._poll) {
+				this._poll = true;
+				poll.add(L.bind(this.refreshStatus, this), 5);
+			}
+			const wrap = E('div', { 'class': 'lb-wrap lb-page' }, mapNode);
+			wrap.appendChild(E('style', {}, `
+				.lb-wrap { width: 100%; max-width: none; }
+				.lb-wrap .cbi-map,
+				.lb-wrap .cbi-section,
+				.lb-wrap .cbi-section-node { max-width: none !important; width: 100% !important; }
+				.lb-wrap .cbi-section {
+					border: none; padding: 0; margin: 0; background: transparent;
+					box-shadow: none;
+				}
+				.lb-wrap .cbi-section > h3,
+				.lb-wrap .cbi-section > .cbi-section-desc { display: none !important; }
+				.lb-wrap [data-name="lede_cfg_rev"] { display: none !important; }
+				.lb-wrap [data-name="lede_lb_body"] .cbi-value-title { display: none !important; }
+				.lb-wrap [data-name="lede_lb_body"] .cbi-value-field { width: 100%; max-width: none; padding: 0; }
+				.lb-top-mods {
+					display: flex; flex-direction: column;
+					gap: 14px; width: 100%; margin: 0 0 14px;
+				}
+				.lb-top-mods .lb-mod-card {
+					width: 100%; margin: 0;
+					padding: 22px 26px; min-height: 78px;
+					box-sizing: border-box;
+				}
+				.lb-mod-grid {
+					display: grid;
+					grid-template-columns: auto 1fr;
+					grid-template-rows: auto;
+					column-gap: 20px;
+					align-items: baseline;
+				}
+				.lb-mod-title {
+					grid-column: 1; grid-row: 1;
+					margin: 0; padding: 0;
+					font-size: 15px; font-weight: 700;
+					line-height: 1.4; white-space: nowrap;
+					color: var(--text-color-high, #333);
+				}
+				.lb-mod-body {
+					grid-column: 2; grid-row: 1;
+					text-align: left; min-width: 0;
+					line-height: 1.4;
+				}
+				.lb-mod-grid-only { grid-template-columns: 1fr; }
+				.lb-mod-grid-only .lb-mod-body { grid-column: 1; }
+				.lb-mod-run .lb-run-line {
+					display: flex; flex-wrap: nowrap; align-items: center;
+					gap: 50px; min-height: 32px;
+				}
+				.lb-mod-run .lb-enable-group {
+					display: inline-flex; align-items: center;
+					gap: 10px; height: 32px; white-space: nowrap;
+				}
+				.lb-mod-run .lb-enable-text,
+				.lb-mod-run .lb-status,
+				.lb-mod-run #lb-enable {
+					box-sizing: border-box;
+				}
+				.lb-mod-run .lb-enable-text {
+					display: inline-flex; align-items: center;
+					height: 32px; margin: 0;
+					font-size: 15px; font-weight: 700; line-height: 32px;
+					white-space: nowrap;
+					color: var(--text-color-high, #333);
+				}
+				.lb-mod-run #lb-enable {
+					margin: 0; width: 16px; height: 16px;
+					flex: 0 0 16px; cursor: pointer;
+				}
+				.lb-mod-run .lb-status {
+					display: inline-flex; align-items: center;
+					height: 32px; margin: 0;
+					font-size: 14px; font-weight: 600; line-height: 32px;
+					white-space: nowrap;
+				}
+				#lb-wipe:disabled {
+					opacity: 0.45; cursor: not-allowed; pointer-events: none;
+				}
+				.lb-wan-hint {
+					margin: 0 0 14px;
+					color: var(--text-color-high, #333);
+				}
+				.lb-wan-hint p {
+					margin: 0; font-size: 14px; line-height: 1.5;
+				}
+				.lb-root-disabled {
+					opacity: 0.55; pointer-events: none; user-select: none;
+				}
+				.lb-root-disabled input,
+				.lb-root-disabled select,
+				.lb-root-disabled button,
+				.lb-root-disabled textarea {
+					cursor: not-allowed !important;
+				}
+				.lb-wrap .cbi-map > .cbi-page-actions {
+					display: none !important;
+				}
+				#view .cbi-page-actions.lb-actions-locked {
+					opacity: 0.45; cursor: not-allowed;
+					pointer-events: none !important;
+				}
+				#view .cbi-page-actions.lb-actions-locked .cbi-dropdown,
+				#view .cbi-page-actions.lb-actions-locked button,
+				#view .cbi-page-actions button:disabled,
+				#view .cbi-page-actions .cbi-dropdown[disabled] {
+					opacity: 0.45; cursor: not-allowed; pointer-events: none !important;
+				}
+				.lb-mod-hash-row .lb-mod-grid { align-items: baseline; }
+				.lb-hash-row {
+					display: flex; flex-wrap: wrap;
+					align-items: center; gap: 12px 18px;
+					line-height: 1.4;
+				}
+				.lb-sticky-field {
+					display: inline-flex; align-items: center;
+					gap: 10px 14px; margin-left: 80px;
+					height: 38px; white-space: nowrap;
+				}
+				.lb-sticky-ck {
+					display: inline-flex; align-items: center;
+					gap: 8px; height: 38px;
+				}
+				#lb-sticky {
+					margin: 0; width: 16px; height: 16px;
+					flex: 0 0 16px; cursor: pointer;
+					vertical-align: middle;
+				}
+				.lb-sticky-lbl {
+					display: inline-flex; align-items: center;
+					margin: 0; padding: 0; height: 38px;
+					line-height: 38px; font-size: 14px;
+					font-weight: 600; cursor: pointer;
+					color: var(--text-color-high, #333);
+				}
+				.lb-sticky-unit {
+					display: inline-flex; align-items: center;
+					height: 38px; line-height: 38px;
+				}
+				#lb-sticky:disabled + .lb-sticky-lbl {
+					opacity: 0.55; cursor: not-allowed;
+				}
+				.lb-hash-sel-wrap {
+					width: 240px; flex: 0 0 240px; max-width: 240px;
+					overflow: visible;
+				}
+				#lb-hash-mode,
+				.lb-wrap select.lb-sel.lb-hash-sel {
+					width: 240px !important; min-width: 240px !important;
+					max-width: 240px !important;
+					height: auto; min-height: 38px;
+					line-height: 1.4; padding: 8px 2em 8px 10px;
+					font-size: 14px; flex: 0 0 auto;
+					vertical-align: middle;
+					box-sizing: border-box;
+					overflow: visible;
+				}
+				.lb-section-grid {
+					display: flex; flex-direction: column;
+					align-items: flex-start; width: 100%;
+				}
+				.lb-section-title {
+					width: 100%;
+					margin: 0 0 12px; padding: 0;
+					font-size: 15px; font-weight: 700;
+					line-height: 1.4;
+				}
+				.lb-section-body {
+					width: 100%; min-width: 0;
+					padding-left: 150px; box-sizing: border-box;
+				}
+				.lb-section-card { padding: 18px 20px 20px; }
+				#view .cbi-page-actions {
+					display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .5em;
+					width: 100%; max-width: none;
+				}
+				#view .cbi-page-actions #lb-wipe {
+					display: inline-block !important; visibility: visible !important;
+				}
 				.lb-actions { display:flex; gap:8px; flex-wrap:wrap; }
 				.lb-card { background: var(--background-color-high, #fff);
 					border: 1px solid var(--border-color-medium, rgba(127,127,127,.18));
@@ -699,24 +1126,51 @@ return view.extend({
 					display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px;
 					margin-bottom: 12px;
 				}
+				.lb-section-body .lb-rule-table-wrap {
+					margin-left: -150px;
+					width: calc(100% + 150px);
+					max-width: calc(100% + 150px);
+				}
+				.lb-wrap table.lb-rule-table {
+					width: 100% !important;
+					display: table !important;
+					table-layout: fixed;
+				}
+				.lb-wrap table.lb-rule-table > .tr {
+					display: table-row !important;
+					width: 100%;
+				}
+				.lb-wrap table.lb-rule-table .th,
+				.lb-wrap table.lb-rule-table .td {
+					display: table-cell !important;
+				}
+				.lb-wrap table.lb-rule-table .lb-rule-col {
+					text-align: left !important;
+				}
+				.lb-wrap table.lb-rule-table .th:nth-child(1),
+				.lb-wrap table.lb-rule-table .td:nth-child(1) { width: 16%; }
+				.lb-wrap table.lb-rule-table .th:nth-child(2),
+				.lb-wrap table.lb-rule-table .td:nth-child(2) { width: 44%; }
+				.lb-wrap table.lb-rule-table .th:nth-child(3),
+				.lb-wrap table.lb-rule-table .td:nth-child(3) { width: 28%; }
+				.lb-wrap table.lb-rule-table .th:nth-child(4),
+				.lb-wrap table.lb-rule-table .td:nth-child(4) { width: 12%; }
 				.lb-mid { display: inline-flex; min-width: 12em; }
 				.lb-mid input, .lb-mid select { width: 100%; }
 				.lb-arrow { font-weight: 700; opacity: 0.55; padding: 0 2px; }
-				.lb-row { display:flex; flex-wrap:wrap; gap:10px 16px; align-items:center; margin: 0 0 10px; }
-				.lb-row:last-child { margin-bottom: 0; }
 				.lb-k { min-width: 3.2em; font-weight: 600; }
 				.lb-field { display:inline-flex; align-items:center; gap:6px; white-space:nowrap; }
 				.lb-ip { width: 10.5em; }
 				.lb-mac { width: 13.5em; height: 2em; }
 				.lb-num, .lb-ip { height: 2em; }
-				.lb-page select.lb-sel {
+				.lb-wrap select.lb-sel:not(.lb-hash-sel) {
 					min-width: 9em; width: auto; max-width: none;
 					height: 32px; line-height: 30px;
 					padding: 0 2em 0 8px; box-sizing: border-box;
 				}
-				.lb-kind { min-width: 7.5em; }
 				.lb-op { text-align: right; width: 5em; }
-			`)
-		]);
+			`));
+			return wrap;
+		}, this));
 	}
 });
