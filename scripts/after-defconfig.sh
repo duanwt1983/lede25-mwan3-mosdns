@@ -70,6 +70,7 @@ select_wanted() {
   enable_pkg librespeed-go
   enable_pkg qosmate
   enable_pkg luci-app-qosmate
+  enable_pkg jq
   enable_pkg kmod-sched-cake
   enable_pkg kmod-sched
   enable_pkg kmod-ifb

@@ -152,10 +152,22 @@ if "LUCI_PKGARCH:=all" not in t and "PKGARCH:=all" not in t:
         "include $(TOPDIR)/feeds/luci/luci.mk",
         "LUCI_PKGARCH:=all\ninclude $(TOPDIR)/feeds/luci/luci.mk",
     )
+if " +jq" not in t:
+    t = t.replace(
+        "LUCI_DEPENDS:=+qosmate +luci-lib-jsonc +lua",
+        "LUCI_DEPENDS:=+qosmate +luci-lib-jsonc +lua +jq",
+    )
+stats_install = "\t $(INSTALL_BIN) ./root/usr/libexec/rpcd/luci.qosmate_stats $(1)/usr/libexec/rpcd/\n"
+if "luci.qosmate_stats" not in t and stats_install.strip() not in t:
+    needle = "\t $(INSTALL_BIN) ./root/usr/libexec/rpcd/luci.qosmate $(1)/usr/libexec/rpcd/\n"
+    if needle in t:
+        t = t.replace(needle, needle + stats_install)
+    else:
+        raise SystemExit("luci-app-qosmate Makefile missing luci.qosmate install hook")
 if not t.rstrip().endswith("# call BuildPackage - OpenWrt buildroot signature"):
     t = t.rstrip() + "\n\n# call BuildPackage - OpenWrt buildroot signature\n"
 p.write_text(t, encoding="utf-8")
-print("qosmate luci: keep custom install, drop duplicate BuildPackage")
+print("qosmate luci: keep custom install, add luci.qosmate_stats rpcd")
 PY
 fi
 rm -rf feeds/luci/applications/luci-app-qosmate package/feeds/luci/luci-app-qosmate || true
