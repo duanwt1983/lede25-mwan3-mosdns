@@ -1,5 +1,5 @@
 #!/bin/bash
-# Lean 25 extras: PassWall + mosdns, LibreSpeed LAN, qosmate, bandix-plus, samba4, nginx, nft mwan3.
+# Lean 25 extras: PassWall + mosdns, LibreSpeed LAN, bandix-plus, samba4, nginx, nft mwan3.
 
 set -euo pipefail
 
@@ -134,46 +134,6 @@ sed -i 's|include ../../lang/golang/golang-package.mk|include $(TOPDIR)/feeds/pa
   package/librespeed-go/Makefile
 [ -f package/librespeed-go/Makefile ] || { echo "ERROR: librespeed-go Makefile missing"; exit 1; }
 rm -rf feeds/luci/applications/luci-app-netspeedtest package/feeds/luci/luci-app-netspeedtest || true
-
-# QoSmate: CAKE/HFSC line shaping on firewall4 + nftables (WAN ingress/egress).
-rm -rf package/qosmate package/luci-app-qosmate
-clone_once package/qosmate https://github.com/hudra0/qosmate
-clone_once package/luci-app-qosmate https://github.com/hudra0/luci-app-qosmate
-if [ -f package/luci-app-qosmate/Makefile ]; then
-  python3 - <<'PY'
-from pathlib import Path
-import re
-p = Path("package/luci-app-qosmate/Makefile")
-t = p.read_text(encoding="utf-8", errors="replace")
-# Keep upstream custom install (view/qosmate/*.js) but drop duplicate BuildPackage eval.
-t = re.sub(r"\n\$\(eval \$\(call BuildPackage.*\)\)\s*$", "", t, flags=re.S)
-if "LUCI_PKGARCH:=all" not in t and "PKGARCH:=all" not in t:
-    t = t.replace(
-        "include $(TOPDIR)/feeds/luci/luci.mk",
-        "LUCI_PKGARCH:=all\ninclude $(TOPDIR)/feeds/luci/luci.mk",
-    )
-if " +jq" not in t:
-    t = t.replace(
-        "LUCI_DEPENDS:=+qosmate +luci-lib-jsonc +lua",
-        "LUCI_DEPENDS:=+qosmate +luci-lib-jsonc +lua +jq",
-    )
-stats_install = "\t $(INSTALL_BIN) ./root/usr/libexec/rpcd/luci.qosmate_stats $(1)/usr/libexec/rpcd/\n"
-if "luci.qosmate_stats" not in t and stats_install.strip() not in t:
-    needle = "\t $(INSTALL_BIN) ./root/usr/libexec/rpcd/luci.qosmate $(1)/usr/libexec/rpcd/\n"
-    if needle in t:
-        t = t.replace(needle, needle + stats_install)
-    else:
-        raise SystemExit("luci-app-qosmate Makefile missing luci.qosmate install hook")
-if not t.rstrip().endswith("# call BuildPackage - OpenWrt buildroot signature"):
-    t = t.rstrip() + "\n\n# call BuildPackage - OpenWrt buildroot signature\n"
-p.write_text(t, encoding="utf-8")
-print("qosmate luci: keep custom install, add luci.qosmate_stats rpcd")
-PY
-fi
-if [ -f patches/luci-app-qosmate/apply.sh ] && [ -d package/luci-app-qosmate ]; then
-  sh patches/luci-app-qosmate/apply.sh .
-fi
-rm -rf feeds/luci/applications/luci-app-qosmate package/feeds/luci/luci-app-qosmate || true
 
 # Bandix Plus: eBPF per-device traffic stats + per-MAC rate limits.
 # Upstream repos now nest the OpenWrt package one level down (…/openwrt-bandix-plus/, …/luci-app-bandix-plus/).
@@ -577,8 +537,6 @@ assert_pkg luci-app-ddns-go
 assert_pkg luci-theme-argon
 assert_pkg luci-app-argon-config
 assert_pkg librespeed-go
-assert_pkg qosmate
-assert_pkg luci-app-qosmate
 assert_pkg bandix-plus
 assert_pkg luci-app-bandix-plus
 assert_pkg luci-app-diskman

@@ -215,7 +215,7 @@ const TOPO_TEMPLATE = {
 	gateway: { x: 408, y: 238.5, w: 68, h: 344 },
 	switch: { x: 672, y: 240, w: 68, h: 344 },
 	'cli-stack': { x: 888, y: 240 },
-	'wan-sum': { x: 120, y: 240 },
+	'wan-sum': { x: 120, y: 184 },
 	wanSum: { dx: 0, dy: -56 },
 	inetJackDx: 80,
 	wanFan: 16,
@@ -1060,6 +1060,7 @@ return view.extend({
 			this._topN = (n >= 1 && n <= CLI_TOPN_MAX) ? Math.floor(n) : TOPO_DEFAULT_TOPN;
 			this.migrateLanFlowDir();
 			this.migrateGwSwSize();
+			this.migrateWanSumLayout();
 			this.writeLayoutLocal();
 			return;
 		}
@@ -1077,6 +1078,7 @@ return view.extend({
 			this.schedulePersist();
 		this.migrateLanFlowDir();
 		this.migrateGwSwSize();
+		this.migrateWanSumLayout();
 	},
 
 	loadPos() {
@@ -1118,6 +1120,37 @@ return view.extend({
 			this.links['link:lan'] = { x1: L.x2, y1: L.y2, x2: L.x1, y2: L.y1 };
 		this.links._lanDir = 2;
 		this.schedulePersist();
+	},
+
+	migrateWanSumLayout() {
+		let changed = false;
+		if (!this.fields)
+			this.fields = {};
+		let cur = this.fields['wan-sum'];
+		if (!Array.isArray(cur) || cur.indexOf('rate') < 0) {
+			cur = Array.isArray(cur) ? cur.slice() : (FIELD_DEFAULTS.wan_sum || []).slice();
+			if (cur.indexOf('title') < 0)
+				cur.unshift('title');
+			if (cur.indexOf('rate') < 0)
+				cur.push('rate');
+			this.fields['wan-sum'] = cur;
+			changed = true;
+		}
+		const inet = (this.pos || {}).internet;
+		const sum = (this.pos || {})['wan-sum'];
+		const near = function(a, b) {
+			return isFinite(a) && isFinite(b) && Math.abs(a - b) < 12;
+		};
+		if (inet && isFinite(inet.x) && isFinite(inet.y)) {
+			const wantY = inet.y + TOPO_TEMPLATE.wanSum.dy;
+			if (!sum || !isFinite(sum.x) || !isFinite(sum.y)
+				|| (near(sum.x, inet.x) && near(sum.y, inet.y))) {
+				this.patchPos('wan-sum', { x: inet.x + TOPO_TEMPLATE.wanSum.dx, y: wantY });
+				changed = true;
+			}
+		}
+		if (changed)
+			this.schedulePersist();
 	},
 
 	migrateGwSwSize() {
@@ -3346,9 +3379,9 @@ return view.extend({
 				facts.push('↓ ' + fmtBitrate(row.rx) + '　↑ ' + fmtBitrate(row.tx) + ' · 延迟 ' + fmtLatency(row.w.latency));
 				const bd = Number(row.w.bw_down) || 0, bu = Number(row.w.bw_up) || 0;
 				if (bd || bu)
-					facts.push('已设下行 ' + bd + ' Mbit / 上行 ' + bu + ' Mbit');
+					facts.push('已设下行 ' + bd + ' Mbps / 上行 ' + bu + ' Mbps');
 				else
-					facts.push('宽带容量在「网络 → 接口」该接口常规设置中填写（单位 Mbit）。勾选「宽带使用率」后在速率后显示占用百分比。');
+					facts.push('宽带容量在「网络 → 接口」该接口常规设置中填写（单位 Mbps）。勾选「宽带使用率」后在速率后显示占用百分比。');
 			}
 		} else if (key.indexOf('link:cli:') === 0) {
 			facts.push('客户端与交换机连线。下方勾选对全部客户端及全部连线同时生效。');
@@ -3605,7 +3638,7 @@ return view.extend({
 				if (row.w.up === false || row.health === 'bad')
 					this.drawLinkFault(labels, mid);
 			});
-			if (m.wans.length >= 2) {
+			if (m.wans.length >= 1) {
 				let wanRx = 0, wanTx = 0;
 				m.wans.forEach(r => { wanRx += r.rx; wanTx += r.tx; });
 				this.drawWanSum(labels, inet.x + T.wanSum.dx, inet.y + T.wanSum.dy, wanTx, wanRx);

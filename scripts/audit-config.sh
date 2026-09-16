@@ -11,12 +11,6 @@ must_y=(
   CONFIG_PACKAGE_mosdns
   CONFIG_PACKAGE_mosdns-mwan
   CONFIG_PACKAGE_librespeed-go
-  CONFIG_PACKAGE_qosmate
-  CONFIG_PACKAGE_luci-app-qosmate
-  CONFIG_PACKAGE_luci-i18n-qosmate-zh-cn
-  CONFIG_PACKAGE_jq
-  CONFIG_PACKAGE_tc-full
-  CONFIG_PACKAGE_kmod-ifb
   CONFIG_PACKAGE_bandix-plus
   CONFIG_PACKAGE_luci-app-bandix-plus
   CONFIG_PACKAGE_luci-app-samba4

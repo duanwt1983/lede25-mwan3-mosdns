@@ -68,14 +68,6 @@ select_wanted() {
   enable_pkg luci-app-ddns-go
   enable_pkg ddns-go
   enable_pkg librespeed-go
-  enable_pkg qosmate
-  enable_pkg luci-app-qosmate
-  enable_pkg luci-i18n-qosmate-zh-cn
-  enable_pkg jq
-  enable_pkg kmod-sched-cake
-  enable_pkg kmod-sched
-  enable_pkg kmod-ifb
-  enable_pkg tc-full
   enable_pkg bandix-plus
   enable_pkg luci-app-bandix-plus
   enable_pkg luci-i18n-bandix-plus-zh-cn
@@ -205,6 +197,6 @@ strip_unwanted
 select_wanted
 
 echo "==== selected extras ===="
-grep -E '^CONFIG_PACKAGE_(luci-nginx|nginx|uhttpd|luci-app-samba4|samba4-server|luci-app-passwall|luci-app-mosdns|mosdns|librespeed-go|qosmate|luci-app-qosmate|bandix-plus|luci-app-bandix-plus|tcpdump|wireshark|luci-app-istorex|luci-app-quickstart|luci-app-fastnet|luci-app-diskman|luci-i18n-diskman-zh-cn|luci-app-filemanager|luci-app-mwan3|mwan3|parted|blkid|kmod-ixgbe|smartmontools|mdadm|nftables-json|ip-full|tc-full|kmod-ifb)=' .config || true
+grep -E '^CONFIG_PACKAGE_(luci-nginx|nginx|uhttpd|luci-app-samba4|samba4-server|luci-app-passwall|luci-app-mosdns|mosdns|librespeed-go|bandix-plus|luci-app-bandix-plus|tcpdump|wireshark|luci-app-istorex|luci-app-quickstart|luci-app-fastnet|luci-app-diskman|luci-i18n-diskman-zh-cn|luci-app-filemanager|luci-app-mwan3|mwan3|parted|blkid|kmod-ixgbe|smartmontools|mdadm|nftables-json|ip-full)=' .config || true
 grep -E '^CONFIG_PACKAGE_(firewall4|nftables|iptables|iptables-nft|iptables-zz-legacy|firewall)=' .config || true
 grep -E '^CONFIG_(VMDK_IMAGES|GRUB_EFI_IMAGES|TARGET_ROOTFS_PARTSIZE|TARGET_ROOTFS_EXT4FS|TARGET_IMAGES_GZIP)=' .config || true

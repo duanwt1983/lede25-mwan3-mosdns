@@ -33,7 +33,6 @@ GitHub Actions 工作流显示名保持：`Build Lean 25 x86-64 PassWall samba4`
 | DNS | mosdns + luci-app-mosdns + mosdns-mwan |
 | 代理（备用） | luci-app-passwall（Xray / Sing-Box 等） |
 | LAN 测速 | **LibreSpeed**（`librespeed-go`），菜单「内网测速」 |
-| 线路整形 | **QoSmate**（`qosmate` + `luci-app-qosmate`，CAKE/HFSC，需关闭硬件 offload） |
 | 终端统计/限速 | luci-app-bandix-plus + bandix-plus（eBPF，需关闭硬件 offload） |
 | DDNS | ddns-go |
 | 网页终端 | ttyd |

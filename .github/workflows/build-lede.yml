@@ -92,7 +92,7 @@ jobs:
           echo "after-defconfig $(date -Is)"
           $GITHUB_WORKSPACE/scripts/after-defconfig.sh
           $GITHUB_WORKSPACE/scripts/audit-config.sh
-          grep -E 'CONFIG_PACKAGE_(luci-nginx|uhttpd|samba4|luci-app-samba4|luci-app-passwall|luci-app-mosdns|librespeed-go|qosmate|luci-app-qosmate|luci-app-istorex|luci-app-quickstart|luci-app-fastnet|luci-app-diskman|luci-i18n-diskman|luci-app-filemanager|luci-app-mwan3|mwan3|parted|blkid|kmod-ixgbe|smartmontools|mdadm|iptables|firewall4|nftables-json)|CONFIG_(VMDK_IMAGES|CCACHE)' .config || true
+          grep -E 'CONFIG_PACKAGE_(luci-nginx|uhttpd|samba4|luci-app-samba4|luci-app-passwall|luci-app-mosdns|librespeed-go|luci-app-istorex|luci-app-quickstart|luci-app-fastnet|luci-app-diskman|luci-i18n-diskman|luci-app-filemanager|luci-app-mwan3|mwan3|parted|blkid|kmod-ixgbe|smartmontools|mdadm|iptables|firewall4|nftables-json)|CONFIG_(VMDK_IMAGES|CCACHE)' .config || true
           rm -rf dl/go-mod-cache tmp/go-build
           echo "make download $(date -Is)"
           timeout 25m make download -j8 || timeout 10m make download -j1
@@ -172,7 +172,7 @@ jobs:
           fi
           echo "==== image manifest (diskman / ixgbe / parted) ===="
           grep -E 'luci-app-diskman|luci-i18n-diskman|parted|blkid|kmod-ixgbe' "$mf" || true
-          for need in luci-app-diskman parted kmod-ixgbe luci-app-qosmate qosmate smartmontools; do
+          for need in luci-app-diskman parted kmod-ixgbe smartmontools; do
             if ! grep -E "^${need}([[:space:]]|-)" "$mf"; then
               echo "IMAGE FAIL: ${need} not in $mf"
               cat "$mf"
@@ -222,7 +222,6 @@ jobs:
             echo "- IMG 超过 GitHub 2GiB 限制时已 gzip；解压: \`gunzip -k lede-*.img.gz\`"
             echo "- Proxy: PassWall nft + mosdns (yaml, no DNS leak to Aliyun)"
             echo "- WAN: mwan3 nftables port (no iptables)"
-            echo "- QoS: qosmate + luci-app-qosmate"
             echo "- Share: samba4; diskman + official filemanager; ttyd; ddns-go"
             echo "- NIC: kmod-ixgbe (Intel 82599ES / X520 SFP+)"
             echo "- 本页是新增的一份固件。以前的 Releases **不会删除、不会覆盖**，请在仓库 Releases 列表里往下翻。"
