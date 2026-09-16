@@ -595,3 +595,84 @@ if [ -d feeds/luci/applications/luci-app-diskman ]; then
   echo "Lean luci-app-diskman feed copy came back"
   exit 1
 fi
+
+# --- LEDE overlay compile self-check (replaces ad-hoc hotfix scripts) ---
+echo "--- LEDE overlay compile self-check ---"
+_LEDE_FILES="files"
+if [ ! -d "$_LEDE_FILES" ]; then
+  _LEDE_FILES="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/files"
+fi
+[ -d "$_LEDE_FILES" ] || { echo "ERROR: files/ overlay directory not found"; exit 1; }
+
+assert_overlay() {
+  local rel="$1"
+  local f="$_LEDE_FILES/$rel"
+  [ -f "$f" ] || { echo "ERROR: missing overlay file: $f"; exit 1; }
+  echo "overlay OK: $rel"
+}
+
+assert_grep() {
+  local needle="$1" file="$2"
+  grep -Fq "$needle" "$file" || {
+    echo "ERROR: $(basename "$file") missing expected content: $needle"
+    exit 1
+  }
+  echo "content OK: $needle"
+}
+
+assert_pkg_grep() {
+  local needle="$1"
+  shift
+  local f
+  f=$(find "$@" -type f 2>/dev/null | head -n 1 || true)
+  [ -n "$f" ] || { echo "ERROR: package file not found for: $needle ($*)"; exit 1; }
+  assert_grep "$needle" "$f"
+}
+
+for _rel in \
+  www/luci-static/resources/lede-theme-page.js \
+  www/luci-static/resources/lede-fullwidth.js \
+  www/luci-static/resources/view/mwan3/network/globals.js \
+  www/luci-static/resources/view/status/index.js \
+  www/luci-static/resources/view/status/wanalert-page.js \
+  www/luci-static/resources/view/status/wanalert-layout.js \
+  www/luci-static/argon/css/lede-brand-font.css \
+  www/luci-static/argon/font/DuanNingMaoBiXingShuWanZhengBan-2.ttf \
+  usr/share/ucode/luci/template/themes/argon/header.ut \
+  usr/share/ucode/luci/template/themes/argon/header_login.ut \
+  usr/share/ucode/luci/template/themes/argon/sysauth.ut \
+  usr/share/luci/menu.d/zzz-luci-mwan3-tab.json \
+  usr/libexec/lede-mwan3-setup \
+  lib/functions/lede-mwan3.sh
+do
+  assert_overlay "$_rel"
+done
+
+assert_grep 'lede-theme-page' "$_LEDE_FILES/www/luci-static/resources/view/status/index.js"
+assert_grep 'lede-theme-page' "$_LEDE_FILES/www/luci-static/resources/view/mwan3/network/globals.js"
+assert_grep 'commitDisableToUci' "$_LEDE_FILES/www/luci-static/resources/view/mwan3/network/globals.js"
+assert_grep 'displayName' "$_LEDE_FILES/usr/share/ucode/luci/template/themes/argon/header.ut"
+assert_grep 'lede-brand-font.css' "$_LEDE_FILES/usr/share/ucode/luci/template/themes/argon/header.ut"
+assert_grep '自动配置' "$_LEDE_FILES/usr/share/luci/menu.d/zzz-luci-mwan3-tab.json"
+assert_grep 'font-size: 2.85rem' "$_LEDE_FILES/www/luci-static/argon/css/lede-brand-font.css"
+assert_grep 'font-size: 30px' "$_LEDE_FILES/www/luci-static/argon/css/lede-brand-font.css"
+
+assert_pkg_grep 'commitDisableToUci' package/luci-app-mwan3
+assert_pkg_grep 'lede-theme-page' package/luci-app-mwan3
+assert_pkg_grep 'lede-theme-page' package/luci-mod-status feeds/luci
+assert_pkg_grep 'wanalert-page' package/luci-mod-status feeds/luci
+assert_pkg_grep 'DuanNingMaoBi' package/luci-theme-argon
+assert_pkg_grep 'displayName' package/luci-theme-argon
+assert_pkg_grep 'lede-mwan3-setup' package/mwan3
+assert_pkg_grep '自动配置' package/luci-app-mwan3 "$_LEDE_FILES/usr/share/luci/menu.d"
+_MWAN3_TPAGE=$(find package/luci-app-mwan3 -path '*/resources/lede-theme-page.js' -type f 2>/dev/null | head -n 1 || true)
+_STATUS_TPAGE=$(find package/luci-mod-status feeds/luci -path '*/resources/lede-theme-page.js' -type f 2>/dev/null | head -n 1 || true)
+[ -n "$_MWAN3_TPAGE" ] || { echo "ERROR: lede-theme-page.js not installed in luci-app-mwan3"; exit 1; }
+[ -n "$_STATUS_TPAGE" ] || { echo "ERROR: lede-theme-page.js not installed in luci-mod-status"; exit 1; }
+echo "package OK: lede-theme-page.js (mwan3 + status)"
+
+_SYSJS=$(find feeds/luci package -path '*/view/system/system.js' -type f 2>/dev/null | head -n 1 || true)
+[ -n "$_SYSJS" ] || { echo "ERROR: system.js not found after luci-mod-system patch"; exit 1; }
+assert_grep '标题' "$_SYSJS"
+
+echo "LEDE overlay compile self-check passed"
