@@ -170,6 +170,9 @@ p.write_text(t, encoding="utf-8")
 print("qosmate luci: keep custom install, add luci.qosmate_stats rpcd")
 PY
 fi
+if [ -f patches/luci-app-qosmate/apply.sh ] && [ -d package/luci-app-qosmate ]; then
+  sh patches/luci-app-qosmate/apply.sh .
+fi
 rm -rf feeds/luci/applications/luci-app-qosmate package/feeds/luci/luci-app-qosmate || true
 
 # Bandix Plus: eBPF per-device traffic stats + per-MAC rate limits.

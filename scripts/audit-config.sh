@@ -13,6 +13,7 @@ must_y=(
   CONFIG_PACKAGE_librespeed-go
   CONFIG_PACKAGE_qosmate
   CONFIG_PACKAGE_luci-app-qosmate
+  CONFIG_PACKAGE_luci-i18n-qosmate-zh-cn
   CONFIG_PACKAGE_jq
   CONFIG_PACKAGE_tc-full
   CONFIG_PACKAGE_kmod-ifb
