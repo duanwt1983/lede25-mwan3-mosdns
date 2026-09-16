@@ -390,55 +390,6 @@ export function bytes_of(dev) {
 	};
 }
 
-const IFACE_RATE_CACHE = '/tmp/lede-iface-rate-cache.json';
-
-function read_json_file(path) {
-	try {
-		let h = json(readfile(path) || '{}') || {};
-		if (type(h) == 'object')
-			return h;
-	} catch (e) {}
-	return {};
-}
-
-/* /sys/class/net byte delta when Bandix returns 0 or is briefly unavailable. */
-export function iface_rate_bps(dev) {
-	let z = { down_bps: 0, up_bps: 0 };
-	if (!dev || match(dev, /[^A-Za-z0-9._-]/))
-		return z;
-	let now = time();
-	let cur = bytes_of(dev);
-	let cache = read_json_file(IFACE_RATE_CACHE);
-	let prev = cache[dev];
-	cache[dev] = { rx: cur.rx, tx: cur.tx, t: now };
-	try { writefile(IFACE_RATE_CACHE, sprintf('%J', cache)); } catch (e) {}
-	if (!prev || type(prev) != 'object')
-		return z;
-	let dt = now - +(prev.t || 0);
-	if (dt < 0.35 || dt > 45)
-		return z;
-	let drx = cur.rx - +(prev.rx || 0);
-	let dtx = cur.tx - +(prev.tx || 0);
-	if (drx < 0)
-		drx = 0;
-	if (dtx < 0)
-		dtx = 0;
-	return {
-		down_bps: int((drx * 8) / dt),
-		up_bps: int((dtx * 8) / dt)
-	};
-}
-
-export function pick_iface_rates(primary, fallback) {
-	let down = +(primary.down_bps || 0);
-	let up = +(primary.up_bps || 0);
-	if (down <= 0)
-		down = +(fallback.down_bps || 0);
-	if (up <= 0)
-		up = +(fallback.up_bps || 0);
-	return { down_bps: down, up_bps: up };
-}
-
 export function file_size(path) {
 	let st = stat(path);
 	if (!st)

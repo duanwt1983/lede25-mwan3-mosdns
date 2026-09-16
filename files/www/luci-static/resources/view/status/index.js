@@ -402,9 +402,9 @@ function holdRate(prev, next, zeros, key) {
 		zeros[key] = 0;
 		return next;
 	}
-	if (p > 2000) {
+	if (p > 8000) {
 		zeros[key] = (zeros[key] || 0) + 1;
-		if (zeros[key] < 12)
+		if (zeros[key] < 5)
 			return p;
 	}
 	zeros[key] = 0;
@@ -1537,17 +1537,19 @@ return view.extend({
 		return out;
 	},
 
-	addFlow(pts, bps, color, id, capMbps, dir) {
+	addFlow(pts, bps, color, id, capMbps, dir, idleLink) {
 		const flowDir = dir || flowDirFromId(id);
 		const st = flowSpeedStyle(bps, capMbps, flowDir);
+		const idle = !!idleLink && !(Number(bps) > 0);
 		this.flows.push({
 			pts: pts,
 			bps: bps,
 			color: st.px > 0 ? st.color : (color || COL_LINK_IDLE),
-			px: st.px,
+			px: idle ? 28 : st.px,
 			id: id || '',
 			cap: capMbps || 0,
-			dir: flowDir
+			dir: flowDir,
+			idleLink: idle
 		});
 	},
 
@@ -1586,18 +1588,18 @@ return view.extend({
 		});
 	},
 
-	drawPoly(layer, pts) {
+	drawPoly(layer, pts, idleLink) {
 		const attr = polyPoints(pts);
 		layer.appendChild(svgEl('polyline', {
 			points: attr,
 			fill: 'none',
 			stroke: COL_LINK_IDLE,
-			'stroke-width': '1.5',
+			'stroke-width': idleLink ? '2' : '1.5',
 			'stroke-linecap': 'round',
 			'stroke-linejoin': 'round',
-			'stroke-dasharray': '3 7',
-			opacity: '0.12',
-			class: 'topo-link-track'
+			'stroke-dasharray': idleLink ? '6 5' : '3 7',
+			opacity: idleLink ? '0.45' : '0.12',
+			class: 'topo-link-track' + (idleLink ? ' topo-link-idle' : '')
 		}));
 	},
 
@@ -1944,12 +1946,13 @@ return view.extend({
 		const up = reversePts(rails.b);
 		const rxBps = Math.max(0, Number(rx) || 0);
 		const txBps = Math.max(0, Number(tx) || 0);
-		this.drawPoly(layer, down);
-		this.drawPoly(layer, up);
+		const idleLink = opt.linkUp !== false && rxBps <= 0 && txBps <= 0;
+		this.drawPoly(layer, down, idleLink);
+		this.drawPoly(layer, up, idleLink);
 		this.bindLineMove(layer, e.x1, e.y1, e.x2, e.y2, key, kind);
 		this.lineEndHandles(e.x1, e.y1, e.x2, e.y2, key, kind);
-		this.addFlow(down, rxBps, null, key + ':rx', opt.capRx, 'rx');
-		this.addFlow(up, txBps, null, key + ':tx', opt.capTx, 'tx');
+		this.addFlow(down, rxBps, null, key + ':rx', opt.capRx, 'rx', idleLink);
+		this.addFlow(up, txBps, null, key + ':tx', opt.capTx, 'tx', idleLink);
 		return polyMid(down);
 	},
 
@@ -2919,9 +2922,15 @@ return view.extend({
 			if (!f.pts || f.pts.length < 2)
 				return;
 			const st = flowSpeedStyle(f.bps, f.cap, f.dir || flowDirFromId(f.id));
-			if (!st.px)
+			let px = st.px;
+			let color = st.color;
+			if (!px && f.idleLink) {
+				px = 28;
+				color = COL_LINK_IDLE;
+			}
+			if (!px)
 				return;
-			active.push({ pts: f.pts, attr: polyPoints(f.pts), color: st.color, px: st.px });
+			active.push({ pts: f.pts, attr: polyPoints(f.pts), color: color, px: px });
 		});
 		const sig = active.map(a => a.attr + '\\t' + a.color + '\\t' + a.px.toFixed(1)).join('\\n');
 		if (this._flowSig !== sig || !this._flowEls || this._flowEls.length !== active.length) {
@@ -3000,11 +3009,9 @@ return view.extend({
 			let down = 0, up = 0;
 			if (lr) {
 				down = lr.down; up = lr.up;
-			} else if (+w.down_bps > 0 || +w.up_bps > 0) {
+			} else if (+w.down_bps > 0 || +w.up_bps > 0 || !lr) {
 				down = +w.down_bps || 0;
 				up = +w.up_bps || 0;
-			} else if (pw) {
-				down = pw.rx; up = pw.tx;
 			} else if (first) {
 				down = lastHist(snap, w.name, 'rx');
 				up = lastHist(snap, w.name, 'tx');
@@ -3574,7 +3581,8 @@ return view.extend({
 					card.jackX, card.jackY,
 					row.rx, row.tx, live, lk, 'link_inet_wan', {
 						capRx: row.w.bw_down,
-						capTx: row.w.bw_up
+						capTx: row.w.bw_up,
+						linkUp: row.w.up !== false
 					});
 				this.decorateLink(labels, mid, lk, 'link_inet_wan', {
 					name: row.w.name,
@@ -3583,7 +3591,7 @@ return view.extend({
 					rx: row.rx, tx: row.tx,
 					bw_down: row.w.bw_down, bw_up: row.w.bw_up
 				});
-				if (row.w.up === false)
+				if (row.w.up === false || row.health === 'bad')
 					this.drawLinkFault(labels, mid);
 			});
 			if (m.wans.length >= 2) {
@@ -3726,8 +3734,20 @@ return view.extend({
 			const live = row.health === 'ok' && (row.rx + row.tx) > 200;
 			const capDn = Number(row.w.bw_down) || 0;
 			const capUp = Number(row.w.bw_up) || 0;
-			applyFlowStyle(byId[k + ':rx'], row.rx, capDn, live);
-			applyFlowStyle(byId[k + ':tx'], row.tx, capUp, live);
+			const idleLink = row.w.up !== false && (Number(row.rx) || 0) <= 0 && (Number(row.tx) || 0) <= 0;
+			[ k + ':rx', k + ':tx' ].forEach(function(id, idx) {
+				const f = byId[id];
+				if (!f)
+					return;
+				applyFlowStyle(f, idx ? row.tx : row.rx, idx ? capUp : capDn, live);
+				if (idleLink && !(Number(f.bps) > 0)) {
+					f.idleLink = true;
+					f.px = 28;
+					f.color = COL_LINK_IDLE;
+				} else {
+					f.idleLink = false;
+				}
+			});
 		});
 		applyFlowStyle(byId['link:lan:rx'], m.lanDown, lanCap, lanLive);
 		applyFlowStyle(byId['link:lan:tx'], m.lanUp, lanCap, lanLive);
