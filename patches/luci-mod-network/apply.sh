@@ -95,6 +95,11 @@ p.write_text(t, encoding="utf-8")
 print("patched", p)
 PY
 
+FIX_ENC="$(cd "$(dirname "$0")" && pwd)/fix-encoding.py"
+if [ -f "$FIX_ENC" ]; then
+	python3 "$FIX_ENC" "$IFACE"
+fi
+
 ACL="$(find "$ROOT/feeds/luci" "$ROOT/package" -path '*/acl.d/luci-mod-network.json' -type f 2>/dev/null | head -n 1 || true)"
 if [ -n "$ACL" ]; then
 	python3 - "$ACL" <<'PY'
