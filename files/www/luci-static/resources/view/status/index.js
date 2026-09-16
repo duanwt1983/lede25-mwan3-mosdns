@@ -3009,12 +3009,15 @@ return view.extend({
 			let down = 0, up = 0;
 			if (lr) {
 				down = lr.down; up = lr.up;
-			} else if (+w.down_bps > 0 || +w.up_bps > 0 || !lr) {
+			} else if (+w.down_bps > 0 || +w.up_bps > 0) {
 				down = +w.down_bps || 0;
 				up = +w.up_bps || 0;
 			} else if (first) {
 				down = lastHist(snap, w.name, 'rx');
 				up = lastHist(snap, w.name, 'tx');
+			} else {
+				down = +w.down_bps || 0;
+				up = +w.up_bps || 0;
 			}
 			return {
 				w,
@@ -3496,11 +3499,19 @@ return view.extend({
 		this._bandixHost = null;
 	},
 
+	topoClients(clients) {
+		const list = clients || [];
+		const on = list.filter(c => c.online !== false);
+		if (on.length)
+			return on.slice(0, this.topN());
+		return list.slice(0, this.topN());
+	},
+
 	rebuild(svg, m) {
 		if (!svg || !m)
 			return;
 		const host = (this.board && this.board.hostname) || '网关';
-		const shown = m.clients.slice(0, this.topN());
+		const shown = this.topoClients(m.clients);
 		const wanN = Math.max(1, m.wans.length);
 		const rightN = Math.max(1, shown.length);
 		const W = TOPO_CANVAS.w;
@@ -3627,7 +3638,8 @@ return view.extend({
 		const lanMid = this.drawDuplex(pipes, lanCard.jackX, lanCard.jackY, sw.x - swBox.w / 2, sw.y,
 			m.lanDown, m.lanUp, lanLive, 'link:lan', 'link_gw_sw', {
 				capRx: lanCap,
-				capTx: lanCap
+				capTx: lanCap,
+				linkUp: !(m.lan && m.lan.up === false)
 			});
 		this.decorateLink(labels, lanMid, 'link:lan', 'link_gw_sw', {
 			name: 'LAN',

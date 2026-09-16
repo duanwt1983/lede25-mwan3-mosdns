@@ -173,11 +173,14 @@ function bplus_label(dev) {
 export function bandix_clients_list(bj, lan_ip) {
 	let clients = [];
 	let online = 0;
+	let leases = 0;
 	if (!bj || !bj.data || type(bj.data.devices) != 'array')
 		return { clients, online, leases: 0 };
 
 	let seen = {};
-	for (let dev in bj.data.devices) {
+	let devs = bj.data.devices || [];
+	for (let i = 0; i < length(devs); i++) {
+		let dev = devs[i];
 		if (type(dev) != 'object')
 			continue;
 		let iface = dev.logical_iface || '';
@@ -188,8 +191,9 @@ export function bandix_clients_list(bj, lan_ip) {
 			continue;
 		let ip = '';
 		if (type(dev.ipv4) == 'array') {
-			for (let a in dev.ipv4) {
-				if (a && a != '') {
+			for (let j = 0; j < length(dev.ipv4); j++) {
+				let a = trim(`${dev.ipv4[j] || ''}`);
+				if (a != '') {
 					ip = a;
 					break;
 				}
@@ -199,27 +203,29 @@ export function bandix_clients_list(bj, lan_ip) {
 			continue;
 		if (!mac && !ip)
 			continue;
+		leases++;
 		if (mac)
 			seen[mac] = true;
+		let on = (dev.online == true);
+		if (!on)
+			continue;
+		online++;
 		let m = dev.metrics || {};
 		let cr = bplus_client_rates(m);
 		let label = bplus_label(dev);
-		let on = (dev.online == true);
-		if (on)
-			online++;
 		push(clients, {
 			mac: mac,
 			ip: ip,
 			hostname: label,
 			name: label,
-			online: on,
+			online: true,
 			rx_bytes: 0,
 			tx_bytes: 0,
 			down_bps: cr.down_bps,
 			up_bps: cr.up_bps
 		});
 	}
-	return { clients, online, leases: length(clients) };
+	return { clients, online, leases };
 }
 
 export function bandix_wan_rates(maps, wans) {
