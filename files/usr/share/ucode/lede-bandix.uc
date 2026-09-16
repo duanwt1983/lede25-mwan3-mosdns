@@ -92,20 +92,29 @@ export function bandix_load(use_cache) {
 
 export function bandix_resolve_iface_rates(maps, ifname, extras) {
 	let z = { down_bps: 0, up_bps: 0 };
-	if (!maps || !ifname)
+	if (!maps)
 		return z;
-	if (maps.if_rates[ifname])
-		return maps.if_rates[ifname];
+	ifname = trim(`${ifname || ''}`);
+	if (ifname == '')
+		return z;
+	let rates = maps.if_rates;
+	if (type(rates) != 'object' || rates == null)
+		return z;
+	if (rates[ifname])
+		return rates[ifname];
 	if (type(extras) == 'array') {
 		for (let i = 0; i < length(extras); i++) {
-			let e = extras[i];
-			if (e && maps.if_rates[e])
-				return maps.if_rates[e];
+			let e = trim(`${extras[i] || ''}`);
+			if (e != '' && rates[e])
+				return rates[e];
 		}
 	}
-	for (let k in maps.if_rates) {
-		if (ifname.indexOf(k) >= 0 || k.indexOf(ifname) >= 0)
-			return maps.if_rates[k];
+	for (let k in rates) {
+		let kn = trim(`${k || ''}`);
+		if (kn == '')
+			continue;
+		if (index(ifname, kn) >= 0 || index(kn, ifname) >= 0)
+			return rates[k];
 	}
 	return z;
 }
@@ -117,23 +126,32 @@ export function bandix_build_maps(bj) {
 	if (!bj || !bj.data)
 		return { if_rates, dev_rates };
 
-	for (let iface in (bj.data.interfaces || [])) {
-		let ifname = iface.ifname || '';
-		if (!ifname)
+	let ifaces = bj.data.interfaces || [];
+	for (let i = 0; i < length(ifaces); i++) {
+		let iface = ifaces[i];
+		if (type(iface) != 'object')
+			continue;
+		let ifname = trim(`${iface.ifname || ''}`);
+		if (ifname == '')
 			continue;
 		let m = iface.metrics || {};
 		if_rates[ifname] = bplus_iface_rates(m);
 	}
 
-	for (let dev in (bj.data.devices || [])) {
+	let devs = bj.data.devices || [];
+	for (let i = 0; i < length(devs); i++) {
+		let dev = devs[i];
+		if (type(dev) != 'object')
+			continue;
 		let mac = lc(dev.mac || '');
 		let m = dev.metrics || {};
 		let rates = bplus_client_rates(m);
 		if (mac)
 			dev_rates[mac] = rates;
 		if (type(dev.ipv4) == 'array') {
-			for (let ip in dev.ipv4) {
-				if (ip)
+			for (let j = 0; j < length(dev.ipv4); j++) {
+				let ip = trim(`${dev.ipv4[j] || ''}`);
+				if (ip != '')
 					dev_rates['ip:' + ip] = rates;
 			}
 		}
