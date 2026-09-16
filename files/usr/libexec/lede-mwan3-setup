@@ -29,10 +29,47 @@ cmd_status() {
 	exit 0
 }
 
+mwan3_pause_uci() {
+	local sid
+	uci -q set mwan3.globals.lede_lb_paused=1
+	for sid in $(uci -q show mwan3 2>/dev/null | sed -n 's/^mwan3\.\([^=]*\)=interface$/\1/p'); do
+		uci -q set "mwan3.$sid.enabled=0"
+	done
+	uci commit mwan3 >/dev/null 2>&1 || true
+}
+
+mwan3_force_stop() {
+	local i
+	/etc/init.d/mwan3 stop >>/tmp/lede-mwan3-setup.log 2>&1 || true
+	/etc/init.d/mwan3 disable >>/tmp/lede-mwan3-setup.log 2>&1 || true
+	killall mwan3track 2>/dev/null || true
+	killall mwan3rtmon 2>/dev/null || true
+	i=0
+	while [ "$i" -lt 5 ]; do
+		/etc/init.d/mwan3 running >/dev/null 2>&1 || return 0
+		/etc/init.d/mwan3 stop >>/tmp/lede-mwan3-setup.log 2>&1 || true
+		killall mwan3track 2>/dev/null || true
+		killall mwan3rtmon 2>/dev/null || true
+		sleep 1
+		i=$((i + 1))
+	done
+	if /etc/init.d/mwan3 running >/dev/null 2>&1; then
+		return 1
+	fi
+	return 0
+}
+
 cmd_stop() {
-	/etc/init.d/mwan3 stop >/tmp/lede-mwan3-setup.log 2>&1 || true
-	/etc/init.d/mwan3 disable >/dev/null 2>&1 || true
-	printf '{"ok":true,"running":0}\n'
+	mwan3_pause_uci
+	if ! mwan3_force_stop; then
+		printf '{"ok":false,"error":"mwan3 停止失败，服务仍在运行"}\n'
+		[ -f /lib/functions/lede-mwan3.sh ] && . /lib/functions/lede-mwan3.sh
+		lede_mwan3_helper_crons_sync 2>/dev/null || true
+		exit 1
+	fi
+	[ -f /lib/functions/lede-mwan3.sh ] && . /lib/functions/lede-mwan3.sh
+	lede_mwan3_helper_crons_sync 2>/dev/null || true
+	printf '{"ok":true,"running":0,"service":0}\n'
 	exit 0
 }
 
@@ -54,6 +91,7 @@ flush_sticky() {
 
 # procd/mwan3: restart often leaves service inactive; stop+start is reliable.
 run_mwan3_start() {
+	[ "$(uci -q get mwan3.globals.lede_lb_paused)" = "1" ] && return 0
 	/etc/init.d/mwan3 enable >/dev/null 2>&1 || true
 	/etc/init.d/mwan3 stop >>/tmp/lede-mwan3-setup.log 2>&1 || true
 	/etc/init.d/mwan3 start >>/tmp/lede-mwan3-setup.log 2>&1 || true
@@ -333,6 +371,7 @@ reload_mwan3() {
 }
 
 maybe_reload() {
+	[ "$(uci -q get mwan3.globals.lede_lb_paused)" = "1" ] && return 0
 	if /etc/init.d/mwan3 running >/dev/null 2>&1; then
 		reload_mwan3
 	fi
@@ -656,6 +695,7 @@ uci -q delete mwan3.default 2>/dev/null || true
 uci -q set mwan3.globals=globals
 uci -q set mwan3.globals.mmx_mask='0x3F00'
 uci -q set mwan3.globals.lede_lb_hash="$HASH_MODE"
+uci -q delete mwan3.globals.lede_lb_paused >/dev/null 2>&1 || true
 
 # Each selected WAN needs a distinct network.metric (跃点). Equal or
 # missing metrics leave equal-cost defaults in main; mwan3 tracker,

@@ -3,6 +3,7 @@
 'require uci';
 'require view.status.alertmap as AlertMap';
 'require view.status.wanalert-layout as applyWanalertLayout';
+'require lede-theme-page as ledeTheme';
 
 function skipWanName(name, proto, device) {
 	if (!name || name === 'loopback' || name === 'lo' || name === 'lan')
@@ -79,7 +80,7 @@ return view.extend({
 	render() {
 		this.map = AlertMap.makeMap(collectAlertWans(), collectSvc());
 		return this.map.render().then(function(node) {
-			return applyWanalertLayout.applyPage(node);
+			return applyWanalertLayout.applyPage(ledeTheme.enhanceMapNode(node));
 		});
 	}
 });

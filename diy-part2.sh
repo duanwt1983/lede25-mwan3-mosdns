@@ -180,6 +180,17 @@ for mk in package/luci-theme-argon/Makefile package/luci-app-argon-config/Makefi
 done
 _LUCI_ARGON_PATCH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/patches/luci-theme-argon/apply.sh"
 [ -x "$_LUCI_ARGON_PATCH" ] && "$_LUCI_ARGON_PATCH" || bash "$_LUCI_ARGON_PATCH" 2>/dev/null || true
+for _lede_brand in \
+	files/www/luci-static/argon/css/lede-brand-font.css \
+	files/www/luci-static/argon/font/DuanNingMaoBiXingShuWanZhengBan-2.ttf \
+	files/usr/share/ucode/luci/template/themes/argon/header.ut; do
+	[ -f "$_lede_brand" ] || { echo "ERROR: brand asset missing: $_lede_brand"; exit 1; }
+done
+grep -q displayName files/usr/share/ucode/luci/template/themes/argon/header.ut \
+	|| { echo "ERROR: brand header.ut missing displayName"; exit 1; }
+grep -q lede-brand-font files/usr/share/ucode/luci/template/themes/argon/header.ut \
+	|| { echo "ERROR: brand header.ut missing lede-brand-font.css"; exit 1; }
+echo "brand title/font overlay OK"
 # Lean luci already ships diskman; that copy hard-depends on smartmontools.
 # Using only lisaac's tree lets us drop SMART/RAID deps without breaking install.
 rm -rf feeds/luci/applications/luci-app-diskman package/feeds/luci/luci-app-diskman
@@ -249,8 +260,24 @@ if [ -f files/usr/libexec/lede-mwan3-setup ]; then
   mkdir -p package/mwan3/files/usr/libexec 2>/dev/null || true
   if [ -d package/mwan3/files/usr/libexec ]; then
     install -m 0755 files/usr/libexec/lede-mwan3-setup package/mwan3/files/usr/libexec/lede-mwan3-setup
+    echo "mwan3: installed lede-mwan3-setup"
   fi
 fi
+if [ -f files/lib/functions/lede-mwan3.sh ]; then
+  mkdir -p package/mwan3/files/lib/functions 2>/dev/null || true
+  if [ -d package/mwan3/files/lib/functions ]; then
+    install -m 0644 files/lib/functions/lede-mwan3.sh package/mwan3/files/lib/functions/lede-mwan3.sh
+    echo "mwan3: installed lede-mwan3.sh"
+  fi
+fi
+for _lede_mod in lede-theme-page.js lede-fullwidth.js; do
+  [ -f "files/www/luci-static/resources/$_lede_mod" ] || continue
+  _MWAN3_RES="$(find package/luci-app-mwan3 -path '*/luci-static/resources' -type d 2>/dev/null | head -n 1)"
+  if [ -n "$_MWAN3_RES" ]; then
+    cp "files/www/luci-static/resources/$_lede_mod" "$_MWAN3_RES/$_lede_mod"
+    echo "mwan3 resource: $_MWAN3_RES/$_lede_mod"
+  fi
+done
 if [ -f files/etc/hotplug.d/dhcp/30-lede-mwan3-mac ]; then
   mkdir -p package/mwan3/files/etc/hotplug.d/dhcp 2>/dev/null || true
   if [ -d package/mwan3/files/etc/hotplug.d/dhcp ]; then
@@ -406,10 +433,17 @@ if [ -f files/www/luci-static/resources/view/status/index.js ]; then
           cp files/www/luci-static/resources/view/status/syslog.js "$(dirname "$f")/syslog.js"
           echo "syslog: replaced $f with readable syslog.js"
         fi
-        for extra in logcenter.js loghub.js alertlog.js wanmonitor.js wanalert.js alertmap.js mosdnscache.js; do
+        for extra in logcenter.js loghub.js alertlog.js wanmonitor.js wanalert.js alertmap.js mosdnscache.js wanalert-page.js wanalert-layout.js; do
           if [ -f "files/www/luci-static/resources/view/status/$extra" ]; then
             cp "files/www/luci-static/resources/view/status/$extra" "$(dirname "$f")/$extra"
             echo "status: installed $(dirname "$f")/$extra"
+          fi
+        done
+        _STATUS_RES="$(dirname "$(dirname "$(dirname "$f")")")"
+        for _lede_mod in lede-theme-page.js lede-fullwidth.js; do
+          if [ -f "files/www/luci-static/resources/$_lede_mod" ]; then
+            cp "files/www/luci-static/resources/$_lede_mod" "$_STATUS_RES/$_lede_mod"
+            echo "status resource: $_STATUS_RES/$_lede_mod"
           fi
         done
         ;;

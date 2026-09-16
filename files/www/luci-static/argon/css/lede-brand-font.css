@@ -8,9 +8,10 @@
 	font-display: swap;
 }
 
+.login-page .login-container .login-form .brand,
 .login-page .login-container .login-form .brand .brand-text {
-	font-family: "DuanNingMaoBi", "STKaiti", "KaiTi", "Microsoft YaHei", "PingFang SC", sans-serif;
-	font-size: 2.25rem;
+	font-family: "DuanNingMaoBi", "STKaiti", "KaiTi", "Microsoft YaHei", "PingFang SC", sans-serif !important;
+	font-size: 2.85rem;
 	font-weight: normal;
 	letter-spacing: 0.04em;
 	line-height: 1.2;
@@ -18,8 +19,9 @@
 
 .main-left .sidenav-header .brand,
 header .fill .container .flex1 .brand {
-	font-family: "DuanNingMaoBi", "Microsoft YaHei", "PingFang SC", sans-serif;
-	font-size: 1.65rem;
+	font-family: "DuanNingMaoBi", "Microsoft YaHei", "PingFang SC", sans-serif !important;
+	font-size: 30px;
 	font-weight: normal;
 	letter-spacing: 0.02em;
+	line-height: 1.25;
 }

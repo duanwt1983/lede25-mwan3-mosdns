@@ -6,6 +6,7 @@
 'require fs';
 'require network';
 'require poll';
+'require lede-theme-page as ledeTheme';
 
 const DEF_TRACK = ['223.5.5.5', '119.29.29.29'];
 const IPv4_RE = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
@@ -469,7 +470,31 @@ return view.extend({
 		btn.disabled = !this.hasLbConfig();
 	},
 
+	hashModeLabel(mode) {
+		return mode === 'ip' ? _('源IP') : _('连接数');
+	},
+
+	systemHashMode() {
+		const mode = uci.get('mwan3', 'globals', 'lede_lb_hash');
+		return mode === 'ip' ? 'ip' : 'flow';
+	},
+
+	paintHashModeDisplay() {
+		const el = document.getElementById('lb-hash-mode-display');
+		if (!el)
+			return;
+		if (!this.isLbActive(this._st) || this._phase === 'starting') {
+			el.style.display = 'none';
+			el.textContent = '';
+			return;
+		}
+		el.style.display = '';
+		el.style.color = '#16a34a';
+		el.textContent = _('当前负载模式：') + this.hashModeLabel(this.systemHashMode());
+	},
+
 	paintRunStatus() {
+		this.paintHashModeDisplay();
 		const badge = document.getElementById('lb-run-status');
 		if (!badge)
 			return;
@@ -645,11 +670,8 @@ return view.extend({
 		const running = this.isLbActive(this._st);
 		const base = this._baselineSnap;
 
-		if (!f.enabled) {
-			if (running)
-				return 'stop';
+		if (!f.enabled)
 			return 'none';
-		}
 
 		if (f.ifaces.length < 2)
 			return 'invalid';
@@ -703,6 +725,14 @@ return view.extend({
 		};
 	},
 
+	commitDisableToUci() {
+		if (uci.get('mwan3', 'globals') != null)
+			uci.set('mwan3', 'globals', 'lede_lb_paused', '1');
+		uci.sections('mwan3', 'interface').forEach(s => {
+			uci.set('mwan3', s['.name'], 'enabled', '0');
+		});
+	},
+
 	commitProbeToUci(f) {
 		f = f || this.readForm();
 		if (uci.get('mwan3', 'globals') != null)
@@ -736,12 +766,24 @@ return view.extend({
 		});
 	},
 
+	stopBackend() {
+		this._wantEnable = false;
+		this._phase = null;
+		this._phaseErr = '';
+		return fs.exec('/usr/libexec/lede-mwan3-setup', ['stop']).then(r => {
+			const j = this.parseJson(r);
+			if (!j.ok)
+				throw new Error(j.error || _('关闭失败'));
+			return this.refreshStatus();
+		});
+	},
+
 	runBackendAction() {
 		const action = this._backendAction;
 		if (!action || action === 'none')
 			return Promise.resolve();
 		if (action === 'stop')
-			return this.applyBackend(Object.assign({}, this._pendingApply, { enabled: false }));
+			return this.stopBackend();
 		if (action === 'restart')
 			return this.restartBackend();
 		return this.applyBackend(this._pendingApply);
@@ -770,17 +812,9 @@ return view.extend({
 		const running = this.isLbActive(this._st);
 
 		if (!f.enabled) {
-			this._wantEnable = false;
-			this._phase = null;
-			this._phaseErr = '';
 			if (!running)
 				return Promise.resolve();
-			return fs.exec('/usr/libexec/lede-mwan3-setup', ['stop']).then(r => {
-				const j = this.parseJson(r);
-				if (!j.ok)
-					throw new Error(j.error || _('关闭失败'));
-				return this.refreshStatus();
-			});
+			return this.stopBackend();
 		}
 
 		if (f.ifaces.length < 2)
@@ -816,6 +850,8 @@ return view.extend({
 		if (!this.isFormDirty())
 			this.bumpDirty();
 		this.commitProbeToUci(f);
+		if (!f.enabled)
+			this.commitDisableToUci();
 		return this.map.save().then(function() {
 			return uci.save();
 		});
@@ -838,7 +874,9 @@ return view.extend({
 		this._pendingApply = f;
 		this._backendAction = action;
 
-		return this.handleSave(ev).then(function() {
+		const save = self.needsFormSave(f) ? self.handleSave(ev) : Promise.resolve();
+
+		return save.then(function() {
 			return ui.changes.apply(mode == '0');
 		}).then(function() {
 			if (action === 'none')
@@ -1119,14 +1157,14 @@ return view.extend({
 	},
 
 	card(title, body) {
-		return E('section', { 'class': 'lb-card' }, [
+		return E('section', { 'class': 'lb-card lede-page-card' }, [
 			E('h3', {}, title),
 			body
 		]);
 	},
 
 	modCard(title, body, extraClass) {
-		const cls = 'lb-card lb-mod-card' + (extraClass ? (' ' + extraClass) : '');
+		const cls = 'lb-card lb-mod-card lede-page-card' + (extraClass ? (' ' + extraClass) : '');
 		const row = E('div', { 'class': 'lb-mod-grid' + (title ? '' : ' lb-mod-grid-only') });
 		if (title)
 			row.appendChild(E('h3', { 'class': 'lb-mod-title' }, title));
@@ -1135,7 +1173,7 @@ return view.extend({
 	},
 
 	sectionCard(title, body) {
-		return E('section', { 'class': 'lb-card lb-section-card' }, [
+		return E('section', { 'class': 'lb-card lb-section-card lede-page-card' }, [
 			E('div', { 'class': 'lb-section-grid' }, [
 				E('h3', { 'class': 'lb-section-title' }, title),
 				E('div', { 'class': 'lb-section-body' }, body)
@@ -1242,7 +1280,8 @@ return view.extend({
 					E('span', { 'class': 'lb-enable-text' }, _('多线负载')),
 					enableCk
 				]),
-				E('span', { id: 'lb-run-status', 'class': 'lb-status' })
+				E('span', { id: 'lb-run-status', 'class': 'lb-status' }),
+				E('span', { id: 'lb-hash-mode-display', 'class': 'lb-hash-mode-display' })
 			]), 'lb-mod-run'),
 			this.modCard(_('负载模式'), E('div', { 'class': 'lb-hash-row' }, [
 				hashSelWrap,
@@ -1467,12 +1506,16 @@ return view.extend({
 				this._poll = true;
 				poll.add(L.bind(this.refreshStatus, this), 5);
 			}
-			const wrap = E('div', { 'class': 'lb-wrap lb-page' }, mapNode);
+			ledeTheme.injectStyles('lede-lb-page-theme', '', [
+				'.lb-wrap .lb-card, .lb-wrap .lede-page-card { background: rgba(255,255,255,0.03); border-color: rgba(255,255,255,0.08); box-shadow: none; }',
+				'.lb-wrap .lb-icon-btn { background: rgba(255,255,255,0.06) !important; border-color: rgba(255,255,255,0.18) !important; color: inherit !important; }',
+				'.lb-wrap .lb-mod-run .lb-hash-mode-display { color: #34d399; }'
+			].join('\n'));
+			const wrap = ledeTheme.enhanceMapNode(mapNode, 'lb-wrap lb-page');
 			wrap.appendChild(E('style', {}, `
-				.lb-wrap { width: 100%; max-width: none; }
 				.lb-wrap .cbi-map,
 				.lb-wrap .cbi-section,
-				.lb-wrap .cbi-section-node { max-width: none !important; width: 100% !important; }
+				.lb-wrap .cbi-section-node { width: 100%; box-sizing: border-box; }
 				.lb-wrap .cbi-section {
 					border: none; padding: 0; margin: 0; background: transparent;
 					box-shadow: none;
@@ -1536,11 +1579,16 @@ return view.extend({
 					margin: 0; width: 16px; height: 16px;
 					flex: 0 0 16px; cursor: pointer;
 				}
-				.lb-mod-run .lb-status {
+				.lb-mod-run .lb-status,
+				.lb-mod-run .lb-hash-mode-display {
 					display: inline-flex; align-items: center;
 					height: 32px; margin: 0;
 					font-size: 14px; font-weight: 600; line-height: 32px;
 					white-space: nowrap;
+				}
+				.lb-mod-run .lb-hash-mode-display {
+					font-weight: 600;
+					color: #16a34a;
 				}
 				#lb-wipe:disabled {
 					opacity: 0.45; cursor: not-allowed; pointer-events: none;
@@ -1640,15 +1688,15 @@ return view.extend({
 				.lb-section-card { padding: 18px 20px 20px; }
 				#view .cbi-page-actions {
 					display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .5em;
-					width: 100%; max-width: none;
 				}
 				#view .cbi-page-actions #lb-wipe {
 					display: inline-block !important; visibility: visible !important;
 				}
 				.lb-actions { display:flex; gap:8px; flex-wrap:wrap; }
-				.lb-card { background: var(--background-color-high, #fff);
-					border: 1px solid var(--border-color-medium, rgba(127,127,127,.18));
-					border-radius: 10px; padding: 14px 16px 16px; margin: 0 0 14px; }
+				.lb-card { background: var(--cbi-section-bg, var(--background-color-high, #fff));
+					border: 1px solid rgba(0,0,0,0.08);
+					border-radius: 8px; padding: 14px 16px 16px; margin: 0 0 14px;
+					box-shadow: 0 2px 6px rgba(0,0,0,0.03); color: inherit; }
 				.lb-card h3 { margin: 0 0 12px; font-size: 15px; font-weight: 700; }
 				.lb-card .table { margin: 0; }
 				.lb-probe { display:flex; gap:28px; align-items:flex-start; }
@@ -1661,8 +1709,8 @@ return view.extend({
 					width: 1.9em; height: 1.9em; padding: 0; line-height: 1.7em;
 					text-align: center; font-size: 16px; font-weight: 700;
 					border: 1px solid var(--border-color-medium, #bbb);
-					background: var(--background-color-high, #fff) !important;
-					color: var(--text-color-high, #333) !important; cursor: pointer; border-radius: 4px;
+					background: var(--cbi-section-bg, var(--background-color-high, #fff)) !important;
+					color: inherit !important; cursor: pointer; border-radius: 4px;
 				}
 				.lb-rule-form {
 					display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px;

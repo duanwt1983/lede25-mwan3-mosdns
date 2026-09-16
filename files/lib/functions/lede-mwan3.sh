@@ -3,6 +3,7 @@
 lede_mwan3_ready() {
 	local sid
 	[ -f /etc/config/mwan3 ] || return 1
+	[ "$(uci -q get mwan3.globals.lede_lb_paused)" = "1" ] && return 1
 	for sid in $(uci -q show mwan3 2>/dev/null | sed -n 's/^mwan3\.\([^.]*\)=interface$/\1/p'); do
 		[ "$(uci -q get "mwan3.${sid}.enabled")" = "0" ] && continue
 		return 0
