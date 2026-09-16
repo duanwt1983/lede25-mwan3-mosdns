@@ -184,7 +184,9 @@ for mk in package/luci-theme-argon/Makefile package/luci-app-argon-config/Makefi
   fi
 done
 _LUCI_ARGON_PATCH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/patches/luci-theme-argon/apply.sh"
-[ -x "$_LUCI_ARGON_PATCH" ] && "$_LUCI_ARGON_PATCH" || bash "$_LUCI_ARGON_PATCH" 2>/dev/null || true
+if [ -f "$_LUCI_ARGON_PATCH" ]; then
+  sh "$_LUCI_ARGON_PATCH" .
+fi
 for _lede_brand in \
 	files/www/luci-static/argon/css/lede-brand-font.css \
 	files/www/luci-static/argon/font/DuanNingMaoBiXingShuWanZhengBan-2.ttf \
@@ -676,10 +678,14 @@ assert_pkg_file 'lede-theme-page' \
   package/luci-mod-status feeds/luci -path '*/view/status/index.js'
 assert_pkg_file 'lede-theme-page' \
   package/luci-mod-status feeds/luci -path '*/view/status/wanalert-page.js'
-assert_pkg_file 'DuanNingMaoBi' \
-  package/luci-theme-argon -path '*/css/lede-brand-font.css'
-assert_pkg_file 'displayName' \
-  package/luci-theme-argon -path '*/template/themes/argon/header.ut'
+_ARGON_CSS=$(find package/luci-theme-argon -path '*/luci-static/argon/css/lede-brand-font.css' -type f 2>/dev/null | head -n 1 || true)
+_ARGON_HDR=$(find package/luci-theme-argon -path '*/template/themes/argon/header.ut' -type f 2>/dev/null | head -n 1 || true)
+[ -n "$_ARGON_CSS" ] || { echo "ERROR: lede-brand-font.css not installed in luci-theme-argon package"; exit 1; }
+[ -n "$_ARGON_HDR" ] || { echo "ERROR: header.ut not installed in luci-theme-argon package"; exit 1; }
+assert_grep 'DuanNingMaoBi' "$_ARGON_CSS"
+assert_grep 'displayName' "$_ARGON_HDR"
+echo "package OK: $_ARGON_CSS"
+echo "package OK: $_ARGON_HDR"
 assert_pkg_file 'lede-mwan3-setup' \
   package/mwan3 -path '*/usr/libexec/lede-mwan3-setup'
 _MWAN3_TAB_PKG=$(find package/luci-app-mwan3 \

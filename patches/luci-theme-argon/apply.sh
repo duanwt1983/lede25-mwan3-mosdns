@@ -2,15 +2,14 @@
 # Argon: system.description as brand title + DuanNing MaoBi font (compile + overlay).
 
 set -e
-ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+ROOT="${1:-.}"
+ROOT="$(cd "$ROOT" && pwd)"
 
 _files_root() {
 	if [ -d "$ROOT/files" ]; then
 		echo "$ROOT/files"
-	elif [ -d "$ROOT/openwrt/files" ]; then
-		echo "$ROOT/openwrt/files"
-	elif [ -d "./files" ]; then
-		echo "$(cd ./files && pwd)"
+	elif [ -d "$(dirname "$ROOT")/files" ]; then
+		echo "$(cd "$(dirname "$ROOT")/files" && pwd)"
 	else
 		echo "$ROOT/files"
 	fi
