@@ -452,6 +452,7 @@ INTERVAL=5
 DOWN=3
 UP=3
 HASH_MODE="flow"
+HASH_MODE_SET=0
 
 while [ $# -gt 0 ]; do
 	case "$1" in
@@ -483,9 +484,10 @@ while [ $# -gt 0 ]; do
 			;;
 		--sticky) STICKY=$2; shift 2 ;;
 		--hash-mode)
+			[ -n "$2" ] || usage
 			case "$2" in
-				ip|flow) HASH_MODE=$2 ;;
-				*) HASH_MODE=flow ;;
+				ip|flow) HASH_MODE=$2; HASH_MODE_SET=1 ;;
+				*) echo '{"ok":false,"error":"负载模式无效"}'; exit 1 ;;
 			esac
 			shift 2
 			;;
@@ -500,6 +502,11 @@ done
 SPECS=$(echo "$SPECS")
 TRACKS=$(echo "$TRACKS")
 n_if=$(echo "$SPECS" | wc -w)
+
+[ "$HASH_MODE_SET" = 1 ] || {
+	echo '{"ok":false,"error":"缺少负载模式参数"}'
+	exit 1
+}
 
 if [ "$n_if" -lt 2 ]; then
 	echo '{"ok":false,"error":"至少勾选两条宽带"}'
@@ -565,33 +572,22 @@ uci -q set mwan3.globals=globals
 uci -q set mwan3.globals.mmx_mask='0x3F00'
 uci -q set mwan3.globals.lede_lb_hash="$HASH_MODE"
 
-# Same network.metric on several WANs → equal-cost defaults in main.
-# mwan3 still marks LAN, but rtmon/copy-from-main and router-own
-# traffic break. Stagger only when two or more selected ifaces share
-# a metric (including unset=0), the usual LuCI default.
-metric_fix=0
-seen_m=""
+# Each selected WAN needs a distinct network.metric (跃点). Equal or
+# missing metrics leave equal-cost defaults in main; mwan3 tracker,
+# rtmon/copy-from-main and router-own traffic then break.
+METRIC_NOTE=""
+n=10
+metric_changed=0
 for spec in $SPECS; do
 	name=${spec%%:*}
-	m=$(uci -q get "network.$name.metric")
-	[ -n "$m" ] || m=0
-	for s in $seen_m; do
-		if [ "$s" = "$m" ]; then
-			metric_fix=1
-			break
-		fi
-	done
-	seen_m="$seen_m $m"
+	old=$(uci -q get "network.$name.metric")
+	[ -n "$old" ] || old=0
+	[ "$old" = "$n" ] || metric_changed=1
+	uci set "network.$name.metric=$n"
+	METRIC_NOTE="${METRIC_NOTE}${METRIC_NOTE:+,}${name}:${n}"
+	n=$((n + 10))
 done
-METRIC_NOTE=""
-if [ "$metric_fix" = 1 ]; then
-	n=10
-	for spec in $SPECS; do
-		name=${spec%%:*}
-		uci set "network.$name.metric=$n"
-		METRIC_NOTE="${METRIC_NOTE}${METRIC_NOTE:+,}${name}:${n}"
-		n=$((n + 10))
-	done
+if [ "$metric_changed" = 1 ]; then
 	uci commit network
 	ubus call network reload >/dev/null 2>&1 || /etc/init.d/network reload >/dev/null 2>&1 || true
 	sleep 2

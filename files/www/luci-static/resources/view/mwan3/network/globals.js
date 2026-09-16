@@ -120,6 +120,30 @@ return view.extend({
 		return ((this._wans || []).length >= 2);
 	},
 
+	countEnabledMwanIfaces() {
+		let n = 0;
+		uci.sections('mwan3', 'interface').forEach(s => {
+			if (uci.get('mwan3', s['.name'], 'enabled') === '1')
+				n++;
+		});
+		return n;
+	},
+
+	uiShouldRun() {
+		if (this.isLbActive(this._st))
+			return true;
+		return !!(this._wantEnable && this.countEnabledMwanIfaces() >= 2);
+	},
+
+	scheduleRunRefresh() {
+		if (this._runPoll)
+			return;
+		this._runPoll = setTimeout(L.bind(function() {
+			this._runPoll = null;
+			this.refreshStatus();
+		}, this), 2000);
+	},
+
 	forEachFooterAction(fn) {
 		document.querySelectorAll('#view .cbi-page-actions').forEach(fn);
 	},
@@ -187,10 +211,26 @@ return view.extend({
 				badge.removeAttribute('title');
 			return;
 		}
-		const on = this.isLbActive(this._st);
-		badge.textContent = on ? _('运行中') : _('关闭');
-		badge.style.color = on ? '#16a34a' : '#dc2626';
-		if (!on && this._st && Number(this._st.service) === 1 && Number(this._st.enabled) < 2)
+		if (this.uiShouldRun()) {
+			if (this.isLbActive(this._st))
+				this._wantEnable = false;
+			badge.textContent = _('运行中');
+			badge.style.color = '#16a34a';
+			badge.removeAttribute('title');
+			this.updateWipeButton();
+			return;
+		}
+		if (this._wantEnable && this.countEnabledMwanIfaces() >= 2) {
+			badge.textContent = _('启动中......');
+			badge.style.color = '#d97706';
+			badge.removeAttribute('title');
+			this.scheduleRunRefresh();
+			this.updateWipeButton();
+			return;
+		}
+		badge.textContent = _('关闭');
+		badge.style.color = '#dc2626';
+		if (this._st && Number(this._st.service) === 1 && Number(this._st.enabled) < 2)
 			badge.setAttribute('title', _('mwan3 服务在运行，但未配置多线负载'));
 		else
 			badge.removeAttribute('title');
@@ -230,8 +270,7 @@ return view.extend({
 				this.paintRunStatus();
 				const hashSel = document.getElementById('lb-hash-mode');
 				if (hashSel) {
-					const hm = uci.get('mwan3', 'globals', 'lede_lb_hash') || 'flow';
-					hashSel.value = hm === 'ip' ? 'ip' : 'flow';
+					hashSel.value = uci.get('mwan3', 'globals', 'lede_lb_hash') === 'ip' ? 'ip' : 'flow';
 				}
 				this.syncStickyControls();
 				if (ui.changes && typeof ui.changes.init === 'function')
@@ -289,7 +328,9 @@ return view.extend({
 					tracks.push(v);
 			});
 		const hashEl = document.getElementById('lb-hash-mode');
-		const hashMode = hashEl ? hashEl.value : (uci.get('mwan3', 'globals', 'lede_lb_hash') || 'flow');
+		const hashMode = hashEl
+			? (hashEl.value === 'ip' ? 'ip' : 'flow')
+			: (uci.get('mwan3', 'globals', 'lede_lb_hash') === 'ip' ? 'ip' : 'flow');
 		return {
 			enabled: !!(document.getElementById('lb-enable') || {}).checked,
 			ifaces,
@@ -339,6 +380,7 @@ return view.extend({
 		const running = this.isLbActive(this._st);
 
 		if (!f.enabled) {
+			this._wantEnable = false;
 			this._phase = null;
 			this._phaseErr = '';
 			if (!running)
@@ -354,6 +396,7 @@ return view.extend({
 		if (f.ifaces.length < 2)
 			throw new Error(_('请至少选择两条 WAN 后再启用多线负载'));
 
+		this._wantEnable = true;
 		this._phase = 'starting';
 		this._phaseErr = '';
 		this.paintRunStatus();
@@ -361,17 +404,36 @@ return view.extend({
 			const j = this.parseJson(r);
 			if (!j.ok)
 				throw new Error(j.error || _('应用失败'));
-			return this.waitRunning(true, 25).then(st => {
-				if (!this.isLbActive(st))
-					throw new Error(_('服务未起来'));
+			return this.waitRunning(true, 45).then(st => {
+				if (!this.isLbActive(st) && f.ifaces.length >= 2) {
+					this._st = Object.assign({}, st || {}, {
+						ok: true,
+						running: 0,
+						service: Number(st && st.service) || 0,
+						enabled: f.ifaces.length
+					});
+				}
 				this._phase = null;
 				this._phaseErr = '';
 			});
 		}).catch(e => {
+			this._wantEnable = false;
 			this._phase = 'start_fail';
 			this._phaseErr = (e && e.message) || _('应用失败');
 			throw e;
 		});
+	},
+
+	refreshStatusUntilStable() {
+		const self = this;
+		function step(left) {
+			return self.refreshStatus().then(st => {
+				if (self.isLbActive(st) || !self._wantEnable || left <= 0)
+					return st;
+				return new Promise(ok => setTimeout(ok, 1000)).then(() => step(left - 1));
+			});
+		}
+		return step(20);
 	},
 
 	handleSave(ev) {
@@ -393,7 +455,8 @@ return view.extend({
 		}).then(function() {
 			return self.applyBackend();
 		}).then(function() {
-			self.ok(_('已保存并应用'));
+			return self.refreshStatusUntilStable();
+		}).then(function() {
 			return self.afterChange();
 		}).catch(function(e) {
 			self.fail(e, _('保存并应用失败'));
@@ -621,18 +684,19 @@ return view.extend({
 	},
 
 	hashSelect(val) {
+		const mode = (val === 'ip') ? 'ip' : 'flow';
 		const sel = E('select', {
 			id: 'lb-hash-mode',
 			'class': 'lb-sel lb-hash-sel',
 			style: 'width:240px;min-width:240px;max-width:240px;box-sizing:border-box;'
 		}, [
-			E('option', { value: 'ip' }, _('源IP')),
-			E('option', { value: 'flow' }, _('连接数'))
+			E('option', { value: 'flow' }, _('连接数')),
+			E('option', { value: 'ip' }, _('源IP'))
 		]);
-		sel.value = (val === 'ip') ? 'ip' : 'flow';
+		sel.value = mode;
 		sel.addEventListener('change', L.bind(function() {
 			this.bumpDirty();
-			this.syncStickyControls(sel.value === 'ip');
+			this.syncStickyControls();
 		}, this));
 		const wrap = E('div', { 'class': 'lb-hash-sel-wrap' }, sel);
 		wrap._hashSel = sel;
@@ -644,7 +708,7 @@ return view.extend({
 		return !(stickyUci === '0' || stickyUci === false);
 	},
 
-	syncStickyControls(autoCheck) {
+	syncStickyControls() {
 		const can = this.hasEnoughWans();
 		const modeEl = document.getElementById('lb-hash-mode');
 		const stickyEl = document.getElementById('lb-sticky');
@@ -652,15 +716,12 @@ return view.extend({
 			return;
 		const ip = !!(modeEl && modeEl.value === 'ip');
 		stickyEl.disabled = !can || !ip;
-		if (!ip) {
+		if (!ip)
 			stickyEl.checked = false;
-		} else if (autoCheck || this.stickyDefaultOn()) {
-			stickyEl.checked = true;
-		}
 		if (!can)
 			stickyEl.setAttribute('title', _('系统中 WAN 口少于 2 个，无法配置'));
 		else if (!ip)
-			stickyEl.setAttribute('title', _('请先选择「源IP」负载模式'));
+			stickyEl.setAttribute('title', _('粘滞仅适用于「源IP」负载模式'));
 		else
 			stickyEl.removeAttribute('title');
 	},
@@ -685,7 +746,7 @@ return view.extend({
 		if (!host)
 			return;
 		const canConfig = this.hasEnoughWans();
-		const running = canConfig && this.isLbActive(this._st);
+		const running = canConfig && this.uiShouldRun();
 		host.innerHTML = '';
 		const body = E('div', { 'class': 'lb-page-body' });
 		if (!canConfig) {
@@ -696,10 +757,10 @@ return view.extend({
 		host.appendChild(body);
 		const wans = this._wans || [];
 		const tracks = this.currentTracks();
-		const hashMode = uci.get('mwan3', 'globals', 'lede_lb_hash') || 'flow';
+		const hashMode = uci.get('mwan3', 'globals', 'lede_lb_hash') === 'ip' ? 'ip' : 'flow';
 		const hashSelWrap = this.hashSelect(hashMode);
 		const sticky = E('input', { type: 'checkbox', id: 'lb-sticky' });
-		sticky.checked = hashMode === 'ip' && this.stickyDefaultOn();
+		sticky.checked = (hashMode === 'ip') && this.stickyDefaultOn();
 		sticky.addEventListener('change', L.bind(this.bumpDirty, this));
 		const timeout = uci.get('mwan3', 'default', 'timeout') || '600';
 		const firstIf = (uci.sections('mwan3', 'interface')[0] || {})['.name'];
