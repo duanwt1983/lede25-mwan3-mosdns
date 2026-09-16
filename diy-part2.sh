@@ -119,6 +119,11 @@ lede_bump_ubus_nofile() {
 }
 lede_bump_ubus_nofile
 
+_DNSMASQ_PATCH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/patches/dnsmasq/apply.sh"
+if [ -f "$_DNSMASQ_PATCH" ]; then
+  sh "$_DNSMASQ_PATCH" .
+fi
+
 _MOSDNS_PATCH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/patches/luci-app-mosdns/apply.sh"
 if [ -x "$_MOSDNS_PATCH" ] || [ -f "$_MOSDNS_PATCH" ]; then
   sh "$_MOSDNS_PATCH" "$(pwd)"
@@ -648,6 +653,11 @@ for _rel in \
 do
   assert_overlay "$_rel"
 done
+
+_DNSMASQ_MK=$(find package/network/services/dnsmasq -name Makefile -type f 2>/dev/null | head -n 1 || true)
+[ -n "$_DNSMASQ_MK" ] || { echo "ERROR: dnsmasq Makefile not found"; exit 1; }
+assert_grep 'PKG_UPSTREAM_VERSION:=2.93' "$_DNSMASQ_MK"
+echo "package OK: dnsmasq 2.93"
 
 assert_grep 'lede-theme-page' "$_LEDE_FILES/www/luci-static/resources/view/status/index.js"
 assert_grep 'lede-theme-page' "$_LEDE_FILES/www/luci-static/resources/view/mwan3/network/globals.js"
