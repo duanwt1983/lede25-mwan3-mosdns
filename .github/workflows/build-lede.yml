@@ -239,10 +239,11 @@ jobs:
           tag_name: ${{ steps.tag.outputs.release_tag }}
           name: ${{ steps.tag.outputs.release_tag }}
           body_path: release.txt
+          # Organize keeps uncompressed .vmdk for VM import; only .img is gzip'd.
+          # Do not list *.vmdk.gz — fail_on_unmatched_files would abort the release.
           files: |
             ${{ env.FIRMWARE }}/*.img.gz
             ${{ env.FIRMWARE }}/*.vmdk
-            ${{ env.FIRMWARE }}/*.vmdk.gz
             ${{ env.FIRMWARE }}/sha256sums*.txt
           fail_on_unmatched_files: true
           draft: false
