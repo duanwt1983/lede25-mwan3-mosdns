@@ -8,6 +8,70 @@ NAME="$STATE/current.name"
 LOG="$STATE/tcpdump.log"
 SLEEP="$STATE/sleep.pid"
 FILTER="$STATE/filter.txt"
+IFACE="$STATE/interface.txt"
+CLIENT="$STATE/client.txt"
+WATCH="$STATE/watch.pid"
+ANPID="$STATE/analyze.pid"
+ANLOCK="$STATE/analyze.lock"
+ANCANCEL="$STATE/analyze.cancel"
+OPLOCK="$STATE/operation.lock"
+ANSTATUS="$STATE/analysis.status"
+ANERROR="$STATE/analysis.error"
+ANLOG="$STATE/analysis.log"
+
+init_state() {
+	local owner
+	[ ! -L "$STATE" ] || { echo "unsafe state path: $STATE" >&2; return 1; }
+	mkdir -p "$STATE" || return 1
+	owner="$(ls -nd "$STATE" 2>/dev/null | awk '{ print $3 }')" || return 1
+	[ "$owner" = "0" ] || { echo "state path is not owned by root: $STATE" >&2; return 1; }
+	chmod 700 "$STATE" || return 1
+}
+
+run_locked() {
+	local rc=0
+	mkdir "$OPLOCK" 2>/dev/null || {
+		echo "另一个抓包或分析操作正在进行，请稍后重试" >&2
+		return 2
+	}
+	echo "$$" >"$OPLOCK/pid"
+	trap 'rm -f "$OPLOCK/pid"; rmdir "$OPLOCK" 2>/dev/null || true' EXIT INT TERM
+	"$@" || rc=$?
+	rm -f "$OPLOCK/pid"
+	rmdir "$OPLOCK" 2>/dev/null || true
+	trap - EXIT INT TERM
+	return "$rc"
+}
+
+analysis_alive() {
+	local pid
+	[ -f "$ANPID" ] || return 1
+	pid="$(cat "$ANPID" 2>/dev/null)" || return 1
+	[ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+}
+
+analysis_paths() {
+	local f="$1"
+	ANREPORT="$f.analysis.tsv"
+}
+
+status_value() {
+	local file="$1" key="$2"
+	awk -F= -v key="$key" '$1 == key { sub(/^[^=]*=/, ""); print; exit }' "$file" 2>/dev/null
+}
+
+analysis_state_write() {
+	local file="$1" state="$2" progress="$3" phase="$4" started="$5" finished="$6"
+	local tmp="$file.tmp.$$"
+	{
+		printf 'state=%s\n' "$state"
+		printf 'progress=%s\n' "$progress"
+		printf 'phase=%s\n' "$phase"
+		printf 'started=%s\n' "$started"
+		printf 'finished=%s\n' "$finished"
+	} >"$tmp"
+	mv -f "$tmp" "$file"
+}
 
 cap_dir() {
 	local d
@@ -16,6 +80,16 @@ cap_dir() {
 		/*) printf '%s' "$d" ;;
 		*) printf '/%s' "$d" ;;
 	esac
+}
+
+secure_cap_dir() {
+	local dir="$1"
+	[ -d "$dir" ] && [ ! -L "$dir" ] || return 1
+	ls -ldn "$dir" 2>/dev/null |
+		awk '{
+			if ($3 == 0 && substr($1, 6, 1) != "w" && substr($1, 9, 1) != "w")
+				ok = 1
+		} END { exit(ok ? 0 : 1) }'
 }
 
 json_escape() {
@@ -41,7 +115,7 @@ alive() {
 }
 
 status_json() {
-	local dir file base active log size
+	local dir file base active log size astate progress phase started finished report_ready error now
 	dir="$(cap_dir)"
 	active=0
 	alive && active=1
@@ -53,25 +127,83 @@ status_json() {
 	fi
 	size=0
 	[ -n "$file" ] && [ -f "$file" ] && size="$(wc -c < "$file" | tr -d ' ')"
-	printf '{"active":%s,"cap_dir":"%s","current_name":"%s","current_file":"%s","size":%s}\n' \
-		"$active" "$(json_escape "$dir")" "$(json_escape "$base")" "$(json_escape "$file")" "${size:-0}"
+	astate="idle"
+	progress=0
+	phase="idle"
+	started=0
+	finished=0
+	report_ready=0
+	error=""
+	if [ -n "$file" ]; then
+		analysis_paths "$file"
+		if [ -f "$ANSTATUS" ]; then
+			astate="$(status_value "$ANSTATUS" state)"
+			progress="$(status_value "$ANSTATUS" progress)"
+			phase="$(status_value "$ANSTATUS" phase)"
+			started="$(status_value "$ANSTATUS" started)"
+			finished="$(status_value "$ANSTATUS" finished)"
+			astate="${astate:-idle}"
+			progress="${progress:-0}"
+			phase="${phase:-idle}"
+			started="${started:-0}"
+			finished="${finished:-0}"
+		fi
+		if [ "$astate" = "running" ] && ! analysis_alive; then
+			now="$(date +%s)"
+			if [ "$started" -gt 0 ] && [ $((now - started)) -ge 30 ]; then
+				astate="failed"
+				phase="interrupted"
+				finished="$now"
+				analysis_state_write "$ANSTATUS" failed "$progress" interrupted "$started" "$finished"
+				rm -f "$ANPID"
+				rmdir "$ANLOCK" 2>/dev/null || true
+			fi
+		fi
+		[ -s "$ANREPORT" ] && report_ready=1
+		if [ "$report_ready" = 1 ] && [ "$astate" = "idle" ]; then
+			astate="done"
+			progress=100
+			phase="complete"
+		fi
+		[ -s "$ANERROR" ] && error="$(cat "$ANERROR" 2>/dev/null)"
+	fi
+	printf '{"active":%s,"cap_dir":"%s","current_name":"%s","current_file":"%s","size":%s,"analysis":{"state":"%s","progress":%s,"phase":"%s","started":%s,"finished":%s,"report_ready":%s,"error":"%s"}}\n' \
+		"$active" "$(json_escape "$dir")" "$(json_escape "$base")" "$(json_escape "$file")" "${size:-0}" \
+		"$(json_escape "$astate")" "${progress:-0}" "$(json_escape "$phase")" "${started:-0}" "${finished:-0}" \
+		"$report_ready" "$(json_escape "$error")"
 }
 
 start_cap() {
-	local iface="$1" filter="$2" limit="$3" unit="$4"
-	local dir prefix pcap pid tpid
+	local iface="$1" filter="$2" limit="$3" unit="$4" client="$5"
+	local dir prefix pcap pid tpid wpid nonce
 
 	if alive; then
 		echo "capture already running" >&2
+		exit 2
+	fi
+	if analysis_alive || [ -d "$ANLOCK" ]; then
+		echo "analysis already running" >&2
 		exit 2
 	fi
 	[ -n "$iface" ] || { echo "missing interface" >&2; exit 1; }
 
 	dir="$(cap_dir)"
 	mkdir -p "$dir" "$STATE"
-	prefix="capture_$(date +%Y-%m-%d_%H.%M.%S).pcap"
+	chmod 700 "$STATE" 2>/dev/null || true
+	secure_cap_dir "$dir" || {
+		echo "抓包目录必须由 root 拥有且不能允许组或其他用户写入；请使用专用子目录" >&2
+		exit 2
+	}
+	nonce="$(od -An -N4 -tx4 /dev/urandom 2>/dev/null | tr -d ' \n')"
+	[ -n "$nonce" ] || nonce="$$"
+	prefix="capture_$(date +%Y-%m-%d_%H.%M.%S)_${nonce}.pcap"
 	pcap="$dir/$prefix"
+	[ ! -e "$pcap" ] && [ ! -L "$pcap" ] || { echo "抓包文件已存在" >&2; exit 2; }
+	rm -f "$ANSTATUS" "$ANERROR" "$ANCANCEL" "$ANPID"
+	rmdir "$ANLOCK" 2>/dev/null || true
 	printf '%s' "${filter:-}" > "$FILTER"
+	printf '%s' "$iface" > "$IFACE"
+	printf '%s' "${client:-}" > "$CLIENT"
 	echo "$prefix" > "$NAME"
 	: > "$LOG"
 
@@ -84,28 +216,53 @@ start_cap() {
 	else
 		tcpdump -i "$iface" -w "$pcap" >>"$LOG" 2>&1 &
 	fi
-	echo $! > "$PID"
+	pid=$!
+	echo "$pid" > "$PID"
 
 	if [ "${limit:-0}" != "0" ] && [ "${unit:-T}" = "T" ]; then
-		( sleep "$limit"; pid="$(cat "$PID" 2>/dev/null || true)"; [ -n "$pid" ] && kill "$pid" 2>/dev/null; rm -f "$PID" ) &
+		( sleep "$limit"; kill "$pid" 2>/dev/null || true ) &
 		echo $! > "$SLEEP"
 	fi
+	(
+		while kill -0 "$pid" 2>/dev/null; do sleep 2; done
+		if [ "$(cat "$PID" 2>/dev/null)" = "$pid" ]; then
+			rm -f "$PID" "$SLEEP"
+			"$0" analyze-start overview >/dev/null 2>&1 || true
+		fi
+	) >/dev/null 2>&1 &
+	echo $! > "$WATCH"
 
 	status_json
 }
 
 stop_cap() {
-	local pid
+	local pid n=0
 	if alive; then
 		pid="$(cat "$PID")"
 		kill "$pid" 2>/dev/null || true
-		wait "$pid" 2>/dev/null || true
+		while kill -0 "$pid" 2>/dev/null && [ "$n" -lt 10 ]; do
+			sleep 1
+			n=$((n + 1))
+		done
+		if kill -0 "$pid" 2>/dev/null; then
+			kill -9 "$pid" 2>/dev/null || true
+			n=0
+			while kill -0 "$pid" 2>/dev/null && [ "$n" -lt 5 ]; do
+				sleep 1
+				n=$((n + 1))
+			done
+		fi
+		if kill -0 "$pid" 2>/dev/null; then
+			echo "tcpdump 无法停止，未启动分析" >&2
+			return 1
+		fi
 	fi
 	if [ -f "$SLEEP" ]; then
 		pid="$(cat "$SLEEP" 2>/dev/null || true)"
 		[ -n "$pid" ] && kill "$pid" 2>/dev/null || true
 	fi
 	rm -f "$PID" "$SLEEP"
+	start_analysis overview >/dev/null 2>&1 || true
 	status_json
 }
 
@@ -125,6 +282,424 @@ current_pcap() {
 	f="$dir/$base"
 	[ -f "$f" ] || return 1
 	printf '%s' "$f"
+}
+
+start_analysis() {
+	local mode="${1:-overview}" f client iface started pid
+	mkdir -p "$STATE"
+	chmod 700 "$STATE" 2>/dev/null || true
+	f="$(current_pcap)" || { echo "当前没有可分析的抓包文件" >&2; return 1; }
+	if alive; then
+		echo "请先停止抓包" >&2
+		return 2
+	fi
+	if ! mkdir "$ANLOCK" 2>/dev/null; then
+		status_json
+		return 0
+	fi
+	analysis_paths "$f"
+	client="$(cat "$CLIENT" 2>/dev/null | tr 'A-F' 'a-f' || true)"
+	iface="$(cat "$IFACE" 2>/dev/null || true)"
+	started="$(date +%s)"
+	rm -f "$ANERROR" "$ANCANCEL"
+	: >"$ANLOG"
+	analysis_state_write "$ANSTATUS" running 1 queued "$started" 0
+	nohup "$0" analyze-worker "$f" "$ANREPORT" "$ANSTATUS" "$ANERROR" "$mode" "$client" "$iface" "$started" \
+		>>"$ANLOG" 2>&1 </dev/null &
+	pid=$!
+	echo "$pid" >"$ANPID"
+	status_json
+}
+
+cancel_analysis() {
+	local f pid child started=0 progress=0 n=0
+	f="$(current_pcap)" || { status_json; return 0; }
+	analysis_paths "$f"
+	: >"$ANCANCEL"
+	if analysis_alive; then
+		pid="$(cat "$ANPID" 2>/dev/null)"
+		if [ -r "/proc/$pid/task/$pid/children" ]; then
+			for child in $(cat "/proc/$pid/task/$pid/children" 2>/dev/null); do
+				kill "$child" 2>/dev/null || true
+			done
+		fi
+		kill "$pid" 2>/dev/null || true
+		while kill -0 "$pid" 2>/dev/null && [ "$n" -lt 5 ]; do
+			sleep 1
+			n=$((n + 1))
+		done
+		if kill -0 "$pid" 2>/dev/null; then
+			if [ -r "/proc/$pid/task/$pid/children" ]; then
+				for child in $(cat "/proc/$pid/task/$pid/children" 2>/dev/null); do
+					kill -9 "$child" 2>/dev/null || true
+				done
+			fi
+			kill -9 "$pid" 2>/dev/null || true
+			n=0
+			while kill -0 "$pid" 2>/dev/null && [ "$n" -lt 5 ]; do
+				sleep 1
+				n=$((n + 1))
+			done
+		fi
+		if kill -0 "$pid" 2>/dev/null; then
+			echo "分析进程仍未退出，保留任务锁以阻止并发分析" >&2
+			return 1
+		fi
+	fi
+	if [ -f "$ANSTATUS" ]; then
+		started="$(status_value "$ANSTATUS" started)"
+		progress="$(status_value "$ANSTATUS" progress)"
+	fi
+	rm -f "$ANPID"
+	rmdir "$ANLOCK" 2>/dev/null || true
+	analysis_state_write "$ANSTATUS" cancelled "${progress:-0}" cancelled "${started:-0}" "$(date +%s)"
+	status_json
+}
+
+analysis_result() {
+	local f
+	f="$(current_pcap)" || { echo "当前没有可分析的抓包文件"; return 0; }
+	analysis_paths "$f"
+	[ -s "$ANREPORT" ] || { echo "分析结果尚未生成"; return 0; }
+	cat "$ANREPORT"
+}
+
+analysis_worker() {
+	local f="$1" report="$2" status="$3" errfile="$4" mode="$5" client="$6" iface="$7" started="$8"
+	local tmp="$report.tmp.$$" now rc size fifo tshpid tshrc awkrc resolved_client flowtmp othertmp rawflow sortedflow
+	set +e
+	analysis_state_write "$status" running 5 preparing "$started" 0
+	size="$(wc -c <"$f" 2>/dev/null | tr -d ' \n')"
+	: >"$tmp"
+	printf 'VERSION\t2\n' >>"$tmp"
+	printf 'FILE\t%s\t%s\t%s\t%s\n' "$(basename "$f")" "${size:-0}" "$iface" "$mode" >>"$tmp"
+
+	if [ ! -x /usr/bin/tshark ]; then
+		printf 'NOTICE\tdanger\t缺少 TShark\t只能输出前 80 条原始数据包，无法生成流向、重传和时序统计。\n' >>"$tmp"
+		tcpdump -r "$f" -nn -c 80 2>&1 | awk '{ gsub(/\t/, " "); print "RAW\t" $0 }' >>"$tmp"
+		rc=0
+	else
+		analysis_state_write "$status" running 15 tcp_scan "$started" 0
+		fifo="$STATE/analysis-tcp.$$"
+		rm -f "$fifo"
+		mkfifo "$fifo" || rc=1
+		tshark -r "$f" -n -Y 'tcp && (ip.src || ipv6.src) && (ip.dst || ipv6.dst)' -T fields \
+			-e frame.number -e frame.time_relative -e frame.time_epoch -e tcp.stream \
+			-e ip.src -e ipv6.src -e tcp.srcport -e ip.dst -e ipv6.dst -e tcp.dstport \
+			-e ip.id -e ipv6.flow -e tcp.seq_raw -e tcp.ack_raw -e tcp.len -e frame.len -e tcp.flags \
+			-e tcp.analysis.retransmission -e tcp.analysis.fast_retransmission \
+			-e tcp.analysis.duplicate_ack -e tcp.analysis.lost_segment \
+			-e tcp.analysis.out_of_order -e tcp.analysis.zero_window \
+			-e tcp.analysis.window_full -e tcp.flags.reset -e tcp.flags.fin \
+			-e tcp.flags.syn -e tcp.flags.ack -e tcp.analysis.ack_rtt \
+			-e tls.handshake.extensions_server_name -e sll.ifindex >"$fifo" 2>/dev/null &
+		tshpid=$!
+		awk -F '\t' -v client="$client" '
+			function yes(v) { return v == "1" || v == "True" || v == "true" }
+			function private_ip(ip) {
+				return ip ~ /^10\./ || ip ~ /^192\.168\./ ||
+					ip ~ /^172\.(1[6-9]|2[0-9]|3[0-1])\./ ||
+					tolower(ip) ~ /^f[cd]/ || tolower(ip) ~ /^fe[89ab]/
+			}
+			function event(kind, detail) {
+				if (client != "") {
+					if (src != client && dst != client) return
+				} else {
+					owner = (private_ip(src) ? src : (private_ip(dst) ? dst : ""))
+					if (owner != "") {
+						if (owner_events[owner] >= 320) return
+						owner_events[owner]++
+					}
+				}
+				if (events < 5000) {
+					gsub(/\t/, " ", detail)
+					ev_time[events] = $2
+					ev_stream[events] = $4
+					ev_src[events] = src
+					ev_dst[events] = dst
+					ev_kind[events] = kind
+					ev_detail[events] = detail
+					events++
+				}
+			}
+			{
+				s = $4
+				if ((s + 0) >= 5000) { ignored_records++; next }
+				src = ($5 != "" ? $5 : $6)
+				dst = ($8 != "" ? $8 : $9)
+				sport = $7
+				dport = $10
+				ipid = ($11 != "" ? $11 : $12)
+				flow_raw[s]++
+				sig = s SUBSEP src SUBSEP sport SUBSEP dst SUBSEP dport SUBSEP ipid SUBSEP \
+					$13 SUBSEP $14 SUBSEP $15 SUBSEP $16 SUBSEP $17
+				delta = $2 - seen_time[sig]
+				if (delta < 0) delta = -delta
+				if ((sig in seen_time) && $31 != "" && seen_if[sig] != "" &&
+				    $31 != seen_if[sig] && delta <= 0.001) {
+					flow_capture_dup[s]++
+					seen_time[sig] = $2
+					seen_if[sig] = $31
+					next
+				}
+				slot = unique % 4096
+				old = recent[slot]
+				if (old != "" && old != sig) {
+					delete seen_time[old]
+					delete seen_if[old]
+				}
+				recent[slot] = sig
+				seen_time[sig] = $2
+				seen_if[sig] = $31
+				unique++
+				flow_unique[s]++
+				if (private_ip(src)) private_count[src]++
+				if (private_ip(dst)) private_count[dst]++
+				all_count[src]++
+				all_count[dst]++
+				minute = int($2 / 60)
+				min_pk[minute, s, src]++
+				min_bytes[minute, s, src] += $15 + 0
+				if ($18 != "") min_ret[minute, s]++
+				if ($20 != "") min_dup[minute, s]++
+				if (!(s in flow_first)) {
+					flow_first[s] = $2
+					flow_first_epoch[s] = $3
+					flow_a[s] = src
+					flow_ap[s] = sport
+					flow_b[s] = dst
+					flow_bp[s] = dport
+				}
+				if (flow_last[s] != "") {
+					gap = $2 - flow_last[s]
+					if (gap > flow_gap[s]) flow_gap[s] = gap
+				}
+				flow_last[s] = $2
+				flow_last_epoch[s] = $3
+				flow_pk[s, src]++
+				flow_bytes[s, src] += $15 + 0
+				if ($18 != "") flow_ret[s, src]++
+				if ($20 != "") flow_dup[s, src]++
+				if ($21 != "") flow_lost[s]++
+				if ($22 != "") flow_outorder[s]++
+				if ($23 != "") flow_zerowin[s]++
+				if ($24 != "") flow_winfull[s]++
+				if (yes($25)) flow_rst[s, src]++
+				if (yes($26)) flow_fin[s, src]++
+				if ($29 != "") {
+					flow_rtt[s, src] += ($29 + 0) * 1000
+					flow_rtt_n[s, src]++
+				}
+				if ($30 != "") flow_sni[s] = $30
+
+				if ($30 != "") event("TLS_SNI", $30)
+				else if (yes($27) && !yes($28)) event("SYN", sport " -> " dport)
+				else if (yes($27) && yes($28)) event("SYN_ACK", sport " -> " dport)
+				else if (yes($25)) event("RST", sport " -> " dport)
+				else if (yes($26)) event("FIN", sport " -> " dport)
+				else if ($18 != "") event("RETRANS", "len=" $15 " seq=" $13)
+			}
+			END {
+				c = client
+				if (c == "") {
+					for (ip in private_count)
+						if (private_count[ip] > best) { best = private_count[ip]; c = ip }
+					if (c == "") {
+						for (ip in all_count)
+							if (all_count[ip] > best) { best = all_count[ip]; c = ip }
+					}
+				}
+				for (s in flow_first) {
+					a = flow_a[s]; b = flow_b[s]
+					if (a != c && b != c) { excluded++; continue }
+					peer = (a == c ? b : a)
+					raw += flow_raw[s]
+					unique_kept += flow_unique[s]
+					duplicates += flow_capture_dup[s]
+					dir_pk["C2S"] += flow_pk[s, c]
+					dir_bytes["C2S"] += flow_bytes[s, c]
+					dir_ret["C2S"] += flow_ret[s, c]
+					dir_dup["C2S"] += flow_dup[s, c]
+					dir_rst["C2S"] += flow_rst[s, c]
+					dir_pk["S2C"] += flow_pk[s, peer]
+					dir_bytes["S2C"] += flow_bytes[s, peer]
+					dir_ret["S2C"] += flow_ret[s, peer]
+					dir_dup["S2C"] += flow_dup[s, peer]
+					dir_rst["S2C"] += flow_rst[s, peer]
+					lost += flow_lost[s]
+					outorder += flow_outorder[s]
+					zerowin += flow_zerowin[s]
+					winfull += flow_winfull[s]
+					if (first_selected == "" || flow_first[s] < first_selected) {
+						first_selected = flow_first[s]
+						first_epoch = flow_first_epoch[s]
+					}
+					if (last_selected == "" || flow_last[s] > last_selected) {
+						last_selected = flow_last[s]
+						last_epoch = flow_last_epoch[s]
+					}
+				}
+				shown_events = 0
+				for (i = 0; i < events && shown_events < 320; i++) {
+					if (ev_src[i] != c && ev_dst[i] != c) continue
+					printf "EVENT\t%.6f\t%s\t%s\t%s\t%s\t%s\n",
+						ev_time[i], ev_stream[i], ev_src[i], ev_dst[i], ev_kind[i], ev_detail[i]
+					shown_events++
+				}
+				printf "META\tclient\t%s\n", c
+				printf "META\ttcp_records\t%d\n", raw
+				printf "META\tunique_tcp\t%d\n", unique_kept
+				printf "META\tduplicates\t%d\n", duplicates
+				printf "META\texcluded_flows\t%d\n", excluded
+				printf "META\tignored_records\t%d\n", ignored_records
+				printf "META\tfirst_epoch\t%s\n", first_epoch
+				printf "META\tlast_epoch\t%s\n", last_epoch
+				printf "META\tduration\t%.3f\n", last_selected - first_selected
+				printf "META\tlost_segment\t%d\n", lost
+				printf "META\tout_of_order\t%d\n", outorder
+				printf "META\tzero_window\t%d\n", zerowin
+				printf "META\twindow_full\t%d\n", winfull
+				printf "DIR\tC2S\t%d\t%d\t%d\t%d\t%d\n",
+					dir_pk["C2S"], dir_bytes["C2S"], dir_ret["C2S"], dir_dup["C2S"], dir_rst["C2S"]
+				printf "DIR\tS2C\t%d\t%d\t%d\t%d\t%d\n",
+					dir_pk["S2C"], dir_bytes["S2C"], dir_ret["S2C"], dir_dup["S2C"], dir_rst["S2C"]
+				for (key in min_pk) {
+					split(key, part, SUBSEP)
+					m = part[1]; s = part[2]; ip = part[3]
+					a = flow_a[s]; b = flow_b[s]
+					if (a != c && b != c) continue
+					peer = (a == c ? b : a)
+					if (ip == c) {
+						min_c_pk[m] += min_pk[key]
+						min_c_bytes[m] += min_bytes[key]
+					} else if (ip == peer) {
+						min_s_pk[m] += min_pk[key]
+						min_s_bytes[m] += min_bytes[key]
+					}
+				}
+				for (key in min_ret) {
+					split(key, part, SUBSEP)
+					m = part[1]; s = part[2]
+					if (flow_a[s] == c || flow_b[s] == c) min_retrans[m] += min_ret[key]
+				}
+				for (key in min_dup) {
+					split(key, part, SUBSEP)
+					m = part[1]; s = part[2]
+					if (flow_a[s] == c || flow_b[s] == c) min_dupack[m] += min_dup[key]
+				}
+				min_first = int(first_selected / 60)
+				min_last = int(last_selected / 60)
+				for (m = min_first; m <= min_last; m++) {
+					printf "MINUTE\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n",
+						m, min_c_pk[m], min_c_bytes[m], min_s_pk[m], min_s_bytes[m],
+						min_retrans[m], min_dupack[m]
+				}
+				for (s in flow_first) {
+					a = flow_a[s]; b = flow_b[s]
+					if (a != c && b != c) continue
+					peer = (a == c ? b : a)
+					peerport = (a == c ? flow_bp[s] : flow_ap[s])
+					cp = flow_pk[s, c] + 0
+					cb = flow_bytes[s, c] + 0
+					cr = flow_ret[s, c] + 0
+					cd = flow_dup[s, c] + 0
+					cx = flow_rst[s, c] + 0
+					cf = flow_fin[s, c] + 0
+					sp = (flow_pk[s, a] + flow_pk[s, b]) - cp
+					sb = (flow_bytes[s, a] + flow_bytes[s, b]) - cb
+					sr = (flow_ret[s, a] + flow_ret[s, b]) - cr
+					sd = (flow_dup[s, a] + flow_dup[s, b]) - cd
+					sx = (flow_rst[s, a] + flow_rst[s, b]) - cx
+					sf = (flow_fin[s, a] + flow_fin[s, b]) - cf
+					rtt = flow_rtt[s, peer] / (flow_rtt_n[s, peer] ? flow_rtt_n[s, peer] : 1)
+					gsub(/\t/, " ", flow_sni[s])
+					printf "FLOW\t%s\t%s\t%s\t%.3f\t%.3f\t%.3f\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%.3f\t%.2f\t%s\n",
+						s, peer, peerport, flow_first[s], flow_last[s], flow_last[s] - flow_first[s],
+						cp, cb, sp, sb, cr, sr, cd, sd, cx + sx, cf + sf, flow_gap[s], rtt, flow_sni[s]
+				}
+			}
+		' <"$fifo" >>"$tmp"
+		awkrc=$?
+		wait "$tshpid"
+		tshrc=$?
+		rm -f "$fifo"
+		if [ "$awkrc" -eq 0 ] && [ "$tshrc" -eq 0 ]; then rc=0; else rc=1; fi
+
+		if [ "$rc" -eq 0 ]; then
+			analysis_state_write "$status" running 82 dns_scan "$started" 0
+			resolved_client="$(awk -F '\t' '$1 == "META" && $2 == "client" { print $3; exit }' "$tmp")"
+			fifo="$STATE/analysis-dns.$$"
+			rm -f "$fifo"
+			mkfifo "$fifo" || rc=1
+			tshark -r "$f" -n -Y 'dns.qry.name' -T fields \
+				-e frame.time_relative -e sll.ifindex -e ip.src -e ipv6.src -e ip.dst -e ipv6.dst -e dns.id -e dns.qry.type \
+				-e dns.flags.response -e dns.qry.name -e dns.a -e dns.aaaa -e dns.cname -e dns.time \
+				>"$fifo" 2>/dev/null &
+			tshpid=$!
+			awk -F '\t' -v client="$resolved_client" '
+				{
+					src = ($3 != "" ? $3 : $4)
+					dst = ($5 != "" ? $5 : $6)
+					if (client != "" && src != client && dst != client) next
+					sig = src SUBSEP dst SUBSEP $7 SUBSEP $8 SUBSEP $9 SUBSEP $10 SUBSEP $11 SUBSEP $12 SUBSEP $13
+					delta = $1 - seen_time[sig]
+					if (delta < 0) delta = -delta
+					if ((sig in seen_time) && $2 != "" && seen_if[sig] != "" &&
+					    $2 != seen_if[sig] && delta <= 0.001) {
+						seen_time[sig] = $1; seen_if[sig] = $2; next
+					}
+					seen_time[sig] = $1
+					seen_if[sig] = $2
+					if (shown++ >= 160) next
+					ans = $11
+					if ($12 != "") ans = (ans == "" ? $12 : ans "," $12)
+					if ($13 != "") ans = (ans == "" ? "CNAME " $13 : ans " CNAME " $13)
+					gsub(/\t/, " ", ans)
+					printf "DNS\t%.6f\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+						$1, src, dst, $8, $9, $10, ans, $14
+				}
+			' <"$fifo" >>"$tmp"
+			awkrc=$?
+			wait "$tshpid"
+			tshrc=$?
+			rm -f "$fifo"
+			if [ "$awkrc" -ne 0 ] || [ "$tshrc" -ne 0 ]; then rc=1; fi
+		fi
+	fi
+
+	if [ -f "$ANCANCEL" ]; then
+		rm -f "$tmp" "$ANPID"
+		rmdir "$ANLOCK" 2>/dev/null || true
+		exit 130
+	fi
+	if [ "$rc" -eq 0 ] && [ -s "$tmp" ]; then
+		analysis_state_write "$status" running 95 finalizing "$started" 0
+		flowtmp="$tmp.flows"
+		othertmp="$tmp.other"
+		rawflow="$tmp.flows.raw"
+		sortedflow="$tmp.flows.sorted"
+		awk -F '\t' '$1 != "FLOW" { print }' "$tmp" >"$othertmp" || rc=1
+		awk -F '\t' '$1 == "FLOW" { print ($8 + $10) "\t" $0 }' "$tmp" >"$rawflow" || rc=1
+		sort -nr "$rawflow" >"$sortedflow" || rc=1
+		awk 'NR <= 200 { sub(/^[^\t]*\t/, ""); print }' "$sortedflow" >"$flowtmp" || rc=1
+		cat "$flowtmp" >>"$othertmp" || rc=1
+		mv -f "$othertmp" "$tmp" || rc=1
+		rm -f "$flowtmp" "$rawflow" "$sortedflow"
+	fi
+	if [ "$rc" -eq 0 ] && [ -s "$tmp" ] && mv -f "$tmp" "$report"; then
+		rm -f "$errfile" "$ANPID" "$ANCANCEL"
+		rmdir "$ANLOCK" 2>/dev/null || true
+		now="$(date +%s)"
+		analysis_state_write "$status" done 100 complete "$started" "$now"
+	else
+		rc=1
+		printf '分析进程失败，返回码 %s。请查看 %s\n' "${rc:-1}" "$ANLOG" >"$errfile"
+		rm -f "$tmp" "$ANPID"
+		rmdir "$ANLOCK" 2>/dev/null || true
+		now="$(date +%s)"
+		analysis_state_write "$status" failed 0 failed "$started" "$now"
+	fi
+	exit "${rc:-1}"
 }
 
 analyze_overview() {
@@ -209,11 +784,18 @@ analyze_cap() {
 	esac
 }
 
+init_state || exit 1
+
 case "$1" in
 	status) status_json ;;
-	start) start_cap "$2" "$3" "$4" "$5" ;;
-	stop) stop_cap ;;
+	start) run_locked start_cap "$2" "$3" "$4" "$5" "$6" ;;
+	stop) run_locked stop_cap ;;
 	ifaces) list_ifaces ;;
 	analyze) analyze_cap "$2" ;;
-	*) echo "usage: $0 {status|start|stop|ifaces|analyze}" >&2; exit 1 ;;
+	analyze-start) run_locked start_analysis "$2" ;;
+	analyze-status) status_json ;;
+	analyze-result) analysis_result ;;
+	analyze-cancel) run_locked cancel_analysis ;;
+	analyze-worker) analysis_worker "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9" ;;
+	*) echo "usage: $0 {status|start|stop|ifaces|analyze|analyze-start|analyze-status|analyze-result|analyze-cancel}" >&2; exit 1 ;;
 esac
