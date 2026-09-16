@@ -341,6 +341,10 @@ _IFACE_DHCP_PATCH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/patches/luci-mo
 if [ -x "$_IFACE_DHCP_PATCH" ] || [ -f "$_IFACE_DHCP_PATCH" ]; then
   sh "$_IFACE_DHCP_PATCH" .
 fi
+_LUCI_SYSTEM_PATCH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/patches/luci-mod-system/apply.sh"
+if [ -f "$_LUCI_SYSTEM_PATCH" ]; then
+  sh "$_LUCI_SYSTEM_PATCH" .
+fi
 if [ -f files/www/luci-static/resources/view/network/iface-dhcp-extra.js ]; then
   find feeds/luci package -path '*/view/network/interfaces.js' -type f 2>/dev/null | while read -r f; do
     cp files/www/luci-static/resources/view/network/iface-dhcp-extra.js "$(dirname "$f")/iface-dhcp-extra.js"

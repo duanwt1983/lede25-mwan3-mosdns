@@ -7,8 +7,8 @@ SRC="$ROOT/files/ucode/template/themes/argon"
 DEST="$ROOT/package/luci-theme-argon/ucode/template/themes/argon"
 CSS_SRC="$ROOT/files/www/luci-static/argon/css/lede-brand-font.css"
 CSS_DEST="$ROOT/package/luci-theme-argon/htdocs/luci-static/argon/css/lede-brand-font.css"
-FONT_SRC="$ROOT/files/www/luci-static/argon/font/DuanNingXingShuTianGongTi-2.ttf"
-FONT_DEST="$ROOT/package/luci-theme-argon/htdocs/luci-static/argon/font/DuanNingXingShuTianGongTi-2.ttf"
+FONT_SRC="$ROOT/files/www/luci-static/argon/font/DuanNingMaoBiXingShuWanZhengBan-2.ttf"
+FONT_DEST="$ROOT/package/luci-theme-argon/htdocs/luci-static/argon/font/DuanNingMaoBiXingShuWanZhengBan-2.ttf"
 
 [ -d "$DEST" ] || { echo "argon theme: skip (package not cloned yet)"; exit 0; }
 
@@ -25,5 +25,5 @@ fi
 
 if [ -f "$FONT_SRC" ]; then
 	install -D -m 0644 "$FONT_SRC" "$FONT_DEST"
-	echo "argon theme: overlay DuanNingXingShuTianGongTi-2.ttf"
+	echo "argon theme: overlay DuanNingMaoBiXingShuWanZhengBan-2.ttf"
 fi
