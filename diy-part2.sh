@@ -102,7 +102,8 @@ chmod 755 files/usr/libexec/lede-wan-https files/etc/init.d/lede-wan-https \
   files/usr/libexec/lede-hwinfo files/etc/init.d/lede-hwinfo \
   files/etc/uci-defaults/10-lede-hwinfo \
   files/usr/libexec/lede-mgmt-bind files/etc/uci-defaults/40-lede-mgmt-bind \
-  files/etc/hotplug.d/iface/30-lede-mgmt-bind 2>/dev/null || true
+  files/etc/hotplug.d/iface/30-lede-mgmt-bind \
+  files/usr/libexec/lede-mwan3-setup 2>/dev/null || true
 
 # ubusd/rpcd default nofile=1024; long-open topology + WAN monitor exhausts it.
 lede_bump_ubus_nofile() {

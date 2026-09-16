@@ -8,6 +8,244 @@
 'require poll';
 
 const DEF_TRACK = ['223.5.5.5', '119.29.29.29'];
+const IPv4_RE = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
+
+function intToIpv4(n) {
+	n >>>= 0;
+	return [(n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255].join('.');
+}
+
+function prefixToNetmask(prefix) {
+	if (!(prefix >= 0 && prefix <= 32))
+		return null;
+	if (prefix === 0)
+		return 0;
+	return ((0xffffffff << (32 - prefix)) >>> 0);
+}
+
+function netmaskToPrefix(maskN) {
+	if (maskN == null)
+		return null;
+	let p = 0;
+	for (let bit = 31; bit >= 0; bit--) {
+		if (maskN & (1 << bit))
+			p++;
+		else
+			break;
+	}
+	if (prefixToNetmask(p) !== maskN)
+		return null;
+	return p;
+}
+
+function parseIpv4Octets(ip) {
+	const m = IPv4_RE.exec(String(ip || '').trim());
+	if (!m)
+		return null;
+	const octets = [];
+	for (let i = 1; i <= 4; i++) {
+		const o = +m[i];
+		if (o > 255)
+			return null;
+		octets.push(o);
+	}
+	return octets;
+}
+
+function ipv4ToInt(ip) {
+	const octets = parseIpv4Octets(ip);
+	if (!octets)
+		return null;
+	return ipv4OctetsToInt(octets);
+}
+
+function ipv4OctetsToInt(octets) {
+	return (((octets[0] << 24) | (octets[1] << 16) | (octets[2] << 8) | octets[3]) >>> 0);
+}
+
+function ip2n(s) {
+	const p = String(s || '').trim().split('.');
+	if (p.length !== 4)
+		return null;
+	const n = p.map(x => Number(x));
+	if (n.some(x => !isFinite(x) || x < 0 || x > 255))
+		return null;
+	return ((n[0] << 24) >>> 0) + (n[1] << 16) + (n[2] << 8) + n[3];
+}
+
+/* 合法 IPv4：四段十进制，每段 0–255（RFC 791 点分十进制表示） */
+function isValidIpv4Address(ip) {
+	return parseIpv4Octets(ip) !== null;
+}
+
+/* 可用作主机地址的单播 IPv4（排除 0/8、环回、组播、全 1 等保留用途） */
+function isUnicastHostIpv4(ip) {
+	const n = ipv4ToInt(ip);
+	if (n == null)
+		return false;
+	if (n === 0 || n === 0xffffffff)
+		return false;
+	if ((n & 0xff000000) === 0x7f000000)
+		return false;
+	if ((n & 0xf0000000) === 0xe0000000)
+		return false;
+	return true;
+}
+
+function parseSubnetCidr(cidr) {
+	const s = String(cidr || '').trim();
+	const slash = s.indexOf('/');
+	if (slash < 0)
+		return null;
+	const pref = +s.slice(slash + 1);
+	if (!(pref >= 0 && pref <= 32))
+		return null;
+	const maskN = prefixToNetmask(pref);
+	if (maskN == null)
+		return null;
+	const ipN = ipv4ToInt(s.slice(0, slash));
+	if (ipN == null)
+		return null;
+	const netN = (ipN & maskN) >>> 0;
+	const bcastN = (netN | (~maskN >>> 0)) >>> 0;
+	let firstHost = netN;
+	let lastHost = bcastN;
+	if (pref <= 30) {
+		firstHost = netN + 1;
+		lastHost = bcastN - 1;
+	}
+	return {
+		cidr: intToIpv4(netN) + '/' + pref,
+		prefix: pref,
+		maskN: maskN,
+		netN: netN,
+		bcastN: bcastN,
+		firstHost: firstHost,
+		lastHost: lastHost
+	};
+}
+
+function uciFirst(val) {
+	if (val == null || val === '')
+		return '';
+	if (Array.isArray(val))
+		return String(val[0] || '').trim();
+	return String(val).trim();
+}
+
+function normalizeCidrOption(val) {
+	val = uciFirst(val);
+	if (!val)
+		return '';
+	const token = val.split(/[\s,]+/)[0];
+	if (token.indexOf('/') >= 0)
+		return token;
+	return '';
+}
+
+function buildLanSubnetFromIpMask(ip, mask) {
+	ip = uciFirst(ip).split('/')[0];
+	mask = uciFirst(mask);
+	if (!ip)
+		return null;
+	if (!mask)
+		mask = '255.255.255.0';
+	if (/^\d{1,2}$/.test(mask) && +mask <= 32)
+		return parseSubnetCidr(ip + '/' + mask);
+	const maskN = ip2n(mask);
+	const ipN = ip2n(ip);
+	if (maskN == null || ipN == null)
+		return null;
+	const netN = (ipN & maskN) >>> 0;
+	const bcastN = (netN | (~maskN >>> 0)) >>> 0;
+	const pref = netmaskToPrefix(maskN);
+	if (pref == null)
+		return null;
+	let firstHost = netN;
+	let lastHost = bcastN;
+	if (pref <= 30) {
+		firstHost = netN + 1;
+		lastHost = bcastN - 1;
+	}
+	return {
+		cidr: intToIpv4(netN) + '/' + pref,
+		prefix: pref,
+		maskN: maskN,
+		netN: netN,
+		bcastN: bcastN,
+		firstHost: firstHost,
+		lastHost: lastHost
+	};
+}
+
+function resolveLanSubnetFromUci() {
+	let ip = '';
+	let mask = '';
+	uci.sections('network', 'interface').forEach(s => {
+		const n = s['.name'];
+		if (!n)
+			return;
+		if (n === 'lan' || s.device === 'br-lan' || s.ifname === 'br-lan') {
+			ip = ip || uciFirst(uci.get('network', n, 'ipaddr'));
+			mask = mask || uciFirst(uci.get('network', n, 'netmask'));
+		}
+	});
+	if (!ip) {
+		ip = uciFirst(uci.get('network', 'lan', 'ipaddr'));
+		mask = mask || uciFirst(uci.get('network', 'lan', 'netmask'));
+	}
+	let sub = buildLanSubnetFromIpMask(ip, mask);
+	if (sub)
+		return sub;
+	const mwan = normalizeCidrOption(uci.get('mwan3', 'default', 'src_ip'));
+	if (mwan)
+		return parseSubnetCidr(mwan);
+	return null;
+}
+
+function parseLanSubnetCidr(cidr) {
+	cidr = uciFirst(cidr);
+	if (!cidr || cidr.indexOf('/') < 0)
+		return null;
+	return parseSubnetCidr(cidr);
+}
+
+/*
+ * 同网段：与 LAN 子网网络号相同，即 (IP & 子网掩码) == 网络地址；
+ * 且落在该子网可分配给终端的主机地址范围内（排除网络地址/广播地址）。
+ */
+function isIpInLanSubnet(ip, lan) {
+	const hostN = ipv4ToInt(ip);
+	if (hostN == null || !lan)
+		return false;
+	if ((hostN & lan.maskN) !== lan.netN)
+		return false;
+	if (lan.prefix <= 30 && (hostN === lan.netN || hostN === lan.bcastN))
+		return false;
+	return true;
+}
+
+function evaluatePinIp(ip, lan) {
+	const s = String(ip || '').trim();
+	if (!s)
+		return { ok: false, reason: 'empty' };
+	const hostN = ip2n(s);
+	if (hostN == null)
+		return { ok: false, reason: 'invalid' };
+	if (!isUnicastHostIpv4(s))
+		return { ok: false, reason: 'invalid' };
+	if (!lan || lan.maskN == null || lan.netN == null)
+		return { ok: false, reason: 'invalid' };
+	if ((hostN & lan.maskN) !== lan.netN)
+		return { ok: false, reason: 'subnet', cidr: lan.cidr };
+	if (lan.prefix <= 30 && (hostN === lan.netN || hostN === lan.bcastN))
+		return { ok: false, reason: 'invalid' };
+	return { ok: true };
+}
+
+function canPinLanHostIp(ip, lan) {
+	return evaluatePinIp(ip, lan).ok;
+}
 
 function skipNet(name, proto, device) {
 	if (!name || name === 'loopback' || name === 'lo' || name === 'lan')
@@ -32,6 +270,33 @@ return view.extend({
 			if (ui.changes && typeof ui.changes.init === 'function')
 				ui.changes.init();
 			return data;
+		});
+	},
+
+	syncLanSubnetFromStatus(st) {
+		const cidr = st && st.lan_cidr ? String(st.lan_cidr).trim() : '';
+		this._lanCidr = cidr;
+		if (cidr)
+			this._lanSubnet = parseLanSubnetCidr(cidr) || this._lanSubnet;
+		if (!this._lanSubnet)
+			this._lanSubnet = resolveLanSubnetFromUci();
+		if (this._lanSubnet && this._lanSubnet.cidr)
+			this._lanCidr = this._lanSubnet.cidr;
+		return this._lanSubnet;
+	},
+
+	refreshLanSubnet(data) {
+		const st = data && data[3];
+		return this.syncLanSubnetFromStatus(st);
+	},
+
+	fetchLanSubnet() {
+		return fs.exec('/usr/libexec/lede-mwan3-setup', ['status']).then(r => {
+			const st = this.parseJson(r);
+			return this.syncLanSubnetFromStatus(st);
+		}).catch(() => {
+			this._lanSubnet = resolveLanSubnetFromUci();
+			return this._lanSubnet;
 		});
 	},
 
@@ -129,6 +394,25 @@ return view.extend({
 		return n;
 	},
 
+	hasLbConfig() {
+		if (!this.hasEnoughWans())
+			return false;
+		if (this.isLbActive(this._st))
+			return true;
+		if (this.countEnabledMwanIfaces() >= 2)
+			return true;
+		if (uci.sections('mwan3', 'interface').length >= 2)
+			return true;
+		let auto = false;
+		['interface', 'member', 'policy', 'rule'].forEach(t => {
+			uci.sections('mwan3', t).forEach(s => {
+				if (uci.get('mwan3', s['.name'], 'lede_auto') === '1')
+					auto = true;
+			});
+		});
+		return auto;
+	},
+
 	uiShouldRun() {
 		if (this.isLbActive(this._st))
 			return true;
@@ -182,7 +466,7 @@ return view.extend({
 		const btn = document.getElementById('lb-wipe');
 		if (!btn)
 			return;
-		btn.disabled = !this.hasEnoughWans() || !this.isLbActive();
+		btn.disabled = !this.hasLbConfig();
 	},
 
 	paintRunStatus() {
@@ -240,43 +524,40 @@ return view.extend({
 	refreshStatus() {
 		return fs.exec('/usr/libexec/lede-mwan3-setup', ['status']).then(r => {
 			this._st = this.parseJson(r);
+			this.syncLanSubnetFromStatus(this._st);
 			this.paintRunStatus();
 			return this._st;
 		}).catch(() => this._st);
 	},
 
-	waitRunning(want, tries) {
-		const self = this;
-		function step() {
-			return self.refreshStatus().then(st => {
-				const on = self.isLbActive(st);
-				if (on === want)
-					return st;
-				if (tries <= 0)
-					return st;
-				tries--;
-				return new Promise(ok => setTimeout(ok, 1000)).then(step);
-			});
-		}
-		return step();
+	reloadMwan3() {
+		if (typeof uci.unload === 'function')
+			uci.unload('mwan3');
+		return uci.load('mwan3');
 	},
 
-	afterChange() {
-		return uci.load('mwan3').then(() => {
+	softRefresh() {
+		return this.fetchLanSubnet().then(() => this.reloadMwan3()).then(() => {
 			this._wans = this.collectWans(this._nets);
-			return this.refreshStatus().then(() => {
-				if (this._host)
-					this.renderPageContent(this._host);
-				this.paintRunStatus();
-				const hashSel = document.getElementById('lb-hash-mode');
-				if (hashSel) {
-					hashSel.value = uci.get('mwan3', 'globals', 'lede_lb_hash') === 'ip' ? 'ip' : 'flow';
-				}
-				this.syncStickyControls();
-				if (ui.changes && typeof ui.changes.init === 'function')
-					ui.changes.init();
-			});
+			return this.refreshStatus();
+		}).then(() => {
+			if (!this.hasLbConfig())
+				this._wantEnable = false;
+			if (this._host) {
+				delete this._host.dataset.lbDirtyBound;
+				this.renderPageContent(this._host);
+			}
+			this.paintRunStatus();
+			this.updateWipeButton();
+			this.scheduleFooterLock();
+			if (ui.changes && typeof ui.changes.init === 'function')
+				ui.changes.init();
 		});
+	},
+
+	isFormDirty() {
+		const root = this._mapNode;
+		return !!(root && root.querySelector('.cbi-dirty'));
 	},
 
 	ok(msg) {
@@ -290,7 +571,7 @@ return view.extend({
 	bumpDirty() {
 		if (ui.changes && typeof ui.changes.init === 'function')
 			ui.changes.init();
-		const el = this._mapNode && this._mapNode.querySelector('[data-name="lede_cfg_rev"] input');
+		const el = this._mapNode && this._mapNode.querySelector('[data-name="lede_lb_sync"] input');
 		if (el) {
 			el.value = String(Date.now());
 			el.dispatchEvent(new Event('change', { bubbles: true }));
@@ -298,13 +579,91 @@ return view.extend({
 	},
 
 	bindDirty(root) {
-		if (!root)
+		if (!root || root.dataset.lbDirtyBound)
 			return;
+		root.dataset.lbDirtyBound = '1';
 		const self = this;
 		root.querySelectorAll('input,select').forEach(el => {
 			el.addEventListener('change', () => self.bumpDirty());
 			el.addEventListener('input', () => self.bumpDirty());
 		});
+	},
+
+	normTracks(tracks) {
+		return (tracks || []).slice().map(String).sort();
+	},
+
+	ifaceKey(ifaces) {
+		return (ifaces || []).slice()
+			.sort((a, b) => a.name.localeCompare(b.name))
+			.map(i => i.name + ':' + i.weight)
+			.join('|');
+	},
+
+	captureFormBaseline() {
+		this._baselineSnap = this.readForm();
+	},
+
+	hasStructuralChange(f, base) {
+		if (!base)
+			return true;
+		if (this.ifaceKey(f.ifaces) !== this.ifaceKey(base.ifaces))
+			return true;
+		if (this.normTracks(f.tracks).join('|') !== this.normTracks(base.tracks).join('|'))
+			return true;
+		if (!!f.sticky !== !!base.sticky)
+			return true;
+		if (String(f.timeout) !== String(base.timeout))
+			return true;
+		if (String(f.interval) !== String(base.interval))
+			return true;
+		if (String(f.down) !== String(base.down))
+			return true;
+		if (String(f.up) !== String(base.up))
+			return true;
+		return false;
+	},
+
+	formChanged(f) {
+		const base = this._baselineSnap;
+		if (!base)
+			return true;
+		if (!!f.enabled !== !!base.enabled)
+			return true;
+		if (this.hasStructuralChange(f, base))
+			return true;
+		if (f.hashMode !== base.hashMode)
+			return true;
+		return false;
+	},
+
+	needsFormSave(f) {
+		return this.isFormDirty() || this.formChanged(f);
+	},
+
+	resolveBackendAction(f) {
+		const running = this.isLbActive(this._st);
+		const base = this._baselineSnap;
+
+		if (!f.enabled) {
+			if (running)
+				return 'stop';
+			return 'none';
+		}
+
+		if (f.ifaces.length < 2)
+			return 'invalid';
+
+		if (!running)
+			return 'apply';
+
+		if (!base)
+			return 'apply';
+		if (this.hasStructuralChange(f, base))
+			return 'apply';
+		if (f.hashMode !== base.hashMode)
+			return 'restart';
+		return 'none';
 	},
 
 	readForm() {
@@ -346,15 +705,46 @@ return view.extend({
 
 	commitProbeToUci(f) {
 		f = f || this.readForm();
-		uci.set('mwan3', 'globals', 'lede_lb_hash', f.hashMode === 'ip' ? 'ip' : 'flow');
-		uci.set('mwan3', 'default', 'sticky', (f.sticky && f.hashMode === 'ip') ? '1' : '0');
-		uci.set('mwan3', 'default', 'timeout', f.timeout);
+		if (uci.get('mwan3', 'globals') != null)
+			uci.set('mwan3', 'globals', 'lede_lb_hash', f.hashMode === 'ip' ? 'ip' : 'flow');
+		if (uci.get('mwan3', 'default') != null) {
+			uci.set('mwan3', 'default', 'sticky', (f.sticky && f.hashMode === 'ip') ? '1' : '0');
+			uci.set('mwan3', 'default', 'timeout', f.timeout);
+		}
 		uci.sections('mwan3', 'interface').forEach(s => {
 			const name = s['.name'];
 			uci.set('mwan3', name, 'interval', f.interval);
 			uci.set('mwan3', name, 'down', f.down);
 			uci.set('mwan3', name, 'up', f.up);
 		});
+	},
+
+	restartBackend() {
+		this._phase = 'starting';
+		this._phaseErr = '';
+		this.paintRunStatus();
+		return fs.exec('/usr/libexec/lede-mwan3-setup', ['restart']).then(r => {
+			const j = this.parseJson(r);
+			if (!j.ok)
+				throw new Error(j.error || _('重启失败'));
+			this._phase = null;
+			return this.refreshStatus();
+		}).catch(e => {
+			this._phase = 'start_fail';
+			this._phaseErr = (e && e.message) || _('重启失败');
+			throw e;
+		});
+	},
+
+	runBackendAction() {
+		const action = this._backendAction;
+		if (!action || action === 'none')
+			return Promise.resolve();
+		if (action === 'stop')
+			return this.applyBackend(Object.assign({}, this._pendingApply, { enabled: false }));
+		if (action === 'restart')
+			return this.restartBackend();
+		return this.applyBackend(this._pendingApply);
 	},
 
 	buildApplyArgs(f) {
@@ -372,11 +762,11 @@ return view.extend({
 		return args;
 	},
 
-	applyBackend() {
+	applyBackend(form) {
 		if (!this.hasEnoughWans())
 			throw new Error(_('系统中 WAN 口少于 2 个，无法配置多线负载'));
 
-		const f = this.readForm();
+		const f = form || this.readForm();
 		const running = this.isLbActive(this._st);
 
 		if (!f.enabled) {
@@ -389,7 +779,7 @@ return view.extend({
 				const j = this.parseJson(r);
 				if (!j.ok)
 					throw new Error(j.error || _('关闭失败'));
-				return this.waitRunning(false, 20);
+				return this.refreshStatus();
 			});
 		}
 
@@ -404,18 +794,9 @@ return view.extend({
 			const j = this.parseJson(r);
 			if (!j.ok)
 				throw new Error(j.error || _('应用失败'));
-			return this.waitRunning(true, 45).then(st => {
-				if (!this.isLbActive(st) && f.ifaces.length >= 2) {
-					this._st = Object.assign({}, st || {}, {
-						ok: true,
-						running: 0,
-						service: Number(st && st.service) || 0,
-						enabled: f.ifaces.length
-					});
-				}
-				this._phase = null;
-				this._phaseErr = '';
-			});
+			this._phase = null;
+			this._phaseErr = '';
+			return this.refreshStatus();
 		}).catch(e => {
 			this._wantEnable = false;
 			this._phase = 'start_fail';
@@ -424,43 +805,54 @@ return view.extend({
 		});
 	},
 
-	refreshStatusUntilStable() {
-		const self = this;
-		function step(left) {
-			return self.refreshStatus().then(st => {
-				if (self.isLbActive(st) || !self._wantEnable || left <= 0)
-					return st;
-				return new Promise(ok => setTimeout(ok, 1000)).then(() => step(left - 1));
-			});
-		}
-		return step(20);
-	},
-
 	handleSave(ev) {
 		if (!this.hasEnoughWans()) {
 			this.fail(null, _('系统中 WAN 口少于 2 个，无法配置多线负载'));
 			return Promise.reject(new Error('wan'));
 		}
-		const self = this;
+		const f = this.readForm();
+		if (!this.needsFormSave(f))
+			return Promise.resolve();
+		if (!this.isFormDirty())
+			this.bumpDirty();
+		this.commitProbeToUci(f);
 		return this.map.save().then(function() {
-			self.commitProbeToUci();
 			return uci.save();
 		});
 	},
 
 	handleSaveApply(ev, mode) {
 		const self = this;
+		if (!this.hasEnoughWans()) {
+			this.fail(null, _('系统中 WAN 口少于 2 个，无法配置多线负载'));
+			return Promise.reject(new Error('wan'));
+		}
+		const f = this.readForm();
+		const action = this.resolveBackendAction(f);
+
+		if (action === 'invalid') {
+			this.fail(null, _('请至少选择两条 WAN 后再启用多线负载'));
+			return Promise.reject(new Error('wan'));
+		}
+
+		this._pendingApply = f;
+		this._backendAction = action;
+
 		return this.handleSave(ev).then(function() {
 			return ui.changes.apply(mode == '0');
 		}).then(function() {
-			return self.applyBackend();
+			if (action === 'none')
+				return null;
+			return self.runBackendAction();
 		}).then(function() {
-			return self.refreshStatusUntilStable();
-		}).then(function() {
-			return self.afterChange();
+			self._pendingApply = null;
+			self._backendAction = null;
+			return self.softRefresh();
 		}).catch(function(e) {
+			self._pendingApply = null;
+			self._backendAction = null;
 			self.fail(e, _('保存并应用失败'));
-			return self.afterChange();
+			return self.softRefresh();
 		});
 	},
 
@@ -469,29 +861,7 @@ return view.extend({
 			this.fail(null, _('系统中 WAN 口少于 2 个，无法配置多线负载'));
 			return Promise.reject(new Error('wan'));
 		}
-		return this.map.reset().then(() => this.afterChange());
-	},
-
-	stopLb(ev) {
-		if (ev)
-			ev.preventDefault();
-		const btn = document.getElementById('lb-stop');
-		if (btn)
-			btn.classList.add('spinning');
-		return fs.exec('/usr/libexec/lede-mwan3-setup', ['stop']).then(r => {
-			const j = this.parseJson(r);
-			if (!j.ok)
-				throw new Error(j.error || _('关闭失败'));
-			return this.waitRunning(false, 20).then(st => {
-				if (this.isLbActive(st))
-					throw new Error(_('已发出关闭，但服务仍在运行'));
-				this.ok(_('已关闭'));
-				return this.afterChange();
-			});
-		}).catch(e => this.fail(e, _('关闭失败'))).finally(() => {
-			if (btn)
-				btn.classList.remove('spinning');
-		});
+		return this.super('handleReset', [ev]).then(() => this.softRefresh());
 	},
 
 	wanChoices() {
@@ -571,36 +941,138 @@ return view.extend({
 			args = ['extra', 'isp', '--set', set, '--iface', ifc];
 		} else {
 			const src = String((document.getElementById('lb-pin-val') || {}).value || '').trim();
-			if (!src) {
-				this.fail(null, _('请填写源 IP'));
+			if (!this._pinIpValid)
 				return;
-			}
 			args = ['extra', 'pin', '--src', src, '--iface', ifc];
 		}
 		return fs.exec('/usr/libexec/lede-mwan3-setup', args).then(r => {
 			const j = this.parseJson(r);
 			if (!j.ok)
 				throw new Error(j.error || _('添加失败'));
-			this.ok(_('已添加'));
-			return this.afterChange();
+			return this.softRefresh();
 		}).catch(e => this.fail(e, _('添加失败')));
 	},
 
+	canAddRule() {
+		if (!this.hasEnoughWans())
+			return false;
+		const kind = String((document.getElementById('lb-kind') || {}).value || 'ip');
+		const ifc = String((document.getElementById('lb-rule-wan') || {}).value || '');
+		if (!ifc)
+			return false;
+		if (kind === 'mac') {
+			const mac = String((document.getElementById('lb-pin-mac') || {}).value || '').trim();
+			return /^([0-9a-fA-F]{2}[:-]){5}[0-9a-fA-F]{2}$/.test(mac);
+		}
+		if (kind === 'dest') {
+			const set = String((document.getElementById('lb-isp-set') || {}).value || '');
+			return !!set;
+		}
+		const src = String((document.getElementById('lb-pin-val') || {}).value || '').trim();
+		if (!src || !this._pinIpValid)
+			return false;
+		return true;
+	},
+
+	paintPinIpState() {
+		const kind = String((document.getElementById('lb-kind') || {}).value || 'ip');
+		const inp = document.getElementById('lb-pin-val');
+		if (kind !== 'ip' || !inp) {
+			if (inp) {
+				inp.classList.remove('lb-ip-bad');
+				inp.removeAttribute('aria-invalid');
+			}
+			return;
+		}
+		const src = String(inp.value || '').trim();
+		if (!src || this._pinIpValid) {
+			inp.classList.remove('lb-ip-bad');
+			inp.removeAttribute('aria-invalid');
+			return;
+		}
+		inp.classList.add('lb-ip-bad');
+		inp.setAttribute('aria-invalid', 'true');
+	},
+
+	schedulePinIpCheck() {
+		if (this._pinIpTimer)
+			clearTimeout(this._pinIpTimer);
+		this._pinIpTimer = setTimeout(L.bind(this.runPinIpCheck, this), 250);
+	},
+
+	runPinIpCheck() {
+		const kind = String((document.getElementById('lb-kind') || {}).value || 'ip');
+		const inp = document.getElementById('lb-pin-val');
+		if (kind !== 'ip' || !inp)
+			return Promise.resolve();
+		const src = String(inp.value || '').trim();
+		if (!src) {
+			this._pinIpValid = false;
+			this.paintPinIpState();
+			this.updateRuleAddButton();
+			return Promise.resolve();
+		}
+		if (!IPv4_RE.test(src) || !isUnicastHostIpv4(src)) {
+			this._pinIpValid = false;
+			this.paintPinIpState();
+			this.updateRuleAddButton();
+			return Promise.resolve();
+		}
+		return fs.exec('/usr/libexec/lede-mwan3-setup', ['check-pin-ip', '--src', src]).then(r => {
+			const cur = String((document.getElementById('lb-pin-val') || {}).value || '').trim();
+			if (cur !== src)
+				return null;
+			const j = this.parseJson(r);
+			this._pinIpValid = !!(j && j.ok);
+			this.paintPinIpState();
+			this.updateRuleAddButton();
+			return null;
+		}).catch(() => {
+			this._pinIpValid = false;
+			this.paintPinIpState();
+			this.updateRuleAddButton();
+			return null;
+		});
+	},
+
+	updateRuleAddButton() {
+		const btn = document.getElementById('lb-rule-add');
+		if (!btn)
+			return;
+		btn.disabled = !this.canAddRule();
+	},
+
 	ruleMid(kind) {
-		if (kind === 'mac')
-			return E('input', {
+		const self = this;
+		if (kind === 'mac') {
+			const inp = E('input', {
 				type: 'text', id: 'lb-pin-mac', placeholder: 'aa:bb:cc:dd:ee:ff', 'class': 'lb-mac'
 			});
-		if (kind === 'dest')
-			return E('select', { id: 'lb-isp-set', 'class': 'lb-sel' }, [
+			inp.addEventListener('input', L.bind(self.updateRuleAddButton, self));
+			return inp;
+		}
+		if (kind === 'dest') {
+			const sel = E('select', { id: 'lb-isp-set', 'class': 'lb-sel' }, [
 				E('option', { value: 'isp_chinanet' }, _('中国电信')),
 				E('option', { value: 'isp_unicom' }, _('中国联通')),
 				E('option', { value: 'isp_cmcc' }, _('中国移动')),
 				E('option', { value: 'isp_other' }, _('其它'))
 			]);
-		return E('input', {
-			type: 'text', id: 'lb-pin-val', placeholder: '192.168.8.10', 'class': 'lb-ip'
+			sel.addEventListener('change', L.bind(self.updateRuleAddButton, self));
+			return sel;
+		}
+		const hint = self._lanCidr || (self._lanSubnet && self._lanSubnet.cidr) || '192.168.9.0/24';
+		const inp = E('input', {
+			type: 'text', id: 'lb-pin-val', placeholder: hint, 'class': 'lb-ip',
+			title: _('须为 LAN 同网段内可分配给终端的主机 IPv4 地址')
 		});
+		inp.addEventListener('input', L.bind(function() {
+			self.schedulePinIpCheck();
+		}, self));
+		inp.addEventListener('blur', L.bind(function() {
+			self.runPinIpCheck();
+		}, self));
+		return inp;
 	},
 
 	extraDel(ev, name) {
@@ -616,19 +1088,14 @@ return view.extend({
 			const j = this.parseJson(r);
 			if (!j.ok)
 				throw new Error(j.error || _('删除失败'));
-			this.ok(_('已删除'));
-			return this.afterChange();
+			return this.softRefresh();
 		}).catch(e => this.fail(e, _('删除失败')));
 	},
 
 	wipeLb(ev) {
 		if (ev)
 			ev.preventDefault();
-		if (!this.hasEnoughWans())
-			return;
-		if (!this.isLbActive(this._st))
-			return;
-		if (!window.confirm(_('停止服务并删除全部规则，确定？')))
+		if (!this.hasLbConfig())
 			return;
 		const btn = document.getElementById('lb-wipe');
 		if (btn)
@@ -637,8 +1104,7 @@ return view.extend({
 			const j = this.parseJson(r);
 			if (!j.ok)
 				throw new Error(j.error || _('删除失败'));
-			this.ok(_('已删除'));
-			return this.afterChange();
+			return this.softRefresh();
 		}).catch(e => this.fail(e, _('删除失败'))).finally(() => {
 			if (btn)
 				btn.classList.remove('spinning');
@@ -703,11 +1169,6 @@ return view.extend({
 		return wrap;
 	},
 
-	stickyDefaultOn() {
-		const stickyUci = uci.get('mwan3', 'default', 'sticky');
-		return !(stickyUci === '0' || stickyUci === false);
-	},
-
 	syncStickyControls() {
 		const can = this.hasEnoughWans();
 		const modeEl = document.getElementById('lb-hash-mode');
@@ -716,7 +1177,9 @@ return view.extend({
 			return;
 		const ip = !!(modeEl && modeEl.value === 'ip');
 		stickyEl.disabled = !can || !ip;
-		if (!ip)
+		if (ip)
+			stickyEl.checked = true;
+		else
 			stickyEl.checked = false;
 		if (!can)
 			stickyEl.setAttribute('title', _('系统中 WAN 口少于 2 个，无法配置'));
@@ -760,7 +1223,7 @@ return view.extend({
 		const hashMode = uci.get('mwan3', 'globals', 'lede_lb_hash') === 'ip' ? 'ip' : 'flow';
 		const hashSelWrap = this.hashSelect(hashMode);
 		const sticky = E('input', { type: 'checkbox', id: 'lb-sticky' });
-		sticky.checked = (hashMode === 'ip') && this.stickyDefaultOn();
+		sticky.checked = (hashMode === 'ip');
 		sticky.addEventListener('change', L.bind(this.bumpDirty, this));
 		const timeout = uci.get('mwan3', 'default', 'timeout') || '600';
 		const firstIf = (uci.sections('mwan3', 'interface')[0] || {})['.name'];
@@ -769,7 +1232,7 @@ return view.extend({
 		const up = firstIf ? (uci.get('mwan3', firstIf, 'up') || '3') : '3';
 
 		const enableCk = E('input', { type: 'checkbox', id: 'lb-enable' });
-		enableCk.checked = running;
+		enableCk.checked = canConfig && (this.isLbActive(this._st) || !!this._wantEnable);
 		enableCk.disabled = !canConfig;
 		enableCk.addEventListener('change', L.bind(this.bumpDirty, this));
 
@@ -896,19 +1359,28 @@ return view.extend({
 			E('option', { value: 'dest' }, _('目的IP'))
 		]);
 		const mid = E('span', { id: 'lb-mid', 'class': 'lb-mid' }, this.ruleMid('ip'));
-		kind.addEventListener('change', () => {
+		kind.addEventListener('change', L.bind(function() {
 			const k = kind.value;
 			mid.innerHTML = '';
 			mid.appendChild(this.ruleMid(k));
-		});
+			this._pinIpValid = false;
+			if (k === 'ip')
+				this.runPinIpCheck();
+			else
+				this.updateRuleAddButton();
+		}, this));
+		const ruleWan = this.wanSelect('lb-rule-wan');
+		ruleWan.addEventListener('change', L.bind(this.updateRuleAddButton, this));
 		body.appendChild(this.sectionCard(_('分流规则'), E('div', {}, [
 			E('div', { 'class': 'lb-rule-form' }, [
 				kind,
 				mid,
 				E('span', { 'class': 'lb-arrow' }, '→'),
-				this.wanSelect('lb-rule-wan'),
+				ruleWan,
 				E('button', {
+					id: 'lb-rule-add',
 					'class': 'cbi-button cbi-button-action',
+					disabled: true,
 					click: L.bind(this.extraAdd, this)
 				}, _('添加'))
 			]),
@@ -940,16 +1412,22 @@ return view.extend({
 			])
 		])));
 
+		this._pinIpValid = false;
+		this.updateRuleAddButton();
+		this.runPinIpCheck();
+
 		if (!canConfig)
 			body.classList.add('lb-root-disabled');
 		this.bindDirty(body);
 		this.scheduleFooterLock();
+		this.captureFormBaseline();
 	},
 
 	render(data) {
 		this._lastData = data;
 		this._nets = data && data[2];
 		this._st = data && data[3] && data[3].ok === false ? { running: 0 } : (data && data[3]) || { running: 0 };
+		this.syncLanSubnetFromStatus(this._st);
 		this._wans = this.collectWans(this._nets);
 
 		const m = new form.Map('mwan3', _('多线负载'));
@@ -959,19 +1437,22 @@ return view.extend({
 		sg.anonymous = true;
 		sg.addremove = false;
 
-		const oRev = sg.option(form.Value, 'lede_cfg_rev', ' ');
-		oRev.datatype = 'uinteger';
-		oRev.cfgvalue = () => '0';
-		oRev.write = function() {};
-		oRev.rmempty = true;
+		const oSync = sg.option(form.Value, 'lede_lb_sync', ' ');
+		oSync.datatype = 'uinteger';
+		oSync.cfgvalue = () => uci.get('mwan3', 'globals', 'lede_lb_sync') || '0';
+		oSync.write = L.bind(function(section, value) {
+			this.commitProbeToUci();
+			uci.set('mwan3', section, 'lede_lb_sync', String(value || '0'));
+		}, this);
+		oSync.rmempty = true;
 
 		const oBody = sg.option(form.DummyValue, 'lede_lb_body', null);
 		oBody.cfgvalue = function() { return ''; };
 		oBody.write = function() {};
 		oBody.render = L.bind(function() {
-			const host = E('div', { id: 'lb-root', 'class': 'lb-page' });
-			this._host = host;
-			return host;
+			if (!this._host)
+				this._host = E('div', { id: 'lb-root', 'class': 'lb-page' });
+			return this._host;
 		}, this);
 
 		return m.render().then(L.bind(function(mapNode) {
@@ -998,7 +1479,7 @@ return view.extend({
 				}
 				.lb-wrap .cbi-section > h3,
 				.lb-wrap .cbi-section > .cbi-section-desc { display: none !important; }
-				.lb-wrap [data-name="lede_cfg_rev"] { display: none !important; }
+				.lb-wrap [data-name="lede_lb_sync"] { display: none !important; }
 				.lb-wrap [data-name="lede_lb_body"] .cbi-value-title { display: none !important; }
 				.lb-wrap [data-name="lede_lb_body"] .cbi-value-field { width: 100%; max-width: none; padding: 0; }
 				.lb-top-mods {
@@ -1218,6 +1699,14 @@ return view.extend({
 				.lb-wrap table.lb-rule-table .td:nth-child(4) { width: 12%; }
 				.lb-mid { display: inline-flex; min-width: 12em; }
 				.lb-mid input, .lb-mid select { width: 100%; }
+				#lb-pin-val.lb-ip-bad {
+					color: var(--danger-color, #c0392b) !important;
+					-webkit-text-fill-color: var(--danger-color, #c0392b);
+					caret-color: var(--danger-color, #c0392b);
+				}
+				#lb-rule-add:disabled {
+					opacity: 0.45; cursor: not-allowed; pointer-events: none;
+				}
 				.lb-arrow { font-weight: 700; opacity: 0.55; padding: 0 2px; }
 				.lb-k { min-width: 3.2em; font-weight: 600; }
 				.lb-field { display:inline-flex; align-items:center; gap:6px; white-space:nowrap; }
