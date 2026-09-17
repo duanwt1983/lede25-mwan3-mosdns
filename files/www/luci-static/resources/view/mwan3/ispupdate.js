@@ -218,11 +218,18 @@ return view.extend({
 		o = s.option(form.Button, '_update', null, _('检查并更新运营商地址库。'));
 		o.title = _('地址库更新');
 		o.inputtitle = _('检查并更新');
-		o.inputstyle = 'apply';
-		o.onclick = function() {
+		o.inputstyle = 'action';
+		o.onclick = function(ev) {
+			if (ev) {
+				ev.preventDefault();
+				ev.stopPropagation();
+			}
+			/* Save form to UCI without ui.changes.apply() — that triggers LuCI reload countdown. */
 			return m.save().then(function() {
 				return uci.save();
 			}).then(function() {
+				if (ui.changes && typeof ui.changes.displayChangeIndicator === 'function')
+					ui.changes.displayChangeIndicator(false);
 				return self.handleUpdate();
 			});
 		};
