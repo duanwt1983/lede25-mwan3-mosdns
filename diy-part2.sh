@@ -103,7 +103,9 @@ chmod 755 files/usr/libexec/lede-wan-https files/etc/init.d/lede-wan-https \
   files/etc/uci-defaults/10-lede-hwinfo \
   files/usr/libexec/lede-mgmt-bind files/etc/uci-defaults/40-lede-mgmt-bind \
   files/etc/hotplug.d/iface/30-lede-mgmt-bind \
-  files/usr/libexec/lede-mwan3-setup 2>/dev/null || true
+  files/usr/libexec/lede-mwan3-setup \
+  files/usr/libexec/isp-ip-update files/etc/init.d/isp-ip-update \
+  files/usr/libexec/mosdns-fix-dns-forward 2>/dev/null || true
 
 # ubusd/rpcd default nofile=1024; long-open topology + WAN monitor exhausts it.
 lede_bump_ubus_nofile() {
@@ -255,6 +257,17 @@ if [ -f "$_LUCI_MWAN3_PATCH/overview.js" ]; then
 fi
 if [ -f "$_LUCI_MWAN3_PATCH/apply-isp.sh" ]; then
   sh "$_LUCI_MWAN3_PATCH/apply-isp.sh" .
+fi
+if [ -f files/www/luci-static/resources/view/mwan3/ispupdate.js ]; then
+  _ISPJS="$(find package/luci-app-mwan3 -path '*/view/mwan3/ispupdate.js' -type f 2>/dev/null | head -n 1)"
+  if [ -z "$_ISPJS" ]; then
+    mkdir -p package/luci-app-mwan3/htdocs/luci-static/resources/view/mwan3 2>/dev/null || true
+    _ISPJS="package/luci-app-mwan3/htdocs/luci-static/resources/view/mwan3/ispupdate.js"
+  fi
+  if [ -d "$(dirname "$_ISPJS")" ]; then
+    cp files/www/luci-static/resources/view/mwan3/ispupdate.js "$_ISPJS"
+    echo "mwan3 isp: installed $_ISPJS"
+  fi
 fi
 if [ -f files/www/luci-static/resources/view/mwan3/network/globals.js ]; then
   _GJS="$(find package/luci-app-mwan3 -path '*/view/mwan3/network/globals.js' -type f | head -n 1)"
@@ -637,8 +650,16 @@ for _rel in \
   usr/share/ucode/luci/template/themes/argon/header_login.ut \
   usr/share/ucode/luci/template/themes/argon/sysauth.ut \
   usr/share/luci/menu.d/zzz-luci-mwan3-tab.json \
+  usr/share/luci/menu.d/luci-mwan3-isp.json \
+  usr/share/rpcd/acl.d/luci-mwan3-isp.json \
+  usr/share/rpcd/ucode/luci.isp-ip.uc \
+  usr/libexec/isp-ip-update \
+  etc/init.d/isp-ip-update \
+  etc/config/isp-ip \
+  usr/libexec/mosdns-fix-dns-forward \
   usr/libexec/lede-mwan3-setup \
-  lib/functions/lede-mwan3.sh
+  lib/functions/lede-mwan3.sh \
+  www/luci-static/resources/view/mwan3/ispupdate.js
 do
   assert_overlay "$_rel"
 done
@@ -675,6 +696,16 @@ echo "package OK: $_ARGON_CSS"
 echo "package OK: $_ARGON_HDR"
 assert_pkg_file 'lede-mwan3-setup' \
   package/mwan3 -path '*/usr/libexec/lede-mwan3-setup'
+_ISPJS_PKG=$(find package/luci-app-mwan3 -path '*/view/mwan3/ispupdate.js' -type f 2>/dev/null | head -n 1 || true)
+[ -n "$_ISPJS_PKG" ] || { echo "ERROR: ispupdate.js not installed in luci-app-mwan3 package"; exit 1; }
+assert_grep 'luci.ispip' "$_ISPJS_PKG"
+assert_grep 'syncCron' "$_ISPJS_PKG"
+assert_grep 'ui.changes.apply' "$_ISPJS_PKG"
+echo "package OK: $_ISPJS_PKG"
+assert_grep 'luci.ispip' "$_LEDE_FILES/usr/share/rpcd/ucode/luci.isp-ip.uc"
+assert_grep 'luci.ispip' "$_LEDE_FILES/usr/share/rpcd/acl.d/luci-mwan3-isp.json"
+assert_grep 'sync-cron' "$_LEDE_FILES/usr/libexec/isp-ip-update"
+assert_grep "option enabled '0'" "$_LEDE_FILES/etc/config/mosdns"
 _MWAN3_TAB_PKG=$(find package/luci-app-mwan3 \
   -path '*/menu.d/zzz-luci-mwan3-tab.json' -type f 2>/dev/null | head -n 1 || true)
 [ -n "$_MWAN3_TAB_PKG" ] || _MWAN3_TAB_PKG=$(find package/luci-app-mwan3 \

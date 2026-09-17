@@ -132,6 +132,20 @@ for key, body in data.items():
         if isinstance(uci, list) and "mwan3" not in uci:
             uci.append("mwan3")
             changed = True
+        ubus = body.setdefault(side, {}).setdefault("ubus", {})
+        isp_rpc = ubus.setdefault("luci.ispip", [])
+        if side == "read" and "get_update_log" not in isp_rpc:
+            isp_rpc.append("get_update_log")
+            changed = True
+        if side == "write" and "start_update" not in isp_rpc:
+            isp_rpc.append("start_update")
+            changed = True
+        if "/var/log/isp-ip-update.log" not in files:
+            files["/var/log/isp-ip-update.log"] = ["read"]
+            changed = True
+        if "/var/run/isp-ip-update.status" not in files:
+            files["/var/run/isp-ip-update.status"] = ["read"]
+            changed = True
 if changed:
     p.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     print("acl isp-ip-update", p)
@@ -195,4 +209,28 @@ if [ -f "$TAB_OVR" ]; then
 	mkdir -p "$APP/root/usr/share/luci/menu.d"
 	cp "$TAB_OVR" "$APP/root/usr/share/luci/menu.d/zzz-luci-mwan3-tab.json"
 	echo "menu override: zzz-luci-mwan3-tab.json"
+fi
+
+# ISP address library page + RPC (also in files/ overlay; copy into package for compile self-check).
+FILES_OVR="$(cd "$(dirname "$0")/../.." && pwd)/files"
+PKG_ROOT="$APP/root"
+[ -d "$PKG_ROOT" ] || PKG_ROOT="$APP"
+HTDOCS="$APP/htdocs/luci-static/resources/view/mwan3"
+[ -d "$APP/htdocs" ] || HTDOCS="$PKG_ROOT/www/luci-static/resources/view/mwan3"
+for rel in \
+	usr/share/luci/menu.d/luci-mwan3-isp.json \
+	usr/share/rpcd/acl.d/luci-mwan3-isp.json \
+	usr/share/rpcd/ucode/luci.isp-ip.uc
+do
+	src="$FILES_OVR/$rel"
+	[ -f "$src" ] || continue
+	dst="$PKG_ROOT/$rel"
+	mkdir -p "$(dirname "$dst")"
+	cp "$src" "$dst"
+	echo "isp bundle: $rel"
+done
+if [ -f "$FILES_OVR/www/luci-static/resources/view/mwan3/ispupdate.js" ]; then
+	mkdir -p "$HTDOCS"
+	cp "$FILES_OVR/www/luci-static/resources/view/mwan3/ispupdate.js" "$HTDOCS/ispupdate.js"
+	echo "isp bundle: ispupdate.js"
 fi

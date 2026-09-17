@@ -79,7 +79,11 @@ sync_cron() {
 		echo "0 $hour * * $week /bin/sh /usr/libexec/isp-ip-update" >> /etc/crontabs/root
 	fi
 	/etc/init.d/cron restart >/dev/null 2>&1 || true
-	log "cron synced auto=$auto ${hour:-3}:00 week=${week:-*}"
+	if [ "$auto" = "1" ]; then
+		log "cron synced auto=1 ${hour:-3}:00 week=${week:-*}"
+	else
+		log "cron synced auto=0 removed"
+	fi
 	echo "OK cron" > "$STATUS"
 	echo "计划任务已同步"
 }
