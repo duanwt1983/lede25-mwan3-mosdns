@@ -373,8 +373,22 @@ reload_mwan3() {
 maybe_reload() {
 	[ "$(uci -q get mwan3.globals.lede_lb_paused)" = "1" ] && return 0
 	if /etc/init.d/mwan3 running >/dev/null 2>&1; then
-		reload_mwan3
+		hot_reload_mwan3
 	fi
+}
+
+hot_reload_mwan3() {
+	[ "$(uci -q get mwan3.globals.lede_lb_paused)" = "1" ] && return 0
+	/etc/init.d/mwan3 running >/dev/null 2>&1 || return 0
+	# The nft-enabled mwan3 reload path rebuilds the rules in one atomic
+	# transaction and leaves trackers/interfaces running. Do not fall back
+	# to stop+start: a failed hot delete must be reported, not cause an outage.
+	nft list table inet mwan3 >/dev/null 2>&1 || return 1
+	/etc/init.d/mwan3 reload >>/tmp/lede-mwan3-setup.log 2>&1 && return 0
+	# A reload immediately after replacing auto-generated sections may race
+	# with procd's config-change processing. Retry only the hot reload once.
+	sleep 1
+	/etc/init.d/mwan3 reload >>/tmp/lede-mwan3-setup.log 2>&1
 }
 
 cmd_extra_sync() {
@@ -413,7 +427,10 @@ cmd_extra_sync() {
 		sync_mac_rules
 	fi
 	if [ "$SYNC_CHANGED" = 1 ]; then
-		maybe_reload
+		if ! maybe_reload; then
+			printf '{"ok":false,"error":"配置已保存，但 mwan3 热更新失败；未执行服务重启"}\n'
+			exit 1
+		fi
 	fi
 	printf '{"ok":true,"changed":%s}\n' "$SYNC_CHANGED"
 	exit 0
@@ -479,7 +496,10 @@ cmd_extra_pin() {
 	uci set "mwan3.$rname.lede_extra=1"
 	place_before_default "$rname"
 	uci commit mwan3
-	maybe_reload
+	if ! maybe_reload; then
+		printf '{"ok":false,"error":"规则已保存，但 mwan3 热更新失败；未执行服务重启"}\n'
+		exit 1
+	fi
 	printf '{"ok":true,"name":"%s"}\n' "$rname"
 	exit 0
 }
@@ -518,7 +538,10 @@ cmd_extra_isp() {
 	uci set "mwan3.$rname.lede_extra=1"
 	place_before_default "$rname"
 	uci commit mwan3
-	maybe_reload
+	if ! maybe_reload; then
+		printf '{"ok":false,"error":"规则已保存，但 mwan3 热更新失败；未执行服务重启"}\n'
+		exit 1
+	fi
 	printf '{"ok":true,"name":"%s"}\n' "$rname"
 	exit 0
 }
@@ -547,8 +570,11 @@ cmd_extra_del() {
 	uci -q delete "mwan3.$name"
 	prune_orphan_iface_policy "$pol"
 	uci commit mwan3
-	maybe_reload
-	printf '{"ok":true}\n'
+	if ! hot_reload_mwan3; then
+		printf '{"ok":false,"error":"规则已写入配置，但 mwan3 热更新失败；未执行服务重启"}\n'
+		exit 1
+	fi
+	printf '{"ok":true,"apply":"hot-reload"}\n'
 	exit 0
 }
 
@@ -594,10 +620,12 @@ DOWN=3
 UP=3
 HASH_MODE="flow"
 HASH_MODE_SET=0
+HOT_APPLY=0
 
 while [ $# -gt 0 ]; do
 	case "$1" in
 		apply) shift; continue ;;
+		hot-apply) HOT_APPLY=1; shift; continue ;;
 		--iface)
 			[ -n "$2" ] || usage
 			SPECS="$SPECS $2:1"
@@ -714,8 +742,10 @@ for spec in $SPECS; do
 done
 if [ "$metric_changed" = 1 ]; then
 	uci commit network
-	ubus call network reload >/dev/null 2>&1 || /etc/init.d/network reload >/dev/null 2>&1 || true
-	sleep 2
+	if [ "$HOT_APPLY" != 1 ]; then
+		ubus call network reload >/dev/null 2>&1 || /etc/init.d/network reload >/dev/null 2>&1 || true
+		sleep 2
+	fi
 fi
 
 SRC=$(lan_cidr)
@@ -773,9 +803,17 @@ uci commit mwan3
 
 [ -f /lib/functions/lede-mwan3.sh ] && . /lib/functions/lede-mwan3.sh
 lede_mwan3_helper_crons_sync 2>/dev/null || true
-run_mwan3_start
+if [ "$HOT_APPLY" = 1 ]; then
+	if ! hot_reload_mwan3; then
+		printf '{"ok":false,"error":"配置已保存，但 mwan3 热更新失败；未执行服务重启"}\n'
+		exit 1
+	fi
+else
+	run_mwan3_start
+fi
 [ -x /usr/libexec/wan-src-hash ] && /usr/libexec/wan-src-hash >>/tmp/lede-mwan3-setup.log 2>&1 || ucode /usr/libexec/wan-src-hash >>/tmp/lede-mwan3-setup.log 2>&1 || true
 ACTION= /bin/sh /etc/hotplug.d/iface/27-mwan3-iface-default >>/tmp/lede-mwan3-setup.log 2>&1 || true
 
-printf '{"ok":true,"ifaces":%s,"src":"%s","metrics":"%s"}\n' "$n_if" "$SRC" "$METRIC_NOTE"
+printf '{"ok":true,"ifaces":%s,"src":"%s","metrics":"%s","apply":"%s"}\n' \
+	"$n_if" "$SRC" "$METRIC_NOTE" "$([ "$HOT_APPLY" = 1 ] && echo hot-reload || echo start)"
 exit 0

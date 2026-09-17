@@ -80,7 +80,21 @@ return view.extend({
 		};
 
 		this.map = m;
-		return m.render();
+		return m.render().then(function(node) {
+			node.classList.add('remote-mosdns-page');
+			node.insertBefore(E('style', {}, `
+				.remote-mosdns-page { width:100%; min-width:0; }
+				.remote-mosdns-page > h2 { margin:0 0 1rem; font-size:1.45rem; font-weight:700; line-height:1.2; }
+				.remote-mosdns-page > .cbi-map-descr { margin:-.35rem 0 1.25rem; opacity:.72; line-height:1.55; }
+				.remote-mosdns-page > .cbi-section { min-width:0!important; width:100%!important; margin:0 0 1rem!important; padding:1rem 1.1rem!important; box-sizing:border-box; background:var(--cbi-section-bg,#fff)!important; border:1px solid rgba(0,0,0,.08)!important; border-radius:8px!important; box-shadow:0 2px 6px rgba(0,0,0,.03)!important; }
+				.remote-mosdns-page > .cbi-section > h3 { display:flex; align-items:center; justify-content:space-between; margin:0 0 .85rem!important; padding:0 0 .7rem!important; border-bottom:1px solid rgba(125,125,125,.14); font-size:.98rem!important; font-weight:600!important; line-height:1.3; }
+				@media (prefers-color-scheme:dark) {
+					.remote-mosdns-page > .cbi-section { background:rgba(255,255,255,.03)!important; border-color:rgba(255,255,255,.08)!important; box-shadow:none!important; }
+					.remote-mosdns-page > .cbi-section > h3 { border-bottom-color:rgba(255,255,255,.08); }
+				}
+			`), node.firstChild);
+			return node;
+		});
 	},
 
 	handleSave: function() {

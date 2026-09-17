@@ -31,27 +31,27 @@ elif "view.network.iface-bw-extra" not in t:
         1,
     )
 
-# Interface modal uses `s`; DHCP subsection uses `ss`. Attach after protocol
-# options so bandwidth fields appear at the end of the general tab.
+# Interface modal uses `s`; DHCP subsection uses `ss`. Match the 8.1 layout:
+# attach bandwidth fields before the stock status/protocol options.
 t = re.sub(
-    r"\s*if \(typeof bwExtra != 'undefined' && bwExtra\.attach\)\n"
-    r"\s*bwExtra\.attach\(s, ifc\);\n",
+    r"\s*if\s*\(typeof bwExtra\s*!=\s*'undefined'\s*&&\s*bwExtra\.attach\)\s*"
+    r"bwExtra\.attach\(s,\s*ifc\);\s*",
     "\n",
     t,
     count=1,
 )
 if "bwExtra.attach" not in t:
-    t2, n = re.subn(
-        r"(ifc\.renderFormOptions\(s\);\s*)",
-        r"\1\n\t\t\t\t\tif (typeof bwExtra != 'undefined' && bwExtra.attach)\n"
-        r"\t\t\t\t\t\tbwExtra.attach(s, ifc);\n",
-        t,
-        count=1,
-    )
-    if n:
-        t = t2
+    needle = "o = s.taboption('general', form.DummyValue, '_ifacestat_modal', _('Status'));"
+    if needle in t:
+        t = t.replace(
+            needle,
+            "if (typeof bwExtra != 'undefined' && bwExtra.attach)\n"
+            "\t\t\t\t\t\tbwExtra.attach(s, ifc);\n\n"
+            "\t\t\t\t\t" + needle,
+            1,
+        )
 if "bwExtra.attach" not in t:
-    raise SystemExit("failed to attach bwExtra after renderFormOptions")
+    raise SystemExit("failed to attach bwExtra before interface status")
 
 if "dhcpExtra.attach" not in t:
     # Do not add stock Start/Limit widgets at all. Hiding after create is

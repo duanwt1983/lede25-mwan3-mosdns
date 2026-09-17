@@ -213,7 +213,7 @@ return baseclass.extend({
 
 	s = m.section(form.NamedSection, 'main', 'wanalert', _('检测阈值'));
 	s.addremove = false;
-	s.description = _('超过即写日志；是否钉钉由上面的开关决定。');
+	s.description = _('达到阈值并连续保持设定分钟数后才触发；低于阈值会清零并重新计时。是否钉钉由上面的开关决定。');
 
 	o = s.option(form.Value, 'dhcp_remain', _('DHCP 剩余地址少于（个）'));
 	o.datatype = 'uinteger';
@@ -222,15 +222,24 @@ return baseclass.extend({
 	o = s.option(form.Value, 'cpu_percent', _('CPU 使用率（%）'));
 	o.datatype = 'range(1,100)';
 	o.default = '90';
+	o = s.option(form.Value, 'cpu_hold_min', _('持续时间（分钟）'));
+	o.datatype = 'uinteger';
+	o.default = '5';
 
 	o = s.option(form.Value, 'load_warn', _('15 分钟负载'),
 		_('与 /proc/loadavg 第三个数字比较。x86 多核能适当调高。'));
 	o.default = '2.00';
+	o = s.option(form.Value, 'load_hold_min', _('持续时间（分钟）'));
+	o.datatype = 'uinteger';
+	o.default = '5';
 
 	o = s.option(form.Value, 'mem_percent', _('内存使用率（%）'),
 		_('按 MemAvailable 计算。'));
 	o.datatype = 'range(1,100)';
 	o.default = '90';
+	o = s.option(form.Value, 'mem_hold_min', _('持续时间（分钟）'));
+	o.datatype = 'uinteger';
+	o.default = '5';
 
 	o = s.option(form.Value, 'disk_percent', _('磁盘已用（%）'));
 	o.datatype = 'range(1,100)';
@@ -244,6 +253,9 @@ return baseclass.extend({
 	o = s.option(form.Value, 'temp_c', _('温度（℃）'));
 	o.datatype = 'uinteger';
 	o.default = '80';
+	o = s.option(form.Value, 'temp_hold_min', _('持续时间（分钟）'));
+	o.datatype = 'uinteger';
+	o.default = '5';
 
 	o = s.option(form.Value, 'conn_percent', _('连接跟踪占用（%）'));
 	o.datatype = 'range(1,100)';
@@ -253,6 +265,10 @@ return baseclass.extend({
 		_('需在接口上填写 lede_bw_down / lede_bw_up（Mbit/s）。未填则不检测该方向。'));
 	o.datatype = 'range(1,100)';
 	o.default = '90';
+	o = s.option(form.Value, 'wan_bw_hold_min', _('持续时间（分钟）'),
+		_('每个 WAN 的上行、下行分别计时；低于阈值后重新计时。'));
+	o.datatype = 'uinteger';
+	o.default = '5';
 
 	o = s.option(form.Value, 'login_fail_n', _('10 分钟内登录失败次数'));
 	o.datatype = 'uinteger';

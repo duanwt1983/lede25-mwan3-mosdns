@@ -4,7 +4,9 @@
 
 [ -f /etc/config/mosdns ] || exit 0
 
-uci -q set mosdns.config.enabled='1'
+# Install a ready-to-use configuration, but let the user decide when MosDNS
+# should take over DNS. A fresh image must remain disabled.
+uci -q set mosdns.config.enabled='0'
 uci -q set mosdns.config.configfile='/var/etc/mosdns.yaml'
 uci -q set mosdns.config.listen_port='5335'
 uci -q set mosdns.config.listen_port_api='9091'
@@ -12,7 +14,7 @@ uci -q set mosdns.config.stats_collector='1'
 uci -q set mosdns.config.custom_local_dns='1'
 uci -q set mosdns.config.dns_follow_wan='1'
 uci -q set mosdns.config.dns_leak='1'
-uci -q set mosdns.config.redirect='1'
+uci -q set mosdns.config.redirect='0'
 uci -q set mosdns.config.prefer_ipv4='1'
 uci -q set mosdns.config.cache='1'
 uci -q set mosdns.config.cache_size='20000'
@@ -30,4 +32,8 @@ fi
 
 uci commit mosdns
 [ -x /usr/libexec/mosdns-gen ] && /usr/libexec/mosdns-gen
+[ -x /etc/init.d/mosdns ] && {
+	/etc/init.d/mosdns stop >/dev/null 2>&1 || true
+	/etc/init.d/mosdns disable >/dev/null 2>&1 || true
+}
 exit 0

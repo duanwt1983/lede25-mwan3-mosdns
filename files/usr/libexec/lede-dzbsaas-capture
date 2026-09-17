@@ -1,0 +1,316 @@
+#!/bin/sh
+# Background tcpdump for dzbsaas.com lag diagnosis (client -> gateway).
+# Usage:
+#   lede-dzbsaas-capture start              # 30 min capture, auto analyze
+#   lede-dzbsaas-capture start 3600         # custom seconds
+#   lede-dzbsaas-capture status
+#   lede-dzbsaas-capture stop
+#   lede-dzbsaas-capture list
+#   lede-dzbsaas-capture analyze [jobdir]
+
+set -e
+
+CLIENT="${LEDE_DZB_CLIENT:-192.168.8.126}"
+BASE_DOMAIN="${LEDE_DZB_DOMAIN:-dzbsaas.com}"
+DURATION="${LEDE_DZB_DURATION:-1800}"
+OUTROOT="${LEDE_DZB_OUT:-/data/capture/dzbsaas}"
+STATE=/tmp/lede-dzbsaas-capture
+PID="$STATE/tcpdump.pid"
+TIMER="$STATE/timer.pid"
+META="$STATE/current.meta"
+
+log() {
+	printf '[%s] %s\n' "$(date '+%F %T')" "$*" >&2
+}
+
+json_escape() {
+	printf '%s' "$1" | awk '
+		BEGIN { ORS = "" }
+		{
+			gsub(/\\/, "\\\\")
+			gsub(/"/, "\\\"")
+			gsub(/\t/, "\\t")
+			gsub(/\r/, "")
+			if (NR > 1) print "\\n"
+			print
+		}
+	'
+}
+
+alive() {
+	local pid
+	[ -f "$PID" ] || return 1
+	pid="$(cat "$PID" 2>/dev/null)" || return 1
+	[ -n "$pid" ] || return 1
+	kill -0 "$pid" 2>/dev/null
+}
+
+resolve_seed() {
+	local d ip
+	for d in \
+		"$BASE_DOMAIN" \
+		"www.$BASE_DOMAIN" \
+		"api.$BASE_DOMAIN" \
+		"admin.$BASE_DOMAIN" \
+		"m.$BASE_DOMAIN" \
+		"static.$BASE_DOMAIN" \
+		"cdn.$BASE_DOMAIN" \
+		"oss.$BASE_DOMAIN" \
+		"img.$BASE_DOMAIN" \
+		"file.$BASE_DOMAIN" \
+		"app.$BASE_DOMAIN"
+	do
+		for ip in $(nslookup "$d" 2>/dev/null | awk '/^Address [0-9]/ {print $2} /^Address: / {print $2}'); do
+			printf '%s\n' "$ip"
+		done
+	done | sort -u
+}
+
+write_meta() {
+	local jobdir="$1" stamp="$2" dur="$3"
+	mkdir -p "$STATE"
+	cat >"$META" <<EOF
+jobdir=$jobdir
+stamp=$stamp
+client=$CLIENT
+domain=$BASE_DOMAIN
+duration=$dur
+started_epoch=$(date +%s)
+EOF
+}
+
+status_cmd() {
+	local active=0 jobdir="" stamp="" started="" dur="" pcap="" size=0 remain=""
+	alive && active=1
+	if [ -f "$META" ]; then
+		. "$META"
+	fi
+	pcap="$jobdir/capture.pcap"
+	[ -f "$pcap" ] && size="$(wc -c <"$pcap" | tr -d ' ')"
+	if [ "$active" = 1 ] && [ -n "${started_epoch:-}" ] && [ -n "${dur:-}" ]; then
+		now="$(date +%s)"
+		remain=$((dur - (now - started_epoch)))
+		[ "$remain" -lt 0 ] && remain=0
+	fi
+	printf '{"active":%s,"client":"%s","domain":"%s","jobdir":"%s","stamp":"%s","pcap":"%s","size":%s,"duration":%s,"remain_sec":%s}\n' \
+		"$active" "$(json_escape "$CLIENT")" "$(json_escape "$BASE_DOMAIN")" \
+		"$(json_escape "$jobdir")" "$(json_escape "$stamp")" "$(json_escape "$pcap")" \
+		"${size:-0}" "${dur:-0}" "${remain:-0}"
+}
+
+stop_cmd() {
+	local pid
+	if alive; then
+		pid="$(cat "$PID")"
+		kill "$pid" 2>/dev/null || true
+		wait "$pid" 2>/dev/null || true
+	fi
+	if [ -f "$TIMER" ]; then
+		pid="$(cat "$TIMER" 2>/dev/null || true)"
+		[ -n "$pid" ] && kill "$pid" 2>/dev/null || true
+	fi
+	rm -f "$PID" "$TIMER"
+	log "capture stopped"
+	status_cmd
+}
+
+analyze_job() {
+	local jobdir="$1" pcap="$jobdir/capture.pcap" report="$jobdir/report.txt"
+	local ips domains
+
+	[ -f "$pcap" ] || { log "missing pcap: $pcap"; return 1; }
+
+	{
+		echo "===== dzbsaas 抓包诊断报告 ====="
+		echo "生成时间: $(date '+%F %T')"
+		echo "客户端: $CLIENT"
+		echo "关注域名: *.$BASE_DOMAIN 及页面调用的其它域名"
+		echo "抓包文件: $pcap"
+		echo "文件大小: $(wc -c <"$pcap" | tr -d ' ') 字节"
+		echo
+
+		echo "----- 1) 启动时 DNS 预解析 ($BASE_DOMAIN 常见子域) -----"
+		if [ -f "$jobdir/seed-ips.txt" ]; then
+			cat "$jobdir/seed-ips.txt"
+		else
+			resolve_seed
+		fi
+		echo
+
+		echo "----- 2) 抓包内 DNS 查询（含二级/多级域名） -----"
+		if [ -x /usr/bin/tshark ]; then
+			tshark -r "$pcap" -Y "dns.flags.response==0 && ip.src==$CLIENT" \
+				-T fields -e frame.time_relative -e dns.qry.name 2>/dev/null \
+				| sed '/^$/d' | sort -u | head -n 200
+			echo
+			echo "【与 $BASE_DOMAIN 相关的 DNS】"
+			tshark -r "$pcap" -Y "dns.qry.name contains \"$BASE_DOMAIN\"" \
+				-T fields -e frame.time_relative -e dns.qry.name -e dns.a -e dns.aaaa -e dns.cname 2>/dev/null \
+				| sed '/^$/d' | head -n 120
+		else
+			tcpdump -r "$pcap" -nn -A -s 256 "src host $CLIENT and port 53" 2>/dev/null | head -n 120
+		fi
+		echo
+
+		echo "----- 3) HTTPS SNI / HTTP Host（页面可能调用的其它域名） -----"
+		if [ -x /usr/bin/tshark ]; then
+			echo "【TLS SNI】"
+			tshark -r "$pcap" -Y "tls.handshake.extensions_server_name && ip.src==$CLIENT" \
+				-T fields -e frame.time_relative -e ip.dst -e tls.handshake.extensions_server_name 2>/dev/null \
+				| sed '/^$/d' | sort -u | head -n 200
+			echo
+			echo "【HTTP Host】"
+			tshark -r "$pcap" -Y "http.host && ip.src==$CLIENT" \
+				-T fields -e frame.time_relative -e ip.dst -e http.host -e http.request.uri 2>/dev/null \
+				| sed '/^$/d' | head -n 120
+		else
+			tcpdump -r "$pcap" -nn -A -s 512 "src host $CLIENT and tcp port 443" 2>/dev/null | head -n 80
+		fi
+		echo
+
+		echo "----- 4) 连接质量：重传 / 复位 / 重复 ACK（按目标 IP 统计） -----"
+		if [ -x /usr/bin/tshark ]; then
+			echo "【TCP 重传 TOP】"
+			tshark -r "$pcap" -Y "tcp.analysis.retransmission && ip.src==$CLIENT" \
+				-T fields -e ip.dst -e tcp.dstport 2>/dev/null \
+				| sed '/^$/d' | sort | uniq -c | sort -rn | head -n 30
+			echo
+			echo "【TCP RST TOP】"
+			tshark -r "$pcap" -Y "tcp.flags.reset==1 && (ip.src==$CLIENT || ip.dst==$CLIENT)" \
+				-T fields -e ip.src -e tcp.srcport -e ip.dst -e tcp.dstport 2>/dev/null \
+				| sed '/^$/d' | sort | uniq -c | sort -rn | head -n 30
+			echo
+			echo "【Duplicate ACK TOP】"
+			tshark -r "$pcap" -Y "tcp.analysis.duplicate_ack && ip.src==$CLIENT" \
+				-T fields -e ip.dst -e tcp.dstport 2>/dev/null \
+				| sed '/^$/d' | sort | uniq -c | sort -rn | head -n 20
+		else
+			tcpdump -r "$pcap" -nn "src host $CLIENT and tcp[tcpflags] & (tcp-rst|tcp-push) != 0" 2>/dev/null | head -n 80
+		fi
+		echo
+
+		echo "----- 5) 会话耗时（>3s 的 TCP 流，可能是卡顿来源） -----"
+		if [ -x /usr/bin/tshark ]; then
+			tshark -r "$pcap" -q -z conv,tcp 2>/dev/null | awk '
+				NR <= 6 { print; next }
+				$3 + 0 > 3 { print }
+			' | head -n 40
+		else
+			echo "(需要 tshark 才能统计 TCP 会话耗时)"
+		fi
+		echo
+
+		echo "----- 6) 目标 IP 路由（多 WAN 排查：是否走错出口） -----"
+		if [ -x /usr/bin/tshark ]; then
+			ips="$(tshark -r "$pcap" -Y "ip.src==$CLIENT && tcp" -T fields -e ip.dst 2>/dev/null | sed '/^$/d' | sort -u | head -n 40)"
+		else
+			ips="$(tcpdump -r "$pcap" -nn "src host $CLIENT and tcp" 2>/dev/null | awk '{print $5}' | sed 's/\.://' | sort -u | head -n 40)"
+		fi
+		for ip in $ips; do
+			echo "ip route get $ip"
+			ip route get "$ip" 2>/dev/null || true
+		done
+		echo
+
+		echo "----- 7) 原始摘要（前 40 条） -----"
+		tcpdump -r "$pcap" -nn -c 40 2>/dev/null || true
+		echo
+		echo "===== 报告结束 ====="
+		echo "说明：若卡顿模块对应其它域名，请看第 3 节；若某 IP 重传/RST 高或路由异常，重点排查该出口/对端。"
+	} >"$report"
+
+	log "report written: $report"
+	printf '%s\n' "$report"
+}
+
+finish_job() {
+	local jobdir="$1"
+	local pid
+
+	if alive; then
+		pid="$(cat "$PID")"
+		kill "$pid" 2>/dev/null || true
+		wait "$pid" 2>/dev/null || true
+	fi
+	rm -f "$PID" "$TIMER"
+	log "capture finished: $jobdir"
+	analyze_job "$jobdir" || true
+}
+
+start_cmd() {
+	local dur="$1" stamp jobdir pcap filter pid
+	local seed_ips
+
+	if alive; then
+		echo "capture already running" >&2
+		status_cmd
+		exit 2
+	fi
+
+	[ -n "$dur" ] || dur="$DURATION"
+	case "$dur" in
+		*[!0-9]*) echo "invalid duration: $dur" >&2; exit 1 ;;
+	esac
+
+	mkdir -p "$OUTROOT" "$STATE"
+	stamp="$(date +%Y%m%d-%H%M%S)"
+	jobdir="$OUTROOT/$stamp"
+	mkdir -p "$jobdir"
+	pcap="$jobdir/capture.pcap"
+
+	seed_ips="$(resolve_seed)"
+	printf '%s\n' "$seed_ips" >"$jobdir/seed-ips.txt"
+	printf '%s\n' "$CLIENT" >"$jobdir/client.txt"
+	printf '%s\n' "$BASE_DOMAIN" >"$jobdir/domain.txt"
+
+	# Capture all traffic from the client: DNS reveals subdomains; TLS SNI reveals third-party hosts.
+	filter="host $CLIENT"
+
+	: >"$jobdir/capture.log"
+	log "starting tcpdump $dur sec -> $pcap"
+	tcpdump -i any -nn -s 0 -w "$pcap" "$filter" >>"$jobdir/capture.log" 2>&1 &
+	echo $! >"$PID"
+	write_meta "$jobdir" "$stamp" "$dur"
+
+	(
+		sleep "$dur"
+		finish_job "$jobdir"
+	) &
+	echo $! >"$TIMER"
+
+	log "background job started; reproduce lag on www.$BASE_DOMAIN during capture"
+	status_cmd
+}
+
+list_cmd() {
+	local d
+	for d in "$OUTROOT"/*; do
+		[ -d "$d" ] || continue
+		printf '%s' "$d"
+		[ -f "$d/report.txt" ] && printf '  [report]'
+		[ -f "$d/capture.pcap" ] && printf '  %s bytes' "$(wc -c <"$d/capture.pcap" | tr -d ' ')"
+		printf '\n'
+	done
+}
+
+case "$1" in
+	start) start_cmd "$2" ;;
+	stop) stop_cmd ;;
+	status) status_cmd ;;
+	analyze)
+		if [ -n "$2" ]; then
+			analyze_job "$2"
+		elif [ -f "$META" ]; then
+			. "$META"
+			analyze_job "$jobdir"
+		else
+			echo "usage: $0 analyze <jobdir>" >&2
+			exit 1
+		fi
+		;;
+	list) list_cmd ;;
+	*)
+		echo "usage: $0 {start [seconds]|stop|status|list|analyze [jobdir]}" >&2
+		exit 1
+		;;
+esac

@@ -23,6 +23,77 @@ function buildGrid(root, selector, gridClass) {
 	host.appendChild(grid);
 }
 
+function optionBox(root, opt) {
+	return root.querySelector('.cbi-value[data-name="' + opt + '"]') ||
+		root.querySelector('#cbi-wanalert-main-' + opt) ||
+		root.querySelector('.cbi-value[id$="-' + opt + '"]');
+}
+
+function layoutThresholdPairs(root) {
+	[
+		[ 'cpu_percent', 'cpu_hold_min' ],
+		[ 'load_warn', 'load_hold_min' ],
+		[ 'mem_percent', 'mem_hold_min' ],
+		[ 'temp_c', 'temp_hold_min' ],
+		[ 'wan_bw_percent', 'wan_bw_hold_min' ]
+	].forEach(function(pair) {
+		const threshold = optionBox(root, pair[0]);
+		const hold = optionBox(root, pair[1]);
+		if (!threshold || !hold || threshold.classList.contains('wanalert-threshold-row'))
+			return;
+		const thresholdField = threshold.querySelector('.cbi-value-field');
+		const holdField = hold.querySelector('.cbi-value-field');
+		const holdTitle = hold.querySelector('.cbi-value-title');
+		if (!thresholdField || !holdField)
+			return;
+		const holdDesc = holdField.querySelector('.cbi-value-description');
+		const inline = E('span', {
+			'class': 'wanalert-duration-inline',
+			'title': holdDesc ? holdDesc.textContent.trim() : ''
+		}, [
+			E('span', { 'class': 'wanalert-duration-label' },
+				holdTitle ? holdTitle.textContent.trim() : _('持续时间（分钟）'))
+		]);
+		Array.from(holdField.childNodes).forEach(function(child) {
+			if (child !== holdDesc)
+				inline.appendChild(child);
+		});
+		const thresholdDesc = thresholdField.querySelector('.cbi-value-description');
+		const controls = E('div', { 'class': 'wanalert-threshold-controls' });
+		Array.from(thresholdField.childNodes).forEach(function(child) {
+			if (child !== thresholdDesc)
+				controls.appendChild(child);
+		});
+		controls.appendChild(inline);
+		thresholdField.insertBefore(controls, thresholdDesc || null);
+		threshold.classList.add('wanalert-threshold-row');
+		hold.remove();
+	});
+}
+
+function layoutCards(root) {
+	const map = root && root.classList && root.classList.contains('cbi-map')
+		? root : root.querySelector('.cbi-map');
+	if (!map || map.querySelector(':scope > .wanalert-card-grid'))
+		return;
+	map.classList.add('wanalert-mosdns-page');
+	const sections = Array.from(map.children).filter(function(el) {
+		return el.classList && el.classList.contains('cbi-section');
+	});
+	if (!sections.length)
+		return;
+	const grid = E('div', { 'class': 'wanalert-card-grid' });
+	map.insertBefore(grid, sections[0]);
+	sections.forEach(function(sec) {
+		sec.classList.add('wanalert-card');
+		if ((optionBox(sec, 'dingtalk_webhook') && optionBox(sec, 'security')) ||
+		    sec.querySelector('.cbi-value[data-name^="alert_"]') ||
+		    optionBox(sec, 'cpu_percent'))
+			sec.classList.add('wanalert-card-wide');
+		grid.appendChild(sec);
+	});
+}
+
 function fixInput(root, opt) {
 	const box = root.querySelector('.cbi-value[data-name="' + opt + '"]');
 	return box ? box.querySelector('input[type="checkbox"]') : null;
@@ -166,11 +237,30 @@ function injectStyle(node) {
 		'label.lede-fix-off input{cursor:not-allowed;}',
 		'.lede-fix-cool{margin:0;padding:10px 0 0;border-top:1px solid var(--border-color-medium,rgba(127,127,127,.22));}',
 		'.lede-fix-cool.lede-fix-off{opacity:.45;}',
-		'@media (max-width:720px){.lede-ding-grid{grid-template-columns:minmax(0,1fr);}}'
+		'.wanalert-mosdns-page{width:100%;min-width:0;}',
+		'.wanalert-mosdns-page>h2{margin:0 0 1rem;font-size:1.45rem;font-weight:700;line-height:1.2;}',
+		'.wanalert-mosdns-page>.cbi-map-descr{margin:-.35rem 0 1.25rem;opacity:.72;line-height:1.55;}',
+		'.wanalert-card-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:1rem;margin:0 0 1.25rem;align-items:start;}',
+		'.wanalert-card{min-width:0!important;margin:0!important;padding:1rem 1.1rem!important;background:var(--cbi-section-bg,#fff)!important;border:1px solid rgba(0,0,0,.08)!important;border-radius:8px!important;box-shadow:0 2px 6px rgba(0,0,0,.03)!important;overflow:visible!important;}',
+		'.wanalert-card-wide{grid-column:1/-1;}',
+		'.wanalert-card>h3{display:flex;align-items:center;justify-content:space-between;margin:0 0 .85rem!important;padding:0 0 .7rem!important;border-bottom:1px solid rgba(125,125,125,.14);font-size:.98rem!important;font-weight:600!important;line-height:1.3;}',
+		'.wanalert-card>.cbi-section-descr{margin:-.3rem 0 .8rem;opacity:.68;font-size:.86rem;line-height:1.5;}',
+		'.wanalert-card .cbi-section-node{min-width:0;}',
+		'.wanalert-card .cbi-value{box-sizing:border-box;}',
+		'.wanalert-threshold-controls{display:flex!important;align-items:center;gap:18px;flex-wrap:nowrap;min-width:0;}',
+		'.wanalert-threshold-controls>div:first-child{flex:0 0 288px;min-width:0;}',
+		'.wanalert-threshold-controls>div:first-child input{width:100%!important;min-width:0!important;box-sizing:border-box;}',
+		'.wanalert-duration-inline{display:inline-flex!important;align-items:center;gap:8px;margin:0;vertical-align:middle;white-space:nowrap;flex:0 0 auto;}',
+		'.wanalert-duration-label{font-weight:400;line-height:2.2;}',
+		'.wanalert-duration-inline input{width:90px!important;min-width:70px!important;max-width:90px!important;box-sizing:border-box;}',
+		'.wanalert-threshold-row>.cbi-value-field>.cbi-value-description{display:block;clear:both;margin-top:5px!important;}',
+		'@media (max-width:720px){.lede-ding-grid{grid-template-columns:minmax(0,1fr);}.wanalert-threshold-controls{gap:10px;}.wanalert-threshold-controls>div:first-child{flex:1 1 auto;min-width:0;}}'
 	].join('\n'), [
 		'.lede-fix-group{background:rgba(255,255,255,0.03);border-color:rgba(255,255,255,0.08);box-shadow:none;}',
 		'.lede-fix-children{background:rgba(255,255,255,0.04);}',
-		'.lede-fix-cool{border-top-color:rgba(255,255,255,0.08);}'
+		'.lede-fix-cool{border-top-color:rgba(255,255,255,0.08);}',
+		'.wanalert-card{background:rgba(255,255,255,.03)!important;border-color:rgba(255,255,255,.08)!important;box-shadow:none!important;}',
+		'.wanalert-card>h3{border-bottom-color:rgba(255,255,255,.08);}'
 	].join('\n'));
 }
 
@@ -186,6 +276,8 @@ function applyPage(node) {
 		if (sec.querySelector('.cbi-value[data-name="autofix_wan"]'))
 			layoutAutofixSection(sec, node);
 	});
+	layoutThresholdPairs(node);
+	layoutCards(node);
 	return node;
 }
 

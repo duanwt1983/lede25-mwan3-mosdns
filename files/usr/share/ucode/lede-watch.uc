@@ -791,12 +791,17 @@ export function collect_interval(ctx) {
 		st.bw = {};
 	if (type(st.bw_hit) != 'object')
 		st.bw_hit = {};
+	if (type(st.bw_since) != 'object')
+		st.bw_since = {};
 	if (type(st.link_hit) != 'object')
 		st.link_hit = {};
 	if (type(st.macs) != 'object')
 		st.macs = {};
 	let rows = emit_wan_updown(ctx, st, out);
 	let bw_pct = +g(ctx, 'wan_bw_percent', 90);
+	let bw_hold = +g(ctx, 'wan_bw_hold_min', 5);
+	if (!(bw_hold >= 0))
+		bw_hold = 0;
 	let bj = bandix_load(true);
 	let maps = bj ? bandix_build_maps(bj) : null;
 	for (let w in rows) {
@@ -825,26 +830,38 @@ export function collect_interval(ctx) {
 			let r = bandix_resolve_iface_rates(maps, w.dev || w.name, [ w.name, w.dev ]);
 			let down_mbps = r.down_bps / 1000000.0;
 			let up_mbps = r.up_bps / 1000000.0;
-			if (w.bw_down > 0 && down_mbps >= w.bw_down * bw_pct / 100.0) {
-				if (!st.bw_hit[w.name + '-d']) {
+			let dkey = w.name + '-d';
+			let down_high = w.bw_down > 0 && down_mbps >= w.bw_down * bw_pct / 100.0;
+			if (down_high) {
+				if (!(+st.bw_since[dkey] > 0))
+					st.bw_since[dkey] = now;
+				if (now - +st.bw_since[dkey] >= bw_hold * 60 && !st.bw_hit[dkey]) {
 					st.bw_hit[w.name + '-d'] = 1;
 					ev(out, '中等', '线路', 'WAN 下行接近上限',
-						sprintf('%s 下行 %.1f Mbit/s，配置上限 %s M（阈值 %d%%）。',
-							w.name, down_mbps, w.bw_down, bw_pct),
+						sprintf('%s 下行 %.1f Mbit/s，配置上限 %s M（阈值 %d%%），已持续至少 %d 分钟。',
+							w.name, down_mbps, w.bw_down, bw_pct, bw_hold),
 						'wanbw-d-' + w.name, 'alert_wan_bw');
 				}
-			} else
-				st.bw_hit[w.name + '-d'] = 0;
-			if (w.bw_up > 0 && up_mbps >= w.bw_up * bw_pct / 100.0) {
-				if (!st.bw_hit[w.name + '-u']) {
-					st.bw_hit[w.name + '-u'] = 1;
+			} else {
+				st.bw_hit[dkey] = 0;
+				st.bw_since[dkey] = 0;
+			}
+			let ukey = w.name + '-u';
+			let up_high = w.bw_up > 0 && up_mbps >= w.bw_up * bw_pct / 100.0;
+			if (up_high) {
+				if (!(+st.bw_since[ukey] > 0))
+					st.bw_since[ukey] = now;
+				if (now - +st.bw_since[ukey] >= bw_hold * 60 && !st.bw_hit[ukey]) {
+					st.bw_hit[ukey] = 1;
 					ev(out, '中等', '线路', 'WAN 上行接近上限',
-						sprintf('%s 上行 %.1f Mbit/s，配置上限 %s M（阈值 %d%%）。',
-							w.name, up_mbps, w.bw_up, bw_pct),
+						sprintf('%s 上行 %.1f Mbit/s，配置上限 %s M（阈值 %d%%），已持续至少 %d 分钟。',
+							w.name, up_mbps, w.bw_up, bw_pct, bw_hold),
 						'wanbw-u-' + w.name, 'alert_wan_bw');
 				}
-			} else
-				st.bw_hit[w.name + '-u'] = 0;
+			} else {
+				st.bw_hit[ukey] = 0;
+				st.bw_since[ukey] = 0;
+			}
 		}
 	}
 

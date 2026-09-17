@@ -3,6 +3,7 @@
 # (dns_leak=1: geosite non-CN never falls back to Aliyun).
 
 [ -f /etc/config/passwall ] || exit 0
+[ "$(uci -q get mosdns.config.enabled)" = "1" ] || exit 0
 
 sec=$(uci -q show passwall | sed -n 's/^\(passwall\.[^=]*\)=global$/\1/p' | head -n 1)
 [ -n "$sec" ] || exit 0

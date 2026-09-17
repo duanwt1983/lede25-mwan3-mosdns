@@ -1,46 +1,21 @@
 #!/usr/bin/env python3
-"""Avoid mojibake in minified luci-mod-network interfaces.js (ellipsis, guillemet)."""
+"""Repair mojibake without changing valid upstream LuCI punctuation."""
 from pathlib import Path
-import re
 import sys
 
 
 def fix_text(text: str) -> str:
-    text = text.replace("\u2026", "...")
-    text = text.replace("…", "...")
-    text = text.replace("+ ' » ' +", "+ ' / ' +")
-    text = text.replace("' » '", "' / '")
-
-    text = re.sub(
-        r"_\('Add device configuration[^']*'\)",
-        "_('Add device configuration...')",
-        text,
-    )
-    text = re.sub(
-        r"_\('Configure[^']*'\)",
-        "_('Configure...')",
-        text,
-    )
-    text = re.sub(
-        r"_\('New interface name[^']*'\)",
-        "_('New interface name...')",
-        text,
-    )
-    text = re.sub(
-        r"_\('Loading data[^']*'\)",
-        "_('Loading data...')",
-        text,
-    )
-    text = re.sub(
-        r"return _\('Interfaces'\)\+'[^']*'\+section_id",
-        "return _('Interfaces')+' / '+section_id",
-        text,
-    )
-    text = re.sub(
-        r"return _\('Interfaces'\) \+ '[^']*' \+ section_id",
-        "return _('Interfaces') + ' / ' + section_id",
-        text,
-    )
+    # The 8.1 runtime page uses the original Unicode ellipsis and guillemet.
+    # Only repair their common UTF-8-as-Latin-1 corruptions; do not normalize
+    # legitimate punctuation to three dots or a slash.
+    repairs = {
+        "â€¦": "…",
+        "â¦": "…",
+        "Â»": "»",
+        "âº": "›",
+    }
+    for bad, good in repairs.items():
+        text = text.replace(bad, good)
     return text
 
 

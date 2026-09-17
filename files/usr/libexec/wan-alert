@@ -313,6 +313,30 @@ function stamp(key) {
 	save_state(st);
 }
 
+function held_long_enough(key, active, minutes) {
+	let st = load_state();
+	let sk = 'hold-' + key;
+	let now = time();
+	let mins = +minutes;
+	if (!(mins >= 0))
+		mins = 0;
+	if (!active) {
+		if (+st[sk] > 0) {
+			st[sk] = 0;
+			save_state(st);
+		}
+		return false;
+	}
+	if (mins == 0)
+		return true;
+	if (!(+st[sk] > 0)) {
+		st[sk] = now;
+		save_state(st);
+		return false;
+	}
+	return now - +st[sk] >= mins * 60;
+}
+
 function notify(level, cat, title, detail, key, push) {
 	log_event(level, cat, title, detail);
 	if (as_bool(cfg('autofix', '0'), false) && key != null && key != '' &&
@@ -428,22 +452,25 @@ function check_metrics() {
 	}
 
 	let cpu_l = +cfg('cpu_percent', 90);
-	if (cpu >= cpu_l)
+	let cpu_hold = +cfg('cpu_hold_min', 5);
+	if (held_long_enough('cpu', cpu >= cpu_l, cpu_hold))
 		notify('中等', '资源', 'CPU 过高',
-			sprintf('当前 %d%%，阈值 %d%%。%s', cpu, cpu_l, resource_cause()),
+			sprintf('当前 %d%%，阈值 %d%%，已持续至少 %d 分钟。%s', cpu, cpu_l, cpu_hold, resource_cause()),
 			'cpu', as_bool(cfg('alert_cpu', '1'), true));
 
 	let mem_l = +cfg('mem_percent', 90);
-	if (mem >= mem_l)
+	let mem_hold = +cfg('mem_hold_min', 5);
+	if (held_long_enough('mem', mem >= mem_l, mem_hold))
 		notify('中等', '资源', '内存不足',
-			sprintf('当前已用 %d%%，阈值 %d%%。%s', mem, mem_l, mem_cause()),
+			sprintf('当前已用 %d%%，阈值 %d%%，已持续至少 %d 分钟。%s', mem, mem_l, mem_hold, mem_cause()),
 			'mem', as_bool(cfg('alert_mem', '1'), true));
 
 	let load_l = +cfg('load_warn', '2.00');
-	if (+ld >= load_l)
+	let load_hold = +cfg('load_hold_min', 5);
+	if (held_long_enough('load', +ld >= load_l, load_hold))
 		notify('中等', '资源', '系统负载过高',
-			sprintf('15 分钟负载 %s（1 分钟 %s），阈值 %s（%d 核）。%s',
-				ld, ld1, cfg('load_warn', '2.00'), ncpu(), resource_cause()),
+			sprintf('15 分钟负载 %s（1 分钟 %s），阈值 %s（%d 核），已持续至少 %d 分钟。%s',
+				ld, ld1, cfg('load_warn', '2.00'), ncpu(), load_hold, resource_cause()),
 			'load', as_bool(cfg('alert_load', '1'), true));
 
 	let disk_l = +cfg('disk_percent', 90);
@@ -468,9 +495,10 @@ function check_metrics() {
 	}
 
 	let temp_l = +cfg('temp_c', 80);
-	if (tmp >= temp_l)
+	let temp_hold = +cfg('temp_hold_min', 5);
+	if (held_long_enough('temp', tmp >= temp_l, temp_hold))
 		notify('中等', '资源', '温度过高',
-			sprintf('当前 %d℃，阈值 %d℃。%s', tmp, temp_l, temp_cause()),
+			sprintf('当前 %d℃，阈值 %d℃，已持续至少 %d 分钟。%s', tmp, temp_l, temp_hold, temp_cause()),
 			'temp', as_bool(cfg('alert_temp', '1'), true));
 
 	let kf = kernel_new_faults();

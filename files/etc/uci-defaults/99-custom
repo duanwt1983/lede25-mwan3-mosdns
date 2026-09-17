@@ -164,14 +164,19 @@ if [ -x /etc/init.d/lan-dhcp-exclude ]; then
   /etc/init.d/lan-dhcp-exclude enable
 fi
 if [ -f /etc/config/mosdns ]; then
-  uci -q set mosdns.config.enabled='1'
+  # Ship MosDNS configured but disabled; activation is the user's choice.
+  uci -q set mosdns.config.enabled='0'
   uci -q set mosdns.config.configfile='/var/etc/mosdns.yaml'
   uci -q set mosdns.config.listen_port_api='9091'
   uci -q set mosdns.config.custom_local_dns='1'
   uci -q set mosdns.config.dns_follow_wan='1'
   uci -q set mosdns.config.dns_leak='1'
-  uci -q set mosdns.config.redirect='1'
+  uci -q set mosdns.config.redirect='0'
   uci -q commit mosdns
+  if [ -x /etc/init.d/mosdns ]; then
+    /etc/init.d/mosdns stop >/dev/null 2>&1 || true
+    /etc/init.d/mosdns disable >/dev/null 2>&1 || true
+  fi
 fi
 if [ ! -f /etc/config/packet_cap ]; then
   touch /etc/config/packet_cap

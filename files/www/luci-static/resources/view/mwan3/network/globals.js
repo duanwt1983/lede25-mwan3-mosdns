@@ -671,7 +671,7 @@ return view.extend({
 		const base = this._baselineSnap;
 
 		if (!f.enabled)
-			return 'none';
+			return running ? 'stop' : 'none';
 
 		if (f.ifaces.length < 2)
 			return 'invalid';
@@ -680,11 +680,9 @@ return view.extend({
 			return 'apply';
 
 		if (!base)
-			return 'apply';
-		if (this.hasStructuralChange(f, base))
-			return 'apply';
-		if (f.hashMode !== base.hashMode)
-			return 'restart';
+			return 'hot-apply';
+		if (this.hasStructuralChange(f, base) || f.hashMode !== base.hashMode)
+			return 'hot-apply';
 		return 'none';
 	},
 
@@ -786,11 +784,11 @@ return view.extend({
 			return this.stopBackend();
 		if (action === 'restart')
 			return this.restartBackend();
-		return this.applyBackend(this._pendingApply);
+		return this.applyBackend(this._pendingApply, action === 'hot-apply');
 	},
 
-	buildApplyArgs(f) {
-		const args = ['apply'];
+	buildApplyArgs(f, hot) {
+		const args = [hot ? 'hot-apply' : 'apply'];
 		f.ifaces.forEach(w => {
 			args.push('--iface', w.name, '--weight', String(w.weight));
 		});
@@ -804,7 +802,7 @@ return view.extend({
 		return args;
 	},
 
-	applyBackend(form) {
+	applyBackend(form, hot) {
 		if (!this.hasEnoughWans())
 			throw new Error(_('系统中 WAN 口少于 2 个，无法配置多线负载'));
 
@@ -824,7 +822,7 @@ return view.extend({
 		this._phase = 'starting';
 		this._phaseErr = '';
 		this.paintRunStatus();
-		return fs.exec('/usr/libexec/lede-mwan3-setup', this.buildApplyArgs(f)).then(r => {
+		return fs.exec('/usr/libexec/lede-mwan3-setup', this.buildApplyArgs(f, hot)).then(r => {
 			const j = this.parseJson(r);
 			if (!j.ok)
 				throw new Error(j.error || _('应用失败'));

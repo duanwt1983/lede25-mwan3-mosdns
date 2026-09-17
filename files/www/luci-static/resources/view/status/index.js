@@ -945,6 +945,7 @@ return view.extend({
 	snapKey: 'lede-topo-snap',
 	linkKey: 'lede-topo-links-v6',
 	lockKey: 'lede-topo-lock',
+	wanSumPosKey: 'lede-topo-wan-sum-pos-v1',
 	links: {},
 	layoutLock: false,
 
@@ -962,6 +963,23 @@ return view.extend({
 			localStorage.setItem(key, JSON.stringify(obj || {}));
 		}
 		catch (e) {}
+	},
+
+	loadWanSumLocal() {
+		try {
+			const p = JSON.parse(localStorage.getItem(this.wanSumPosKey) || 'null');
+			return p && isFinite(p.x) && isFinite(p.y) ? p : null;
+		} catch (e) {
+			return null;
+		}
+	},
+
+	saveWanSumLocal(p) {
+		if (!p || !isFinite(p.x) || !isFinite(p.y))
+			return;
+		try {
+			localStorage.setItem(this.wanSumPosKey, JSON.stringify({ x: p.x, y: p.y }));
+		} catch (e) {}
 	},
 
 	layoutPayload() {
@@ -1053,6 +1071,15 @@ return view.extend({
 		src = src || {};
 		if (fromServer && src.saved) {
 			this.pos = Object.assign({}, fallback, src.pos || {});
+			/*
+			 * Keep the browser's last WAN summary position authoritative.
+			 * A failed/debounced layout_set used to let the older server copy
+			 * overwrite it on the next page load.
+			 */
+			const localPos = this.loadStore(this.posKey, {});
+			const localSum = this.loadWanSumLocal() || localPos['wan-sum'];
+			if (localSum && isFinite(localSum.x) && isFinite(localSum.y))
+				this.pos['wan-sum'] = Object.assign({}, this.pos['wan-sum'] || {}, localSum);
 			this.fields = Object.assign({}, TOPO_FIELDS_TEMPLATE, src.fields && typeof src.fields === 'object' ? src.fields : {});
 			this.links = Object.assign({}, TOPO_LINKS_TEMPLATE, src.links && typeof src.links === 'object' ? src.links : {});
 			this.snapGrid = src.snap == null ? true : src.snap !== '0' && src.snap !== false;
@@ -1066,6 +1093,9 @@ return view.extend({
 			return;
 		}
 		this.loadPos();
+		const localSum = this.loadWanSumLocal();
+		if (localSum)
+			this.pos['wan-sum'] = Object.assign({}, this.pos['wan-sum'] || {}, localSum);
 		this.loadFields();
 		this.loadSnap();
 		this.loadLock();
@@ -1085,7 +1115,14 @@ return view.extend({
 	loadPos() {
 		this.pos = this.loadStore(this.posKey, topoPosFallback());
 	},
-	savePos() { this.schedulePersist(); },
+	savePos() {
+		this.writeLayoutLocal();
+		if (this._persistTimer) {
+			clearTimeout(this._persistTimer);
+			this._persistTimer = null;
+		}
+		callLayoutSet(this.layoutPayload()).catch(() => {});
+	},
 	loadFields() { this.fields = this.loadStore(this.fieldKey, TOPO_FIELDS_TEMPLATE); },
 	saveFields() { this.schedulePersist(); },
 	loadSnap() {
@@ -1139,10 +1176,11 @@ return view.extend({
 		}
 		const inet = (this.pos || {}).internet;
 		const sum = (this.pos || {})['wan-sum'];
+		const savedSum = this.loadWanSumLocal();
 		const near = function(a, b) {
 			return isFinite(a) && isFinite(b) && Math.abs(a - b) < 12;
 		};
-		if (inet && isFinite(inet.x) && isFinite(inet.y)) {
+		if (!savedSum && inet && isFinite(inet.x) && isFinite(inet.y)) {
 			const wantY = inet.y + TOPO_TEMPLATE.wanSum.dy;
 			if (!sum || !isFinite(sum.x) || !isFinite(sum.y)
 				|| (near(sum.x, inet.x) && near(sum.y, inet.y))) {
@@ -1250,6 +1288,8 @@ return view.extend({
 	patchPos(key, patch) {
 		this.pos = this.pos || {};
 		this.pos[key] = Object.assign({}, this.pos[key] || {}, patch);
+		if (key === 'wan-sum')
+			this.saveWanSumLocal(this.pos[key]);
 	},
 
 	topN() {
@@ -3705,7 +3745,8 @@ return view.extend({
 			const cmid = this.drawPipe(pipes, edgeX, ay, x0, cy,
 				null, cliBps, live && c.online !== false, clk, 'link_sw_cli');
 			this.decorateLink(labels, cmid, clk, 'link_sw_cli', {
-				name: clientHostname(c) || c.ip || '',
+				/* Link captions only use the Bandix terminal name. */
+				name: clientHostname(c),
 				lat: '延迟 —',
 				rx: c.rx, tx: c.tx
 			});
