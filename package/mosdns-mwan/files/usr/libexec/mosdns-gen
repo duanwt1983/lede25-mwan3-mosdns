@@ -416,8 +416,6 @@ if (follow) {
 
 system('mkdir -p /var/etc /var/log /etc/mosdns ' + cdir);
 ensure_path(log_file);
-if (use_stats)
-	ensure_path(cdir + '/stats.dump');
 if (use_cache && do_dump) {
 	let seed = '/usr/share/mosdns/cache.dump';
 	if (follow) {

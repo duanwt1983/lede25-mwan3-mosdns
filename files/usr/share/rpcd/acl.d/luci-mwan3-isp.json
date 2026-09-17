@@ -2,6 +2,9 @@
 	"luci-mwan3-isp": {
 		"description": "Update China ISP CIDR lists for mwan3",
 		"read": {
+			"ubus": {
+				"luci.ispip": [ "get_update_log" ]
+			},
 			"uci": [ "isp-ip", "mwan3" ],
 			"file": {
 				"/usr/libexec/isp-ip-update": [ "exec" ],
@@ -16,6 +19,9 @@
 			}
 		},
 		"write": {
+			"ubus": {
+				"luci.ispip": [ "start_update" ]
+			},
 			"uci": [ "isp-ip", "mwan3" ],
 			"file": {
 				"/usr/libexec/isp-ip-update": [ "exec" ],

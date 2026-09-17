@@ -945,7 +945,6 @@ return view.extend({
 	snapKey: 'lede-topo-snap',
 	linkKey: 'lede-topo-links-v6',
 	lockKey: 'lede-topo-lock',
-	wanSumPosKey: 'lede-topo-wan-sum-pos-v1',
 	links: {},
 	layoutLock: false,
 
@@ -963,23 +962,6 @@ return view.extend({
 			localStorage.setItem(key, JSON.stringify(obj || {}));
 		}
 		catch (e) {}
-	},
-
-	loadWanSumLocal() {
-		try {
-			const p = JSON.parse(localStorage.getItem(this.wanSumPosKey) || 'null');
-			return p && isFinite(p.x) && isFinite(p.y) ? p : null;
-		} catch (e) {
-			return null;
-		}
-	},
-
-	saveWanSumLocal(p) {
-		if (!p || !isFinite(p.x) || !isFinite(p.y))
-			return;
-		try {
-			localStorage.setItem(this.wanSumPosKey, JSON.stringify({ x: p.x, y: p.y }));
-		} catch (e) {}
 	},
 
 	layoutPayload() {
@@ -1071,15 +1053,6 @@ return view.extend({
 		src = src || {};
 		if (fromServer && src.saved) {
 			this.pos = Object.assign({}, fallback, src.pos || {});
-			/*
-			 * Keep the browser's last WAN summary position authoritative.
-			 * A failed/debounced layout_set used to let the older server copy
-			 * overwrite it on the next page load.
-			 */
-			const localPos = this.loadStore(this.posKey, {});
-			const localSum = this.loadWanSumLocal() || localPos['wan-sum'];
-			if (localSum && isFinite(localSum.x) && isFinite(localSum.y))
-				this.pos['wan-sum'] = Object.assign({}, this.pos['wan-sum'] || {}, localSum);
 			this.fields = Object.assign({}, TOPO_FIELDS_TEMPLATE, src.fields && typeof src.fields === 'object' ? src.fields : {});
 			this.links = Object.assign({}, TOPO_LINKS_TEMPLATE, src.links && typeof src.links === 'object' ? src.links : {});
 			this.snapGrid = src.snap == null ? true : src.snap !== '0' && src.snap !== false;
@@ -1093,9 +1066,6 @@ return view.extend({
 			return;
 		}
 		this.loadPos();
-		const localSum = this.loadWanSumLocal();
-		if (localSum)
-			this.pos['wan-sum'] = Object.assign({}, this.pos['wan-sum'] || {}, localSum);
 		this.loadFields();
 		this.loadSnap();
 		this.loadLock();
@@ -1174,17 +1144,16 @@ return view.extend({
 			this.fields['wan-sum'] = cur;
 			changed = true;
 		}
-		const inet = (this.pos || {}).internet;
 		const sum = (this.pos || {})['wan-sum'];
-		const savedSum = this.loadWanSumLocal();
-		const near = function(a, b) {
-			return isFinite(a) && isFinite(b) && Math.abs(a - b) < 12;
-		};
-		if (!savedSum && inet && isFinite(inet.x) && isFinite(inet.y)) {
+		/* User-placed WAN summary position is stored in /etc/lede-topo.json. */
+		if (sum && (sum.user === 1 || sum.user === true || sum.user === '1'))
+			return changed ? this.schedulePersist() : undefined;
+		const inet = (this.pos || {}).internet;
+		if (inet && isFinite(inet.x) && isFinite(inet.y)) {
+			const wantX = inet.x + TOPO_TEMPLATE.wanSum.dx;
 			const wantY = inet.y + TOPO_TEMPLATE.wanSum.dy;
-			if (!sum || !isFinite(sum.x) || !isFinite(sum.y)
-				|| (near(sum.x, inet.x) && near(sum.y, inet.y))) {
-				this.patchPos('wan-sum', { x: inet.x + TOPO_TEMPLATE.wanSum.dx, y: wantY });
+			if (!sum || !isFinite(sum.x) || !isFinite(sum.y)) {
+				this.patchPos('wan-sum', { x: wantX, y: wantY });
 				changed = true;
 			}
 		}
@@ -1285,11 +1254,12 @@ return view.extend({
 		return { w: w, h: h };
 	},
 
-	patchPos(key, patch) {
+	patchPos(key, patch, opts) {
 		this.pos = this.pos || {};
-		this.pos[key] = Object.assign({}, this.pos[key] || {}, patch);
-		if (key === 'wan-sum')
-			this.saveWanSumLocal(this.pos[key]);
+		const next = Object.assign({}, this.pos[key] || {}, patch);
+		if (opts && opts.user)
+			next.user = 1;
+		this.pos[key] = next;
 	},
 
 	topN() {
@@ -1350,6 +1320,8 @@ return view.extend({
 		const p = (this.pos || {})[key];
 		if (p && isFinite(p.x) && isFinite(p.y))
 			return { x: p.x, y: p.y };
+		if (key === 'wan-sum' && isFinite(x) && isFinite(y))
+			return { x: x, y: y };
 		const t = TOPO_TEMPLATE[key];
 		if (t && isFinite(t.x) && isFinite(t.y))
 			return { x: t.x, y: t.y };
@@ -2528,7 +2500,7 @@ return view.extend({
 				self.patchPos(key, {
 					x: snapVal(p.x - dx, self.snapGrid),
 					y: snapVal(p.y - dy, self.snapGrid)
-				});
+				}, key === 'wan-sum' ? { user: true } : null);
 				self._didDrag = true;
 				if (!self._dragRaf) {
 					self._dragRaf = requestAnimationFrame(function() {

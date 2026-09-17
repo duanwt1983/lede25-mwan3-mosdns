@@ -3,16 +3,23 @@
 DIR=/etc/mwan3/isp
 LOG=/var/log/isp-ip-update.log
 STATUS=/var/run/isp-ip-update.status
-mkdir -p "$DIR" /var/run
+LOCK=/var/lock/isp-ip-update.lock
+mkdir -p "$DIR" /var/run /var/lock
 
-log() { echo "$(date '+%F %T') $*" >> "$LOG"; }
+log() {
+	echo "$(date '+%F %T') $*" >> "$LOG"
+	chmod 644 "$LOG" 2>/dev/null || true
+}
 
 fail() {
 	log "FAIL $*"
 	echo "FAIL $*" > "$STATUS"
-	echo "更新失败：$*"
+	log "更新失败：$*"
+	log "UPDATE_EXITED"
 	exit 1
 }
+
+release_lock() { rm -f "$LOCK"; }
 
 uci_get() { uci -q get "isp-ip.main.$1" 2>/dev/null || true; }
 
@@ -60,11 +67,11 @@ sync_cron() {
 		week="$(uci_get week)"
 		hour="$(uci_get hour)"
 		[ -n "$week" ] || week='*'
-		[ -n "$hour" ] || hour='4'
-		echo "17 $hour * * $week /bin/sh /usr/libexec/isp-ip-update" >> /etc/crontabs/root
+		[ -n "$hour" ] || hour='3'
+		echo "0 $hour * * $week /bin/sh /usr/libexec/isp-ip-update" >> /etc/crontabs/root
 	fi
 	/etc/init.d/cron restart >/dev/null 2>&1 || true
-	log "cron synced auto=$(uci_get auto) ${hour:-4}:00 week=${week:-*}"
+	log "cron synced auto=$(uci_get auto) ${hour:-3}:00 week=${week:-*}"
 	echo "OK cron" > "$STATUS"
 	echo "计划任务已同步"
 }
@@ -83,7 +90,15 @@ migrate_url_lists url_unicom
 migrate_url_lists url_cmcc
 migrate_url_lists url_other
 
+if [ -f "$LOCK" ]; then
+	echo "Another update is already in progress."
+	exit 1
+fi
+touch "$LOCK"
+trap release_lock EXIT INT TERM
+
 echo "FAIL running" > "$STATUS"
+log "UPDATE_STARTED"
 
 proxy_url() {
 	local url="$1"
@@ -199,5 +214,6 @@ if [ -x /etc/init.d/mwan3 ] && /etc/init.d/mwan3 running >/dev/null 2>&1; then
 fi
 log "done ok=$ok ct=$n_ct cu=$n_cu cm=$n_cm ot=$n_ot"
 echo "OK $ok ct=$n_ct cu=$n_cu cm=$n_cm ot=$n_ot" > "$STATUS"
-echo "更新成功：电信 ${n_ct:-0} 联通 ${n_cu:-0} 移动 ${n_cm:-0} 其它 ${n_ot:-0}"
+log "更新成功：电信 ${n_ct:-0} 联通 ${n_cu:-0} 移动 ${n_cm:-0} 其它 ${n_ot:-0}"
+log "UPDATE_FINISHED"
 exit 0

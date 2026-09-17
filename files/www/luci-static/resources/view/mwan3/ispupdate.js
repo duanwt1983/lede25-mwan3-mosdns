@@ -4,6 +4,19 @@
 'require uci';
 'require fs';
 'require ui';
+'require rpc';
+
+const callStartUpdate = rpc.declare({
+	object: 'luci.ispip',
+	method: 'start_update',
+	expect: { '': {} }
+});
+
+const callGetUpdateLog = rpc.declare({
+	object: 'luci.ispip',
+	method: 'get_update_log',
+	expect: { '': {} }
+});
 
 function countCidr(text) {
 	let n = 0;
@@ -17,10 +30,113 @@ function countCidr(text) {
 function countHint(n) {
 	if (n > 0)
 		return _('当前地址库 %d 条').format(n);
-	return _('当前地址库 0 条，点「立即更新地址库」下载');
+	return _('当前地址库 0 条，点「检查并更新」下载');
 }
 
 return view.extend({
+	handleUpdate() {
+		const statusMsg = E('p', { 'class': 'spinning' }, _('请稍候，这可能需要几分钟…'));
+		const logTextarea = E('textarea', {
+			'class': 'cbi-input-textarea',
+			'readonly': 'readonly',
+			'style': 'width: 100%; height: 300px; font-family: monospace; font-size: 12px; margin-top: 10px;',
+			'placeholder': _('正在启动更新…')
+		});
+		const closeButton = E('button', {
+			'class': 'btn',
+			'style': 'display: none;',
+			'click': function() {
+				ui.hideModal();
+				location.reload();
+			}
+		}, _('关闭'));
+
+		ui.showModal(_('正在更新运营商地址库…'), [
+			statusMsg,
+			logTextarea,
+			E('div', { 'class': 'right' }, [closeButton])
+		]);
+
+		const applyLog = function(log) {
+			log = String(log || '');
+			if (!log)
+				return true;
+			logTextarea.value = log;
+			logTextarea.scrollTop = logTextarea.scrollHeight;
+			if (log.match(/UPDATE_FINISHED/) || /^OK\b/m.test(log) || log.indexOf('更新成功') >= 0) {
+				statusMsg.textContent = _('更新成功');
+				statusMsg.classList.remove('spinning');
+				statusMsg.style.color = '#19be6b';
+				statusMsg.style.fontWeight = 'bold';
+				closeButton.style.display = 'inline';
+				return false;
+			}
+			if (log.match(/UPDATE_EXITED/) || log.indexOf('更新失败') >= 0 || /^FAIL\b/m.test(log)) {
+				statusMsg.textContent = _('更新失败');
+				statusMsg.classList.remove('spinning');
+				statusMsg.style.color = '#ed4014';
+				statusMsg.style.fontWeight = 'bold';
+				closeButton.style.display = 'inline';
+				return false;
+			}
+			if (log.match(/Another update is already in progress/)) {
+				statusMsg.textContent = _('另一次更新正在进行中。');
+				statusMsg.classList.remove('spinning');
+				statusMsg.style.color = '#ff9900';
+				closeButton.style.display = 'inline';
+				return false;
+			}
+			if (log.match(/UPDATE_STARTED/) || log.match(/merged /))
+				statusMsg.textContent = _('正在更新，请稍候…');
+			return true;
+		};
+
+		const pollLog = function() {
+			return callGetUpdateLog().then(function(res) {
+				if (res && res.log)
+					return applyLog(res.log);
+				return true;
+			});
+		};
+
+		return callStartUpdate().then(function(res) {
+			if (res && res.success) {
+				const interval = window.setInterval(function() {
+					pollLog().then(function(continuePolling) {
+						if (!continuePolling)
+							window.clearInterval(interval);
+					}).catch(function(e) {
+						statusMsg.textContent = _('读取日志失败：%s').format(e.message || String(e));
+						statusMsg.classList.remove('spinning');
+						statusMsg.style.color = '#ed4014';
+						closeButton.style.display = 'inline';
+						window.clearInterval(interval);
+					});
+				}, 1000);
+				pollLog();
+			} else if (res && res.error && res.error.match(/Another update is already in progress/)) {
+				statusMsg.textContent = _('另一次更新正在进行中。');
+				statusMsg.style.color = '#ff9900';
+				callGetUpdateLog().then(function(logRes) {
+					if (logRes && logRes.log)
+						logTextarea.value = logRes.log;
+				});
+				statusMsg.classList.remove('spinning');
+				closeButton.style.display = 'inline';
+			} else {
+				statusMsg.textContent = (res && res.error) || _('无法启动更新。');
+				statusMsg.style.color = '#ed4014';
+				statusMsg.classList.remove('spinning');
+				closeButton.style.display = 'inline';
+			}
+		}).catch(function(e) {
+			statusMsg.textContent = _('更新失败：%s').format(e.message || String(e));
+			statusMsg.classList.remove('spinning');
+			statusMsg.style.color = '#ed4014';
+			closeButton.style.display = 'inline';
+		});
+	},
+
 	load() {
 		return Promise.all([
 			uci.load('isp-ip'),
@@ -32,42 +148,41 @@ return view.extend({
 	},
 
 	render(data) {
+		const self = this;
 		const nCt = countCidr(data && data[1]);
 		const nCu = countCidr(data && data[2]);
 		const nCm = countCidr(data && data[3]);
 		const nOt = countCidr(data && data[4]);
 
 		const m = new form.Map('isp-ip', _('运营商地址库'),
-			_('从国内源下载电信/联通/移动/其它 IPv4 段，写入 /etc/mwan3/isp/*.cidr，给「IP 集」里的 isp_chinanet 等使用。不会自动改分流规则。可像 MosDNS 国内 DNS 一样增加或删除更新链接。'));
+			_('从国内源下载电信/联通/移动/其它 IPv4 段，写入 /etc/mwan3/isp/*.cidr，给「IP 集」里的 isp_chinanet 等使用。不会自动改分流规则。更新计划与 MosDNS「更新数据库」页相同。'));
 
 		const s = m.section(form.NamedSection, 'main', 'update');
 		s.addremove = false;
 		s.anonymous = true;
 
-		let o = s.option(form.Flag, 'auto', _('启用自动更新'));
+		let o = s.option(form.Flag, 'auto', _('启用自动更新数据库'));
 		o.rmempty = false;
 		o.default = '0';
 
 		o = s.option(form.ListValue, 'week', _('更新周期'));
 		o.value('*', _('每天'));
-		o.value('1', _('星期一'));
-		o.value('2', _('星期二'));
-		o.value('3', _('星期三'));
-		o.value('4', _('星期四'));
-		o.value('5', _('星期五'));
-		o.value('6', _('星期六'));
-		o.value('0', _('星期日'));
-		o.default = '*';
-		o.depends('auto', '1');
+		o.value('1', _('每周一'));
+		o.value('2', _('每周二'));
+		o.value('3', _('每周三'));
+		o.value('4', _('每周四'));
+		o.value('5', _('每周五'));
+		o.value('6', _('每周六'));
+		o.value('0', _('每周日'));
+		o.default = '3';
 
 		o = s.option(form.ListValue, 'hour', _('更新时间'));
-		for (let i = 0; i < 24; i++)
-			o.value(String(i), '%02d:00'.format(i));
-		o.default = '4';
-		o.depends('auto', '1');
+		for (let t = 0; t < 24; t++)
+			o.value(String(t), t + ':00');
+		o.default = '3';
 
 		o = s.option(form.Value, 'github_proxy', _('GitHub 代理'),
-			_('仅用于 GitHub / raw.githubusercontent.com 链接。clang.cn、yfgao 等国内源仍直连。留空则不走代理。保存后再点更新，或直接点「立即更新地址库」也会先保存。'));
+			_('通过代理更新 GitHub 链接，留空则不走代理。clang.cn、yfgao 等国内源仍直连。'));
 		o.value('', _('不使用代理（直连）'));
 		o.value('https://gh-proxy.com', 'https://gh-proxy.com');
 		o.value('https://ghproxy.net', 'https://ghproxy.net');
@@ -100,32 +215,15 @@ return view.extend({
 		o.value('https://china-operator-ip.yfgao.com/drpeng.txt', 'yfgao 鹏博士');
 		o.placeholder = 'https://';
 
-		o = s.option(form.Button, '_update', _('立即更新地址库'));
-		o.inputtitle = _('立即更新地址库');
+		o = s.option(form.Button, '_update', null, _('检查并更新运营商地址库。'));
+		o.title = _('地址库更新');
+		o.inputtitle = _('检查并更新');
 		o.inputstyle = 'apply';
 		o.onclick = function() {
 			return m.save().then(function() {
 				return uci.save();
 			}).then(function() {
-			return fs.exec('/bin/sh', ['/usr/libexec/isp-ip-update']).then(function(res) {
-				return fs.read('/var/run/isp-ip-update.status').catch(function() {
-					return '';
-				}).then(function(st) {
-					const status = String(st || '').trim();
-					const out = String((res && (res.stdout || res.stderr)) || '').trim();
-					const code = (res && res.code != null) ? Number(res.code) : NaN;
-					const ok = out.indexOf('更新失败') < 0 &&
-						(out.indexOf('更新成功') === 0 || /^OK\b/.test(status)) &&
-						(isNaN(code) || code === 0);
-					const msg = out || status || (ok ? _('更新成功') : _('更新失败'));
-					ui.addNotification(null, E('pre', { 'style': 'white-space:pre-wrap' }, msg),
-						ok ? 'info' : 'error');
-					if (ok)
-						window.setTimeout(function() { location.reload(); }, 600);
-				});
-			}).catch(function(e) {
-				ui.addNotification(null, E('p', {}, e.message || String(e)), 'error');
-			});
+				return self.handleUpdate();
 			});
 		};
 

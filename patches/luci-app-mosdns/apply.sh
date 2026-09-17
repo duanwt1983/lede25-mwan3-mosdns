@@ -261,13 +261,45 @@ new = (
     "\t# " + old
 )
 # Section type may be mosdns (LuCI) or config (stock /etc/config/mosdns).
+cfg_load = 'config_foreach get_config "mosdns"\n\tconfig_foreach get_config "config"'
 if 'config_foreach get_config "config"' not in t:
     t = t.replace(
         'config_foreach get_config "mosdns"',
-        'config_foreach get_config "mosdns"\n\tconfig_foreach get_config "config"',
+        cfg_load,
         1,
     )
     print("init.d mosdns: load config section type too")
+stop_old = (
+    'stop_service() {\n'
+    '\tconfig_load "mosdns"\n'
+    '\tconfig_foreach get_config "mosdns"'
+)
+if stop_old in t and 'stop_service() {\n\tconfig_load "mosdns"\n\tconfig_foreach get_config "mosdns"\n\tconfig_foreach get_config "config"' not in t:
+    t = t.replace(stop_old, stop_old + '\n\tconfig_foreach get_config "config"', 1)
+    print("init.d mosdns: stop_service loads config section")
+dup = (
+    'uci add_list dhcp.@dnsmasq[0].server="127.0.0.1#${listen_port:-5335}"\n'
+    '\t\tuci add_list dhcp.@dnsmasq[0].server="127.0.0.1#${listen_port:-5335}"'
+)
+if dup in t:
+    t = t.replace(
+        dup,
+        'uci add_list dhcp.@dnsmasq[0].server="127.0.0.1#${listen_port:-5335}"',
+        1,
+    )
+    print("init.d mosdns: dedupe dhcp forward entry")
+stale = (
+    '\t# Ensure stale daemon does not block listen ports (do not use killall mosdns: it matches init script too).\n'
+    '\tfor _p in $(pidof mosdns); do\n'
+    '\t\t[ -x "/proc/${_p}/exe" ] || continue\n'
+    '\t\t[ "$(readlink "/proc/${_p}/exe" 2>/dev/null)" = "/usr/bin/mosdns" ] && kill "${_p}" 2>/dev/null\n'
+    '\tdone\n'
+    '\tsleep 1\n\n'
+    '\tprocd_open_instance mosdns'
+)
+if 'do not use killall mosdns' not in t:
+    t = t.replace('\tprocd_open_instance mosdns', stale, 1)
+    print("init.d mosdns: stale daemon cleanup before procd")
 # YAML also listens on :5301 (WAN hash). Always forward dnsmasq to MosDNS listen_port.
 needle = 'uci add_list dhcp.@dnsmasq[0].server="127.0.0.1#$(awk'
 if '127.0.0.1#${listen_port:-5335}"' not in t and needle in t:
