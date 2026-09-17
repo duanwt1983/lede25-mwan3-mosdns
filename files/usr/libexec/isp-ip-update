@@ -60,18 +60,26 @@ try_isp() {
 }
 
 sync_cron() {
+	local auto week hour
+	if [ -n "${1:-}" ]; then
+		auto="$1"
+		week="${2:-$(uci_get week)}"
+		hour="${3:-$(uci_get hour)}"
+	else
+		auto="$(uci_get auto)"
+		week="$(uci_get week)"
+		hour="$(uci_get hour)"
+	fi
 	mkdir -p /etc/crontabs
 	touch /etc/crontabs/root
 	sed -i '/isp-ip-update/d' /etc/crontabs/root 2>/dev/null || true
-	if [ "$(uci_get auto)" = "1" ]; then
-		week="$(uci_get week)"
-		hour="$(uci_get hour)"
+	if [ "$auto" = "1" ]; then
 		[ -n "$week" ] || week='*'
 		[ -n "$hour" ] || hour='3'
 		echo "0 $hour * * $week /bin/sh /usr/libexec/isp-ip-update" >> /etc/crontabs/root
 	fi
 	/etc/init.d/cron restart >/dev/null 2>&1 || true
-	log "cron synced auto=$(uci_get auto) ${hour:-3}:00 week=${week:-*}"
+	log "cron synced auto=$auto ${hour:-3}:00 week=${week:-*}"
 	echo "OK cron" > "$STATUS"
 	echo "计划任务已同步"
 }
@@ -81,7 +89,7 @@ if [ "${1:-}" = "sync-cron" ]; then
 	migrate_url_lists url_unicom
 	migrate_url_lists url_cmcc
 	migrate_url_lists url_other
-	sync_cron
+	sync_cron "${2:-}" "${3:-}" "${4:-}"
 	exit 0
 fi
 

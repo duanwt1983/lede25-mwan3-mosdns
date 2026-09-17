@@ -35,7 +35,13 @@ function countHint(n) {
 
 return view.extend({
 	syncCron() {
-		return fs.exec('/bin/sh', ['/usr/libexec/isp-ip-update', 'sync-cron']);
+		const auto = uci.get('isp-ip', 'main', 'auto');
+		const week = uci.get('isp-ip', 'main', 'week') || '*';
+		const hour = uci.get('isp-ip', 'main', 'hour') || '3';
+		const en = (auto === '1' || auto === 1 || auto === true) ? '1' : '0';
+		return fs.exec('/bin/sh', [
+			'/usr/libexec/isp-ip-update', 'sync-cron', en, String(week), String(hour)
+		]);
 	},
 
 	handleUpdate() {
