@@ -664,7 +664,7 @@ assert_pkg_file 'lede-theme-page' \
 assert_pkg_file 'lede-theme-page' \
   package/luci-mod-status feeds/luci -path '*/view/status/index.js'
 assert_pkg_file 'lede-theme-page' \
-  package/luci-mod-status feeds/luci -path '*/view/status/wanalert-page.js'
+  package/luci-mod-status feeds/luci -path '*/view/status/wanalert-layout.js'
 _ARGON_CSS=$(find package/luci-theme-argon -path '*/luci-static/argon/css/lede-brand-font.css' -type f 2>/dev/null | head -n 1 || true)
 _ARGON_HDR=$(find package/luci-theme-argon -path '*/template/themes/argon/header.ut' -type f 2>/dev/null | head -n 1 || true)
 [ -n "$_ARGON_CSS" ] || { echo "ERROR: lede-brand-font.css not installed in luci-theme-argon package"; exit 1; }
