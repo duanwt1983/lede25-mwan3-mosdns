@@ -3,6 +3,7 @@
 'require form';
 'require fs';
 'require uci';
+'require ui';
 
 function parseStatus(res) {
 	var text = String((res && (res.stdout || res.stderr)) || '').trim();
@@ -27,8 +28,6 @@ return view.extend({
 
 	render: function(data) {
 		var st = parseStatus(data[1]);
-		var on = st.enabled ? '1' : '0';
-		var port = String(st.port || uci.get('lede-remote', 'main', 'port') || '10443');
 
 		var m = new form.Map('lede-remote', _('远程管理'));
 		var s = m.section(form.NamedSection, 'main', 'https');
@@ -43,6 +42,7 @@ return view.extend({
 		o = s.option(form.DummyValue, '_fw', _('防火墙规则'));
 		o.rawhtml = true;
 		o.cfgvalue = function() {
+			var p = String(st.port || uci.get('lede-remote', 'main', 'port') || '10443');
 			if (!st.firewall)
 				return _('未添加');
 			return '%s　%s → %s　%s/%s　%s'.format(
@@ -50,15 +50,16 @@ return view.extend({
 				st.src || 'wan',
 				_('本机'),
 				st.proto || 'tcp',
-				port,
+				p,
 				st.target || 'ACCEPT'
 			);
 		};
 
 		o = s.option(form.DummyValue, '_listen', _('监听'));
 		o.cfgvalue = function() {
+			var p = String(st.port || uci.get('lede-remote', 'main', 'port') || '10443');
 			if (st.listen)
-				return '0.0.0.0:%s'.format(port);
+				return '0.0.0.0:%s'.format(p);
 			if (st.nginx)
 				return _('配置已生成，等待监听');
 			return _('未监听');
@@ -67,17 +68,11 @@ return view.extend({
 		o = s.option(form.Flag, 'enabled', _('允许外网访问管理页'));
 		o.rmempty = false;
 		o.default = '0';
-		o.cfgvalue = function() {
-			return on;
-		};
 
 		o = s.option(form.Value, 'port', _('外网端口'));
 		o.datatype = 'range(1024,65535)';
 		o.default = '10443';
 		o.rmempty = false;
-		o.cfgvalue = function() {
-			return port;
-		};
 
 		this.map = m;
 		return m.render().then(function(node) {
@@ -98,13 +93,16 @@ return view.extend({
 	},
 
 	handleSave: function() {
-		var self = this;
 		return this.map.save().then(function() {
+			return uci.save();
+		}).then(function() {
 			var en = uci.get('lede-remote', 'main', 'enabled');
 			var p = uci.get('lede-remote', 'main', 'port') || '10443';
 			en = (en === '1' || en === 1 || en === true) ? '1' : '0';
 			return fs.exec('/usr/libexec/lede-wan-https', [en, String(p)]);
 		}).then(function() {
+			if (ui.changes && typeof ui.changes.displayChangeIndicator === 'function')
+				ui.changes.displayChangeIndicator(false);
 			window.location.reload();
 		});
 	},
