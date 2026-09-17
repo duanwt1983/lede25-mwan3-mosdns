@@ -113,7 +113,7 @@ fi
 # Single-WAN uses netifd only. mwan3 repair crons attach when an
 # enabled mwan3 interface exists (see /lib/functions/lede-mwan3.sh).
 if [ -x /etc/init.d/isp-ip-update ]; then
-  /etc/init.d/isp-ip-update disable >/dev/null 2>&1 || true
+  /etc/init.d/isp-ip-update enable >/dev/null 2>&1 || true
 fi
 if [ -f /etc/config/isp-ip ]; then
   uci -q set isp-ip.main.auto='0'

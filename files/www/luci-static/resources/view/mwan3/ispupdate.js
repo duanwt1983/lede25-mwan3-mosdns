@@ -34,6 +34,10 @@ function countHint(n) {
 }
 
 return view.extend({
+	syncCron() {
+		return fs.exec('/bin/sh', ['/usr/libexec/isp-ip-update', 'sync-cron']);
+	},
+
 	handleUpdate() {
 		const statusMsg = E('p', { 'class': 'spinning' }, _('请稍候，这可能需要几分钟…'));
 		const logTextarea = E('textarea', {
@@ -230,6 +234,8 @@ return view.extend({
 			}).then(function() {
 				if (ui.changes && typeof ui.changes.displayChangeIndicator === 'function')
 					ui.changes.displayChangeIndicator(false);
+				return self.syncCron();
+			}).then(function() {
 				return self.handleUpdate();
 			});
 		};
@@ -237,9 +243,17 @@ return view.extend({
 		return m.render();
 	},
 
+	handleSave(ev) {
+		const self = this;
+		return this.super('handleSave', [ev]).then(function() {
+			return self.syncCron();
+		});
+	},
+
 	handleSaveApply(ev, mode) {
-		return this.super('handleSaveApply', [ev, mode]).then(function() {
-			return fs.exec('/bin/sh', ['/usr/libexec/isp-ip-update', 'sync-cron']);
+		/* sync-cron must run before ui.changes.apply() reloads the page */
+		return this.handleSave(ev).then(function() {
+			return ui.changes.apply(mode == '0');
 		});
 	}
 });
