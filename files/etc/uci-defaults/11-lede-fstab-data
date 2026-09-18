@@ -5,5 +5,7 @@ sid=$(uci -q show fstab 2>/dev/null | awk -F'[.=]' "/target='\\/data'/{print \$2
 [ -n "$sid" ] || exit 0
 uci -q set "fstab.$sid.fstype=ext4"
 uci -q set "fstab.$sid.options=rw,noatime,nofail"
+uci -q set "fstab.$sid.enabled=1"
 uci -q commit fstab
+[ -x /etc/init.d/fstab ] && /etc/init.d/fstab enable
 exit 0

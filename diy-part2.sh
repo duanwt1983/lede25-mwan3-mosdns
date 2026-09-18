@@ -87,25 +87,27 @@ rm -rf package/mosdns-mwan
 cp -a "$_OVERLAY/package/mosdns-mwan" package/mosdns-mwan
 rm -rf package/wireshark
 cp -a "$_OVERLAY/package/wireshark" package/wireshark
-chmod 755 package/mosdns-mwan/files/usr/libexec/* package/mosdns-mwan/files/usr/sbin/* \
-  package/mosdns-mwan/files/usr/share/mosdns/gen-config-custom \
-  package/mosdns-mwan/files/etc/hotplug.d/iface/* 2>/dev/null || true
-chmod 755 files/usr/libexec/lede-wan-https files/etc/init.d/lede-wan-https \
-  files/etc/uci-defaults/zzz-wan-https-10443 \
-  files/usr/libexec/lede-stamp-reboot files/usr/sbin/reboot files/usr/libexec/wan-alert \
-  files/usr/libexec/rpcd/wanmonitor files/etc/hotplug.d/iface/99-lede-netlog \
-  files/usr/libexec/lede-data-setup files/etc/init.d/lede-data files/etc/uci-defaults/zzz-lede-data-paths \
-  files/etc/uci-defaults/10-lede-data-enable \
-  files/etc/init.d/lede-ubus-limits files/etc/uci-defaults/10-lede-ubus-limits \
-  files/usr/libexec/lede-conntrack-tune files/etc/init.d/lede-conntrack \
-  files/etc/uci-defaults/10-lede-conntrack \
-  files/usr/libexec/lede-hwinfo files/etc/init.d/lede-hwinfo \
-  files/etc/uci-defaults/10-lede-hwinfo \
-  files/usr/libexec/lede-mgmt-bind files/etc/uci-defaults/40-lede-mgmt-bind \
-  files/etc/hotplug.d/iface/30-lede-mgmt-bind \
-  files/usr/libexec/lede-mwan3-setup \
-  files/usr/libexec/isp-ip-update files/etc/init.d/isp-ip-update \
-  files/usr/libexec/mosdns-fix-dns-forward 2>/dev/null || true
+# Overlay scripts must be executable in the image. Git on Windows often stores
+# them as 100644; fix the index when possible, then chmod the working tree.
+[ -f scripts/fix-overlay-exec.sh ] && sh scripts/fix-overlay-exec.sh || true
+lede_chmod_overlay_exec() {
+  local f
+  for f in \
+    files/etc/init.d/* \
+    files/etc/hotplug.d/*/* \
+    files/usr/libexec/* \
+    files/usr/libexec/rpcd/* \
+    files/usr/sbin/* \
+    package/mosdns-mwan/files/etc/hotplug.d/*/* \
+    package/mosdns-mwan/files/usr/libexec/* \
+    package/mosdns-mwan/files/usr/sbin/* \
+    package/mosdns-mwan/files/usr/share/mosdns/*; do
+    [ -f "$f" ] || continue
+    head -c 2 "$f" 2>/dev/null | grep -q '^#!' || continue
+    chmod 755 "$f" 2>/dev/null || true
+  done
+}
+lede_chmod_overlay_exec
 
 # ubusd/rpcd default nofile=1024; long-open topology + WAN monitor exhausts it.
 lede_bump_ubus_nofile() {
@@ -304,6 +306,11 @@ if [ -f files/etc/hotplug.d/iface/26-wan-alert ]; then
   install -m 0755 files/etc/hotplug.d/iface/26-wan-alert \
     package/mosdns-mwan/files/etc/hotplug.d/iface/26-wan-alert 2>/dev/null || true
 fi
+if [ -f files/etc/hotplug.d/net/90-lede-wan-carrier ]; then
+  mkdir -p package/mosdns-mwan/files/etc/hotplug.d/net 2>/dev/null || true
+  install -m 0755 files/etc/hotplug.d/net/90-lede-wan-carrier \
+    package/mosdns-mwan/files/etc/hotplug.d/net/90-lede-wan-carrier 2>/dev/null || true
+fi
 sed -i 's|include ../../luci.mk|include $(TOPDIR)/feeds/luci/luci.mk|' package/luci-app-mwan3/Makefile
 if ! grep -q '^PKGARCH:=all' package/luci-app-mwan3/Makefile; then
   sed -i 's|include $(TOPDIR)/feeds/luci/luci.mk|PKGARCH:=all\ninclude $(TOPDIR)/feeds/luci/luci.mk|' package/luci-app-mwan3/Makefile
@@ -410,7 +417,6 @@ if [ -f files/www/luci-static/resources/view/network/packetcap.js ]; then
     echo "packetcap: $(dirname "$f")/packetcap.js"
   done
 fi
-
 if [ -f files/www/luci-static/resources/view/system/remote.js ]; then
   find feeds/luci package -path '*/view/system/system.js' -type f 2>/dev/null | while read -r f; do
     case "$f" in
@@ -659,7 +665,30 @@ for _rel in \
   usr/libexec/mosdns-fix-dns-forward \
   usr/libexec/lede-mwan3-setup \
   lib/functions/lede-mwan3.sh \
-  www/luci-static/resources/view/mwan3/ispupdate.js
+  www/luci-static/resources/view/mwan3/ispupdate.js \
+  usr/libexec/lede-autolimit \
+  usr/libexec/lede-autolimit-loop \
+  usr/libexec/rpcd/lede-autolimit \
+  etc/init.d/lede-autolimit \
+  etc/config/lede-autolimit \
+  etc/uci-defaults/43-lede-autolimit \
+  usr/share/ucode/lede-autolimit.uc \
+  www/luci-static/resources/view/status/autolimit.js \
+  usr/libexec/lede-data-setup \
+  etc/init.d/lede-data \
+  etc/uci-defaults/10-lede-data-enable \
+  etc/uci-defaults/11-lede-fstab-data \
+  usr/libexec/lede-autofix \
+  usr/share/ucode/lede-bandix.uc \
+  usr/share/ucode/lede-watch.uc \
+  usr/libexec/rpcd/wanmonitor \
+  usr/libexec/wan-alert \
+  usr/libexec/packet-cap \
+  etc/hotplug.d/net/90-lede-wan-carrier \
+  etc/hotplug.d/iface/28-bandix-plus-restart \
+  etc/hotplug.d/dhcp/30-lede-mwan3-mac \
+  usr/sbin/wan-fail-dump \
+  usr/sbin/wan-fail-watch
 do
   assert_overlay "$_rel"
 done
@@ -715,6 +744,24 @@ assert_grep '自动配置' "$_MWAN3_TAB_PKG"
 echo "package OK: $_MWAN3_TAB_PKG"
 assert_grep 'lede-theme-page' "$_LEDE_FILES/www/luci-static/resources/lede-theme-page.js"
 echo "overlay OK: lede-theme-page.js (single copy, avoids opkg clash)"
+assert_grep 'paintStatus' "$_LEDE_FILES/www/luci-static/resources/view/status/autolimit.js"
+assert_grep 'autolimit_status' "$_LEDE_FILES/usr/share/ucode/lede-autolimit.uc"
+assert_grep 'bplus_iface_is_lan' "$_LEDE_FILES/usr/share/ucode/lede-bandix.uc"
+assert_grep 'all_down_sent' "$_LEDE_FILES/usr/share/ucode/lede-watch.uc"
+assert_grep 'MAX_CAP_SEC' "$_LEDE_FILES/usr/libexec/packet-cap"
+for _bad in \
+  etc/init.d/lede-lan-guard \
+  usr/libexec/lede-lan-guard \
+  usr/libexec/lede-lan-guard-nft \
+  etc/uci-defaults/60-lede-lan-guard \
+  usr/share/luci/menu.d/luci-lede-lan-guard.json \
+  www/luci-static/resources/view/network/languard.js
+do
+  [ ! -e "$_LEDE_FILES/$_bad" ] || { echo "ERROR: lan-guard leftover in overlay: $_bad"; exit 1; }
+done
+assert_grep 'enable_data_mount_service' "$_LEDE_FILES/usr/libexec/lede-data-setup"
+assert_grep 'chmod +x /usr/libexec/lede-data-setup' "$_LEDE_FILES/etc/uci-defaults/10-lede-data-enable"
+assert_grep 'lede_fixup_script_modes' "$_LEDE_FILES/etc/uci-defaults/99-custom"
 
 _SYSJS=$(find feeds/luci package -path '*/view/system/system.js' -type f 2>/dev/null | head -n 1 || true)
 [ -n "$_SYSJS" ] || { echo "ERROR: system.js not found after luci-mod-system patch"; exit 1; }

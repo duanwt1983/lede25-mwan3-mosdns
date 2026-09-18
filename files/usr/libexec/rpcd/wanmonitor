@@ -278,9 +278,15 @@ function pulse() {
 	let la = split(trim(readfile('/proc/loadavg') || '0.00 0.00 0.00'), /[ \t]+/);
 	let conn = +(trim(readfile('/proc/sys/net/netfilter/nf_conntrack_count') || '0'));
 	let conn_max = +(trim(readfile('/proc/sys/net/netfilter/nf_conntrack_max') || '0'));
-	let lan_dev = 'br-lan';
+	let u = null;
+	try { u = ubus.connect(); } catch (e) { u = null; }
+	let lst = iface_status(u, 'lan');
+	let lan_dev = lst.l3_device || 'br-lan';
 	let lan_ip = '';
-	if (bj && type(bj.data.interfaces) == 'array') {
+	let la4 = lst['ipv4-address'];
+	if (type(la4) == 'array' && la4[0] && la4[0].address)
+		lan_ip = la4[0].address;
+	if (lan_dev == 'br-lan' && bj && type(bj.data.interfaces) == 'array') {
 		for (let iface in bj.data.interfaces) {
 			if (iface.ifname == 'br-lan' || iface.zone == 'lan') {
 				if (iface.ifname)
@@ -301,8 +307,6 @@ function pulse() {
 	let clients = cl.clients;
 	let wan_rates = {};
 	if (bj) {
-		let u = null;
-		try { u = ubus.connect(); } catch (e) { u = null; }
 		let ctx = cursor();
 		ctx.load('network');
 		ctx.load('firewall');
@@ -318,8 +322,8 @@ function pulse() {
 			});
 		}
 		wan_rates = bandix_wan_rates(bmaps, wans);
-		ubus_close(u);
 	}
+	ubus_close(u);
 	print(sprintf('%J\n', {
 		ts: int(+up * 1000),
 		lan,

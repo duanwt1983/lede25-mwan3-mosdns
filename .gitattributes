@@ -2,4 +2,12 @@
 *.sh text eol=lf
 *.yml text eol=lf
 *.yaml text eol=lf
+*.uc text eol=lf
 .config text eol=lf
+files/usr/libexec/** text eol=lf
+files/usr/sbin/** text eol=lf
+files/etc/init.d/** text eol=lf
+files/etc/hotplug.d/** text eol=lf
+files/etc/uci-defaults/** text eol=lf
+package/mosdns-mwan/files/** text eol=lf
+# After adding overlay scripts on Windows, run: scripts/fix-overlay-exec.ps1

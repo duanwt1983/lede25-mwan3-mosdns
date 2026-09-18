@@ -223,11 +223,21 @@ function injectCss() {
 	].join('\n')));
 }
 
-function paintStatus(st) {
+function paintStatus(st, errMsg) {
 	const pill = document.getElementById('al-status-pill');
 	if (!pill)
 		return;
-	if (!st || !st.ok) {
+	if (errMsg) {
+		pill.className = 'al-pill warn';
+		pill.textContent = errMsg;
+		return;
+	}
+	if (!st) {
+		pill.className = 'al-pill warn';
+		pill.textContent = '状态不可用';
+		return;
+	}
+	if (!st.ok) {
 		pill.className = 'al-pill warn';
 		pill.textContent = 'Bandix 不可用';
 		return;
@@ -319,6 +329,7 @@ function refresh(silent) {
 		paintList(st);
 		return st;
 	}).catch(function(e) {
+		paintStatus(null, 'RPC 失败');
 		if (!silent)
 			ui.addNotification(null, E('p', {}, '刷新失败：' + (e.message || String(e))), 'warning');
 	});
@@ -332,8 +343,9 @@ return view.extend({
 		]);
 	},
 
-	render() {
+	render(loadResult) {
 		injectCss();
+		const initialStatus = (loadResult && loadResult[1]) ? loadResult[1] : null;
 
 		const m = new form.Map('lede-autolimit', '自动限速');
 
@@ -442,6 +454,8 @@ return view.extend({
 				mountStatusInBasicTitle(mapNode);
 				markWhitelistSection(mapNode);
 			}
+			if (initialStatus)
+				paintStatus(initialStatus);
 			setTimeout(function() { refresh(true); }, 50);
 			poll.add(function() { return refresh(true); }, 5);
 			return E('div', { 'class': 'al-page' }, mapNode);

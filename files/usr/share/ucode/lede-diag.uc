@@ -297,19 +297,21 @@ export function wan_cause(iface) {
 		if ((dev == '' || dev == null) && m)
 			dev = m[1];
 		if (match(js, /"up":\s*false/))
-			push(bits, '接口状态为 down');
-		if (match(js, /"up":\s*true/))
-			push(bits, '接口仍标记为 up（可能是探测失败）');
+			push(bits, '逻辑接口 down（未连接/无地址）');
+		else if (match(js, /"up":\s*true/))
+			push(bits, '逻辑接口 up');
 	}
 	if (dev != '') {
 		let car = trim(readfile('/sys/class/net/' + dev + '/carrier') || '');
 		let op = trim(readfile('/sys/class/net/' + dev + '/operstate') || '');
 		if (car == '0')
-			push(bits, sprintf('网卡 %s 无载波（网线/光猫链路断）', dev));
+			push(bits, sprintf('物理网卡 %s 无载波（网线或对端光猫断）', dev));
+		else if (car == '1' && (op == 'up' || op == 'unknown' || op == ''))
+			push(bits, sprintf('物理网卡 %s 链路正常（%s），外网不通多为拨号/认证/对端故障', dev, op != '' ? op : 'up'));
 		else if (car == '1')
-			push(bits, sprintf('网卡 %s 载波仍在（更像拨号/认证/对端断开）', dev));
-		if (op != '')
-			push(bits, 'operstate=' + op);
+			push(bits, sprintf('物理网卡 %s 载波在但 operstate=%s', dev, op));
+		else if (op == 'down')
+			push(bits, sprintf('物理网卡 %s 链路 down', dev));
 	}
 	let log = cmd_out(logread_cmd('-l 80'), 20000);
 	let keys = [];

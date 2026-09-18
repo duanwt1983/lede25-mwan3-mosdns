@@ -534,9 +534,36 @@ export function autolimit_tick() {
 	expire_active_clients(active, now);
 
 	if (!cfg.enabled) {
+		let i = 0;
+		while (i < length(active.clients)) {
+			let c = active.clients[i];
+			if (c.schedule_id)
+				bandix_delete_schedule(c.schedule_id);
+			remove_active_index(active, i);
+		}
 		save_track({ macs: {} });
 		save_active(active);
 		return { ok: true, enabled: false };
+	}
+
+	let sched_raw = bandix_curl('GET', bandix_base() + '/api/rate_limit/schedules', null);
+	if (sched_raw != null && sched_raw != '') {
+		let live = bandix_list_schedules();
+		let ids = {};
+		for (let r in live) {
+			let sid = `${r.id || ''}`;
+			if (sid != '')
+				ids[sid] = true;
+		}
+		let i = 0;
+		while (i < length(active.clients)) {
+			let sid = `${active.clients[i].schedule_id || ''}`;
+			if (sid != '' && !ids[sid]) {
+				remove_active_index(active, i);
+				continue;
+			}
+			i++;
+		}
 	}
 
 	let snap = lan_devices(cfg);

@@ -1,12 +1,13 @@
 #!/usr/bin/ucode
 'use strict';
 
-import { readfile, writefile } from 'fs';
 import { cursor } from 'uci';
+import { readfile, writefile } from 'fs';
 import * as ubus from 'ubus';
 import {
 	track_ip_for, wan_probe_ok, wait_wan_probe
 } from '/usr/share/ucode/lede-wan-probe.uc';
+import { as_bool } from '/usr/share/ucode/lede-metrics.uc';
 
 const ST = '/tmp/lede-autofix.json';
 
@@ -37,18 +38,8 @@ function wan_fail_key(iface) {
 	return 'fail-down-' + iface;
 }
 
-function wan_fail_cooled(iface, sec) {
-	return cooled(wan_fail_key(iface), sec || 90);
-}
-
 function wan_mark_fail(iface) {
 	mark(wan_fail_key(iface));
-}
-
-function wan_ok_cooled(ctx, iface, sec, u) {
-	if (!wan_probe_ok(ctx, u, iface))
-		return false;
-	return cooled('down-' + iface, sec);
 }
 
 function phy_link_up(dev) {
@@ -66,22 +57,26 @@ function bounce_iface(name, dev) {
 }
 
 function wan_fix_ok(ctx, iface) {
-	if (ctx.get('wanalert', 'main', 'autofix_wan') == '0')
+	if (!as_bool(ctx.get('wanalert', 'main', 'autofix_wan'), true))
 		return false;
 	if (ctx.get('wanalert', 'main', 'wfix_' + iface) == '0')
 		return false;
 	return true;
 }
 
-function report(key, ok, msg, log_detail) {
+function report(key, ok, iface, log_detail) {
+	let outcome = ok ? '成功' : '失败';
 	writefile('/tmp/lede-fix-report.json', sprintf('%J\n', {
 		key,
+		kind: 'wan_bounce',
+		iface,
 		level: ok ? '一般' : '中等',
 		cat: '系统',
-		title: ok ? '自动处理成功' : '自动处理失败',
-		msg: msg || '',
-		detail: log_detail || msg || ''
+		title: '自动维护',
+		msg: sprintf('%s 断网后重启网卡【%s】', iface, outcome),
+		detail: log_detail || ''
 	}));
+	mark('reported-' + key);
 	system("/usr/libexec/wan-alert fix-done >/dev/null 2>&1");
 }
 
@@ -91,32 +86,50 @@ if (key == '' || !match(key, /^down-[A-Za-z0-9_]+$/))
 
 let ctx = cursor();
 try { ctx.load('wanalert'); ctx.load('network'); ctx.load('mwan3'); } catch (e) {}
-if (ctx.get('wanalert', 'main', 'autofix') != '1')
+if (!as_bool(ctx.get('wanalert', 'main', 'autofix'), false))
 	exit(0);
-if (ctx.get('wanalert', 'main', 'autofix_wan') == '0')
+if (!as_bool(ctx.get('wanalert', 'main', 'autofix_wan'), true))
 	exit(0);
 
 let iface = replace(key, /^down-/, '');
+let lock = '/tmp/lede-autofix-' + iface + '.lock';
+if (system(sprintf('mkdir %s 2>/dev/null', lock)) != 0)
+	exit(0);
+
 let ufix = null;
 try { ufix = ubus.connect(); } catch (e) { ufix = null; }
-if (!wan_fix_ok(ctx, iface))
+if (!wan_fix_ok(ctx, iface)) {
+	system(sprintf('rmdir %s 2>/dev/null', lock));
 	exit(0);
+}
 
 let cdn = +ctx.get('wanalert', 'main', 'autofix_cooldown') || 600;
 if (cdn < 120)
 	cdn = 120;
-if (wan_probe_ok(ctx, ufix, iface))
-	exit(0);
-if (wan_ok_cooled(ctx, iface, cdn, ufix))
-	exit(0);
-if (wan_fail_cooled(iface, 90))
-	exit(0);
-
-let phy = ctx.get('network', iface, 'device') || '';
 let host = track_ip_for(ctx, iface);
+let phy = ctx.get('network', iface, 'device') || '';
+
+if (wan_probe_ok(ctx, ufix, iface)) {
+	if (!cooled('reported-' + key, cdn))
+		report(key, true, iface, sprintf('探测 %s 已通，未执行 ifup。', host));
+	system(sprintf('rmdir %s 2>/dev/null', lock));
+	try { ufix.disconnect(); } catch (e) {}
+	exit(0);
+}
+
+if (cooled(wan_fail_key(iface), 90) || cooled(key, cdn)) {
+	if (!cooled('reported-' + key, cdn))
+		report(key, false, iface, sprintf('仍在处理间隔内，外网探测 %s 未通。', host));
+	system(sprintf('rmdir %s 2>/dev/null', lock));
+	try { ufix.disconnect(); } catch (e) {}
+	exit(0);
+}
+
 if (!bounce_iface(iface, phy)) {
 	wan_mark_fail(iface);
-	report(key, false, sprintf('【%s】断网重启网卡 【失败】', iface), '接口名不合法，未执行。');
+	report(key, false, iface, '接口名不合法，未执行 ifup。');
+	system(sprintf('rmdir %s 2>/dev/null', lock));
+	try { ufix.disconnect(); } catch (e) {}
 	exit(0);
 }
 
@@ -125,8 +138,9 @@ if (ok)
 	mark(key);
 else
 	wan_mark_fail(iface);
-report(key, ok, sprintf('【%s】断网重启网卡 【%s】', iface, ok ? '成功' : '失败'),
-	ok ? sprintf('%s 已 ifup，探测 %s 正常。', iface, host)
-	   : sprintf('%s 已 ifup，但探测 %s 仍失败。', iface, host));
+report(key, ok, iface,
+	ok ? sprintf('已执行 ifup，外网探测 %s 正常。', host)
+	   : sprintf('已执行 ifup，但外网探测 %s 仍失败。', host));
+system(sprintf('rmdir %s 2>/dev/null', lock));
 try { ufix.disconnect(); } catch (e) {}
 exit(0);

@@ -1,5 +1,6 @@
 'use strict';
 'require view';
+'require ui';
 'require uci';
 'require view.status.alertmap as AlertMap';
 'require view.status.wanalert-layout as applyWanalertLayout';
@@ -72,7 +73,8 @@ return view.extend({
 			uci.load('mwan3').catch(function() { return null; }),
 			uci.load('firewall').catch(function() { return null; }),
 			uci.load('mosdns').catch(function() { return null; }),
-			uci.load('passwall').catch(function() { return null; })
+			uci.load('passwall').catch(function() { return null; }),
+			uci.load('lede-log').catch(function() { return null; })
 		]);
 	},
 
@@ -80,6 +82,34 @@ return view.extend({
 		this.map = AlertMap.makeMap(collectAlertWans(), collectSvc());
 		return this.map.render().then(function(node) {
 			return applyWanalertLayout.applyPage(node);
+		});
+	},
+
+	handleSave() {
+		const map = this.map;
+		if (!map)
+			return Promise.resolve();
+		return map.save().then(function() {
+			const path = uci.get('wanalert', 'main', 'log_path');
+			const en = uci.get('wanalert', 'main', 'log_enabled');
+			const maxkb = uci.get('wanalert', 'main', 'log_max_kb');
+			try {
+				if (!uci.get('lede-log', 'alert'))
+					uci.add('lede-log', 'store', 'alert');
+				if (path)
+					uci.set('lede-log', 'alert', 'path', path);
+				if (en != null && en !== '')
+					uci.set('lede-log', 'alert', 'enabled', en === '0' ? '0' : '1');
+				if (maxkb)
+					uci.set('lede-log', 'alert', 'max_kb', maxkb);
+			} catch (e) {}
+			return uci.save();
+		});
+	},
+
+	handleSaveApply(ev, mode) {
+		return this.handleSave(ev).then(function() {
+			return ui.changes.apply(mode == '0');
 		});
 	}
 });

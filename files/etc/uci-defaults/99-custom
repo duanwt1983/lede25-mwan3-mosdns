@@ -40,24 +40,25 @@ if [ -x /etc/init.d/librespeed-go ]; then
   /etc/init.d/librespeed-go enable
 fi
 
+lede_fixup_script_modes() {
+	local f
+	for f in /etc/init.d/* /etc/hotplug.d/*/* /usr/libexec/* /usr/libexec/rpcd/* /usr/sbin/*; do
+		[ -f "$f" ] || continue
+		head -c 2 "$f" 2>/dev/null | grep -q '^#!' || continue
+		chmod +x "$f" 2>/dev/null || true
+	done
+}
+lede_fixup_script_modes
+chmod +x /usr/libexec/lede-data-setup /etc/init.d/lede-data 2>/dev/null || true
+/etc/init.d/lede-data enable 2>/dev/null || true
+if uci -q show fstab 2>/dev/null | grep -q "target='/data'"; then
+	[ -x /etc/init.d/fstab ] && /etc/init.d/fstab enable
+fi
 chmod +x /usr/sbin/wan-src-hash 2>/dev/null || true
-chmod +x /usr/sbin/wan-alert /usr/sbin/sys-alert-watch /usr/libexec/wan-alert /etc/init.d/wanalert 2>/dev/null || true
-chmod +x /usr/libexec/lede-stamp-reboot /usr/libexec/lede-log-read /usr/sbin/reboot 2>/dev/null || true
-chmod +x /usr/libexec/lede-mgmt-bind /etc/hotplug.d/iface/30-lede-mgmt-bind 2>/dev/null || true
-chmod +x /usr/libexec/lede-conntrack-tune /etc/init.d/lede-conntrack 2>/dev/null || true
-chmod +x /usr/libexec/lede-hwinfo /etc/init.d/lede-hwinfo 2>/dev/null || true
-chmod +x /etc/hotplug.d/iface/26-wan-alert 2>/dev/null || true
 if [ -x /etc/init.d/wanalert ]; then
   /etc/init.d/wanalert enable
   /etc/init.d/wanalert start >/dev/null 2>&1 || true
 fi
-chmod +x /etc/hotplug.d/iface/24-wan-fail-dump 2>/dev/null || true
-chmod +x /etc/hotplug.d/iface/25-multiwan-main-default 2>/dev/null || true
-chmod +x /etc/hotplug.d/iface/27-mwan3-iface-default 2>/dev/null || true
-chmod +x /etc/hotplug.d/iface/28-mosdns-rebind 2>/dev/null || true
-chmod +x /etc/hotplug.d/iface/29-mwan3-policy-live 2>/dev/null || true
-chmod +x /usr/libexec/isp-ip-update /etc/init.d/isp-ip-update 2>/dev/null || true
-chmod +x /usr/libexec/mosdns-fix-dns-forward /usr/libexec/mosdns-unify-conf 2>/dev/null || true
 [ -x /usr/libexec/mosdns-fix-dns-forward ] && /usr/libexec/mosdns-fix-dns-forward 2>/dev/null || true
 [ -x /usr/libexec/mosdns-unify-conf ] && /usr/libexec/mosdns-unify-conf 2>/dev/null || true
 mkdir -p /etc/mwan3/isp
@@ -133,7 +134,7 @@ fi
 mkdir -p /etc/crontabs
 touch /etc/crontabs/root
 sed -i '/isp-ip-update/d;/25-multiwan-main-default/d;/27-mwan3-iface-default/d;/29-mwan3-policy-live/d' /etc/crontabs/root 2>/dev/null || true
-chmod +x /usr/libexec/rpcd/wanmonitor /usr/libexec/lan-dhcp-apply /usr/libexec/lede-log-read /usr/libexec/lede-rpcd-restart /usr/libexec/packet-cap /etc/init.d/lan-dhcp-exclude 2>/dev/null || true
+lede_fixup_script_modes
 mkdir -p /overlay/pcap 2>/dev/null || true
 for s in alert syslog kernel mosdns; do
   p="$(uci -q get lede-log.$s.path 2>/dev/null || true)"

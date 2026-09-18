@@ -1,4 +1,13 @@
 #!/bin/sh
-[ -x /etc/init.d/lede-data ] && /etc/init.d/lede-data enable
-[ -x /usr/libexec/lede-data-setup ] && /usr/libexec/lede-data-setup
+# First boot: partition trailing free space on root disk, ext4 /data, UUID fstab.
+# Must chmod before -x checks (overlay scripts may ship as 644).
+
+[ -f /usr/libexec/lede-data-setup ] || exit 0
+
+chmod +x /usr/libexec/lede-data-setup 2>/dev/null || true
+[ -f /etc/init.d/lede-data ] && chmod +x /etc/init.d/lede-data 2>/dev/null || true
+
+/etc/init.d/lede-data enable 2>/dev/null || true
+/usr/libexec/lede-data-setup || true
+
 exit 0

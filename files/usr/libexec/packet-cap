@@ -92,6 +92,23 @@ secure_cap_dir() {
 		} END { exit(ok ? 0 : 1) }'
 }
 
+# Hard caps so a forgotten capture cannot fill overlay/data.
+MAX_CAP_SEC=1800
+MAX_CAP_BYTES=209715200
+MIN_FREE_KB=65536
+STOP_FREE_KB=32768
+
+valid_iface() {
+	case "$1" in
+		*[!A-Za-z0-9._@:-]*|'') return 1 ;;
+	esac
+	ip -o link show dev "$1" >/dev/null 2>&1
+}
+
+disk_avail_kb() {
+	df -Pk "$1" 2>/dev/null | awk 'NR==2 { print $4+0; exit }'
+}
+
 json_escape() {
 	printf '%s' "$1" | awk '
 		BEGIN { ORS = "" }
@@ -175,7 +192,7 @@ status_json() {
 
 start_cap() {
 	local iface="$1" filter="$2" limit="$3" unit="$4" client="$5"
-	local dir prefix pcap pid tpid wpid nonce
+	local dir prefix pcap pid nonce avail start_t sz sp
 
 	if alive; then
 		echo "capture already running" >&2
@@ -185,7 +202,18 @@ start_cap() {
 		echo "analysis already running" >&2
 		exit 2
 	fi
-	[ -n "$iface" ] || { echo "missing interface" >&2; exit 1; }
+	valid_iface "$iface" || { echo "接口不存在或名称无效" >&2; exit 1; }
+
+	case "$limit" in
+		''|*[!0-9]*) limit=0 ;;
+	esac
+	case "$unit" in
+		P|T) ;;
+		*) unit=T ;;
+	esac
+	if [ "$unit" = "T" ] && [ "$limit" -gt "$MAX_CAP_SEC" ]; then
+		limit="$MAX_CAP_SEC"
+	fi
 
 	dir="$(cap_dir)"
 	mkdir -p "$dir" "$STATE"
@@ -194,6 +222,12 @@ start_cap() {
 		echo "抓包目录必须由 root 拥有且不能允许组或其他用户写入；请使用专用子目录" >&2
 		exit 2
 	}
+	avail="$(disk_avail_kb "$dir")"
+	avail="${avail:-0}"
+	if [ "$avail" -lt "$MIN_FREE_KB" ]; then
+		echo "磁盘剩余不足 64MB，拒绝开始抓包" >&2
+		exit 2
+	fi
 	nonce="$(od -An -N4 -tx4 /dev/urandom 2>/dev/null | tr -d ' \n')"
 	[ -n "$nonce" ] || nonce="$$"
 	prefix="capture_$(date +%Y-%m-%d_%H.%M.%S)_${nonce}.pcap"
@@ -207,11 +241,11 @@ start_cap() {
 	echo "$prefix" > "$NAME"
 	: > "$LOG"
 
-	if [ -s "$FILTER" ] && [ "${limit:-0}" != "0" ] && [ "${unit:-T}" = "P" ]; then
+	if [ -s "$FILTER" ] && [ "$limit" != "0" ] && [ "$unit" = "P" ]; then
 		tcpdump -i "$iface" -F "$FILTER" -w "$pcap" -c "$limit" >>"$LOG" 2>&1 &
 	elif [ -s "$FILTER" ]; then
 		tcpdump -i "$iface" -F "$FILTER" -w "$pcap" >>"$LOG" 2>&1 &
-	elif [ "${limit:-0}" != "0" ] && [ "${unit:-T}" = "P" ]; then
+	elif [ "$limit" != "0" ] && [ "$unit" = "P" ]; then
 		tcpdump -i "$iface" -w "$pcap" -c "$limit" >>"$LOG" 2>&1 &
 	else
 		tcpdump -i "$iface" -w "$pcap" >>"$LOG" 2>&1 &
@@ -219,12 +253,36 @@ start_cap() {
 	pid=$!
 	echo "$pid" > "$PID"
 
-	if [ "${limit:-0}" != "0" ] && [ "${unit:-T}" = "T" ]; then
+	if [ "$limit" != "0" ] && [ "$unit" = "T" ]; then
 		( sleep "$limit"; kill "$pid" 2>/dev/null || true ) &
 		echo $! > "$SLEEP"
 	fi
 	(
-		while kill -0 "$pid" 2>/dev/null; do sleep 2; done
+		set +e
+		start_t="$(date +%s)"
+		while kill -0 "$pid" 2>/dev/null; do
+			if [ $(( $(date +%s) - start_t )) -ge "$MAX_CAP_SEC" ]; then
+				echo "stopped: safety time cap ${MAX_CAP_SEC}s" >>"$LOG"
+				kill "$pid" 2>/dev/null || true
+				break
+			fi
+			sz=0
+			[ -f "$pcap" ] && sz="$(wc -c < "$pcap" 2>/dev/null | tr -d ' ')"
+			if [ "${sz:-0}" -ge "$MAX_CAP_BYTES" ]; then
+				echo "stopped: safety size cap ${MAX_CAP_BYTES}" >>"$LOG"
+				kill "$pid" 2>/dev/null || true
+				break
+			fi
+			avail="$(disk_avail_kb "$dir")"
+			if [ "${avail:-0}" -lt "$STOP_FREE_KB" ]; then
+				echo "stopped: disk low ${avail}KB" >>"$LOG"
+				kill "$pid" 2>/dev/null || true
+				break
+			fi
+			sleep 2
+		done
+		sp="$(cat "$SLEEP" 2>/dev/null || true)"
+		[ -n "$sp" ] && kill "$sp" 2>/dev/null || true
 		if [ "$(cat "$PID" 2>/dev/null)" = "$pid" ]; then
 			rm -f "$PID" "$SLEEP"
 			"$0" analyze-start overview >/dev/null 2>&1 || true

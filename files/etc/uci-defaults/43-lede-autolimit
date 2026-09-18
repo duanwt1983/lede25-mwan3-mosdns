@@ -1,11 +1,13 @@
 #!/bin/sh
 # Auto rate-limit daemon (Bandix schedules). Independent from wanalert burst.
 
-[ -x /usr/libexec/lede-autolimit ] || exit 0
-[ -x /etc/init.d/bandix-plus ] || exit 0
+[ -f /usr/libexec/lede-autolimit ] || exit 0
 
 chmod +x /usr/libexec/lede-autolimit /usr/libexec/lede-autolimit-loop 2>/dev/null || true
-chmod +x /usr/libexec/rpcd/lede-autolimit 2>/dev/null || true
+chmod +x /usr/libexec/rpcd/lede-autolimit /etc/init.d/lede-autolimit 2>/dev/null || true
+
+[ -x /usr/libexec/lede-autolimit ] || exit 0
+[ -x /etc/init.d/bandix-plus ] || exit 0
 
 touch /etc/config/lede-autolimit
 mkdir -p /data/metrics 2>/dev/null || true

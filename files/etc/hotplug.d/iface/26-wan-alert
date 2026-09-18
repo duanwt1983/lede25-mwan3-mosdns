@@ -1,21 +1,4 @@
 #!/bin/sh
-# hotplug-call sources this with ash; do not use a ucode shebang here.
-
-case "$ACTION" in
-	ifup|ifdown) ;;
-	*) exit 0 ;;
-esac
-
-case "$INTERFACE" in
-	''|loopback|lan|wan6|*_6) exit 0 ;;
-esac
-
-enabled=$(uci -q get "mwan3.${INTERFACE}.enabled")
-[ -n "$enabled" ] || exit 0
-[ "$enabled" = 0 ] && exit 0
-[ "$enabled" = off ] && exit 0
-
-ev=up
-[ "$ACTION" = ifdown ] && ev=down
-[ -x /usr/libexec/wan-alert ] && /usr/libexec/wan-alert "$ev" "$INTERFACE" >/dev/null 2>&1 &
+# WAN up/down alerts are handled by wan-alert watch (lede-watch.uc emit_wan_updown).
+# Hotplug here would duplicate DingTalk messages on every ifup/ifdown flap.
 exit 0

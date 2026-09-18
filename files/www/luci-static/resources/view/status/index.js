@@ -3124,7 +3124,7 @@ return view.extend({
 	},
 
 	applyPulse(p) {
-		/* Bandix éçç± wanmonitor ä»£çï¼WAN ä¸ LAN/ç»ç«¯å­æ®µè¯­ä¹ä¸åï¼æ å°å¨åç«¯å¤çã */
+		/* Bandix 速率由 wanmonitor 代理；WAN 与 LAN 下载方向相反，换算在后端。 */
 		if (!p || !this.prev)
 			return;
 		this.noteClock(p.sys);
@@ -3222,6 +3222,8 @@ return view.extend({
 		let fullAge = 0;
 		let bandixAge = 0;
 		const tick = function() {
+			if (!self.polling)
+				return;
 			if (!pulseBusy) {
 				pulseBusy = true;
 				callPulse().then(function(p) {
@@ -3247,7 +3249,7 @@ return view.extend({
 			}
 		};
 		tick();
-		window.setInterval(tick, 1000);
+		this._pollIv = window.setInterval(tick, 1000);
 	},
 
 	placeStatusClock() {
@@ -3971,6 +3973,16 @@ return view.extend({
 
 	handleRemove: function() {
 		this.unmountBandixDevList();
+		this.polling = false;
+		this.animating = false;
+		if (this._pollIv) {
+			window.clearInterval(this._pollIv);
+			this._pollIv = null;
+		}
+		if (this._clkIv) {
+			window.clearInterval(this._clkIv);
+			this._clkIv = null;
+		}
 	}
 });
 

@@ -8,6 +8,7 @@ import {
 	bandix_load, bandix_build_maps, bandix_iface_rates, bandix_resolve_iface_rates,
 	bandix_clients_list
 } from '/usr/share/ucode/lede-bandix.uc';
+import { wan_cause } from '/usr/share/ucode/lede-diag.uc';
 
 const STATE = '/tmp/lede-watch.json';
 const RATE_HIST_MAX = 8640;
@@ -706,30 +707,77 @@ function scan_logread(st, out) {
 			'login-fail-burst', 'alert_login_fail');
 }
 
+function wan_hold_sec(ctx, key, def) {
+	let n = +g(ctx, key, def);
+	if (!(n >= 0))
+		n = def;
+	if (n > 120)
+		n = 120;
+	return n;
+}
+
 function emit_wan_updown(ctx, st, out) {
 	if (type(st.wanup) != 'object')
 		st.wanup = {};
 	if (type(st.track) != 'object')
 		st.track = {};
+	if (type(st.wan_dn_t) != 'object')
+		st.wan_dn_t = {};
+	if (type(st.wan_dn_sent) != 'object')
+		st.wan_dn_sent = {};
+	if (type(st.wan_up_t) != 'object')
+		st.wan_up_t = {};
+	let down_hold = wan_hold_sec(ctx, 'wan_down_hold', 5);
+	let up_hold = wan_hold_sec(ctx, 'wan_up_hold', 3);
+	let now = time();
 	let rows = [];
 	try { rows = wan_rows(ctx); } catch (e) { rows = []; }
 	for (let w in rows) {
 		let upn = w.up ? 1 : 0;
 		let prevu = st.wanup[w.name];
-		if (!w.up && (prevu == null || prevu == 1))
-			ev(out, '严重', '线路', '断线告警',
-				sprintf('当前网口 %s 异常/掉线。', w.name),
-				'down-' + w.name, 'alert_down');
-		else if (w.up && prevu == 0)
-			ev(out, '一般', '线路', '线路恢复',
-				sprintf('网口 %s 已恢复正常。', w.name),
-				'up-' + w.name, 'alert_up');
+		if (!w.up) {
+			delete st.wan_up_t[w.name];
+			if (prevu == 1 || prevu == null) {
+				if (!(+st.wan_dn_t[w.name] > 0))
+					st.wan_dn_t[w.name] = now;
+				st.wan_dn_sent[w.name] = false;
+			}
+			let since = now - (+st.wan_dn_t[w.name] || now);
+			if (!st.wan_dn_sent[w.name] && (down_hold == 0 || since >= down_hold)) {
+				st.wan_dn_sent[w.name] = true;
+				let cause = '';
+				try { cause = wan_cause(w.name); } catch (e) { cause = ''; }
+				let trnote = (w.track && w.track != '') ? sprintf('mwan3探测=%s。', w.track) : '';
+				ev(out, '严重', '线路', '断线告警',
+					sprintf('【%s】判定为外网不可用（尚未自动修复）。%s%s', w.name, trnote, cause),
+					'down-' + w.name, 'alert_down');
+			}
+		} else {
+			delete st.wan_dn_t[w.name];
+			st.wan_dn_sent[w.name] = false;
+			if (prevu == 0) {
+				if (!(+st.wan_up_t[w.name] > 0))
+					st.wan_up_t[w.name] = now;
+				let since = now - (+st.wan_up_t[w.name] || now);
+				if (up_hold == 0 || since >= up_hold) {
+					ev(out, '一般', '线路', '线路恢复',
+						sprintf('网口 %s 已恢复正常。', w.name),
+						'up-' + w.name, 'alert_up');
+					delete st.wan_up_t[w.name];
+					st.wanup[w.name] = 1;
+				}
+				continue;
+			}
+			delete st.wan_up_t[w.name];
+			st.wanup[w.name] = 1;
+			continue;
+		}
 		st.wanup[w.name] = upn;
 		let tr = w.track || '';
 		let prevt = st.track[w.name] || '';
 		if (w.up && tr == 'offline' && prevt != 'offline')
 			ev(out, '中等', '线路', '线路探测失败',
-				sprintf('%s 接口仍在，mwan3 探测判定 offline。', w.name),
+				sprintf('【%s】逻辑接口 up，但 mwan3 外网探测 offline（物理链路可能仍正常）。', w.name),
 				'track-' + w.name, 'alert_track');
 		else if (prevt == 'offline' && tr == 'online')
 			ev(out, '一般', '线路', '线路探测恢复',
@@ -737,6 +785,24 @@ function emit_wan_updown(ctx, st, out) {
 				'track-up-' + w.name, 'alert_track');
 		st.track[w.name] = tr;
 	}
+	let n_wan = 0;
+	let n_up = 0;
+	let n_down_ok = 0;
+	for (let w in rows) {
+		n_wan++;
+		if (w.up)
+			n_up++;
+		else if (st.wan_dn_sent[w.name])
+			n_down_ok++;
+	}
+	if (n_wan >= 2 && n_up == 0 && n_down_ok == n_wan) {
+		if (!st.all_down_sent)
+			ev(out, '严重', '线路', '全部 WAN 掉线',
+				'所有已启用 WAN 均不可用，内网将无法上网。',
+				'all-down', 'alert_all_down');
+		st.all_down_sent = true;
+	} else
+		st.all_down_sent = false;
 	return rows;
 }
 
@@ -908,15 +974,21 @@ export function collect_interval(ctx) {
 	} else if (isp != '')
 		st.isp = isp;
 
+	let overlay_ok = false;
 	try {
 		writefile('/overlay/.lede-write-test', 'ok\n');
 		let ok = trim(readfile('/overlay/.lede-write-test') || '');
 		try { unlink('/overlay/.lede-write-test'); } catch (e2) {}
-		if (ok != 'ok')
-			ev(out, '严重', '系统', 'Overlay 无法写入', '探测文件读写失败，overlay 可能只读。', 'overlay-ro', 'alert_overlay');
+		overlay_ok = (ok == 'ok');
 	} catch (e) {
-		ev(out, '严重', '系统', 'Overlay 无法写入', '探测写入抛错。', 'overlay-ro', 'alert_overlay');
+		overlay_ok = false;
 	}
+	if (!overlay_ok) {
+		if (!st.overlay_hit)
+			ev(out, '严重', '系统', 'Overlay 无法写入', '探测文件读写失败，overlay 可能只读。', 'overlay-ro', 'alert_overlay');
+		st.overlay_hit = true;
+	} else
+		st.overlay_hit = false;
 
 	try { check_mosdns_upstreams(ctx, st, out); } catch (e) {}
 	try { check_arp(ctx, st, now, out); } catch (e) {}

@@ -17,6 +17,11 @@ data_mounted() {
 	grep -q ' /data ' /proc/mounts
 }
 
+enable_data_automount() {
+	[ -x /etc/init.d/lede-data ] && /etc/init.d/lede-data enable
+	[ -x /etc/init.d/fstab ] && /etc/init.d/fstab enable
+}
+
 seed_and_bind() {
 	local ov="$1" dt="$2" f bn
 	[ -n "$ov" ] && [ -n "$dt" ] || return 0
@@ -32,6 +37,7 @@ seed_and_bind() {
 }
 
 ensure_dirs() {
+	enable_data_mount_service
 	mkdir -p \
 		/data/logs/alert \
 		/data/logs/syslog \
@@ -132,6 +138,12 @@ fstab_has_data() {
 	uci -q show fstab 2>/dev/null | grep -q "target='/data'"
 }
 
+enable_data_mount_service() {
+	fstab_has_data || return 0
+	[ -x /etc/init.d/fstab ] || return 0
+	/etc/init.d/fstab enabled >/dev/null 2>&1 || /etc/init.d/fstab enable
+}
+
 write_fstab() {
 	local uuid="$1" sid
 	[ -n "$uuid" ] || return 1
@@ -144,6 +156,7 @@ write_fstab() {
 			uci -q set "fstab.$sid.options=rw,noatime,nofail"
 			uci -q set "fstab.$sid.enabled=1"
 			uci -q commit fstab
+			enable_data_mount_service
 			return 0
 		fi
 	fi
@@ -154,6 +167,7 @@ write_fstab() {
 	uci -q set "fstab.@mount[-1].options=rw,noatime,nofail"
 	uci -q set "fstab.@mount[-1].enabled=1"
 	uci -q commit fstab
+	enable_data_mount_service
 }
 
 mount_uuid() {

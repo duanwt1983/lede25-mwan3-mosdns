@@ -14,6 +14,7 @@ import { collect_tick, collect_interval } from '/usr/share/ucode/lede-watch.uc';
 import { wan_probe_ok } from '/usr/share/ucode/lede-wan-probe.uc';
 
 const STATE = '/tmp/wan-alert.state';
+const LOCK = '/tmp/wan-alert.lock';
 const CONF = 'wanalert';
 
 let ctx = cursor();
@@ -122,10 +123,7 @@ function dingtalk_url() {
 }
 
 function alert_log_path() {
-	let p = cfg('log_path', '');
-	if (p == '')
-		p = configured_path('alert');
-	return p;
+	return configured_path('alert');
 }
 
 function log_event(level, cat, title, detail) {
@@ -210,6 +208,26 @@ function enqueue_ding(text, why) {
 	save_ding_q(q);
 }
 
+function mwan3_any_online() {
+	let u = null;
+	try { u = ubus.connect(); } catch (e) { u = null; }
+	if (!u)
+		return false;
+	let ok = false;
+	try {
+		let mj = u.call('mwan3', 'status');
+		if (mj && type(mj.interfaces) == 'object') {
+			for (let name in mj.interfaces) {
+				let d = mj.interfaces[name];
+				if (d && (d.status == 'online' || d.status == 'warning'))
+					ok = true;
+			}
+		}
+	} catch (e) {}
+	try { u.disconnect(); } catch (e) {}
+	return ok;
+}
+
 function count_up_wans() {
 	let u = null;
 	try { u = ubus.connect(); } catch (e) { u = null; }
@@ -232,6 +250,8 @@ function count_up_wans() {
 function has_uplink() {
 	if (count_up_wans() > 0)
 		return true;
+	if (mwan3_any_online())
+		return true;
 	let t = readfile('/proc/net/route') || '';
 	for (let line in split(t, '\n')) {
 		let parts = split(replace(line, /\t/g, ' '), ' ');
@@ -253,14 +273,20 @@ function has_uplink() {
 	return false;
 }
 
-function flush_ding_queue() {
+function try_flush_offline_queue() {
 	if (!as_bool(cfg('enabled', '0'), false))
 		return;
 	if (!has_uplink())
 		return;
+	let st = load_state();
 	let q = load_ding_q();
-	if (length(q) == 0)
+	if (!st.ding_offline && length(q) == 0)
 		return;
+	if (length(q) == 0) {
+		st.ding_offline = 0;
+		save_state(st);
+		return;
+	}
 	let left = [];
 	for (let item in q) {
 		let extra = sprintf('\n（补发）原记录时间 %s。当时：%s。', item.when || '', item.why || '发不出去');
@@ -268,6 +294,10 @@ function flush_ding_queue() {
 			push(left, item);
 	}
 	save_ding_q(left);
+	st = load_state();
+	if (length(left) == 0)
+		st.ding_offline = 0;
+	save_state(st);
 }
 
 function deliver_ding(text, force) {
@@ -275,14 +305,18 @@ function deliver_ding(text, force) {
 		return true;
 	if (!has_uplink()) {
 		enqueue_ding(text, '全部WAN掉线或无默认路由，钉钉发不出去');
-		log_event('一般', '系统', '钉钉待补发', '当时发不出去，已记下内容和时间，网络恢复后再发。');
+		mark_ding_offline();
+		log_event('一般', '系统', '钉钉待补发', '全部 WAN 不可用，已记下内容，出网恢复后再发。');
 		return false;
 	}
 	if (send_dingtalk(text, force)) {
-		flush_ding_queue();
+		try_flush_offline_queue();
 		return true;
 	}
-	enqueue_ding(text, '钉钉接口失败或超时');
+	let last = trim(readfile('/tmp/wan-alert.last') || '');
+	if (last == '')
+		last = '无响应或接口错误';
+	log_event('一般', '系统', '钉钉发送失败', last);
 	return false;
 }
 
@@ -296,6 +330,79 @@ function load_state() {
 
 function save_state(st) {
 	writefile(STATE, sprintf('%J', st));
+}
+
+function mark_ding_offline() {
+	let st = load_state();
+	st.ding_offline = 1;
+	save_state(st);
+}
+
+function steal_stale_lock() {
+	system(sprintf("find '%s' -mmin +1 >/dev/null 2>&1 && rmdir '%s' 2>/dev/null", LOCK, LOCK));
+}
+
+function alert_lock() {
+	steal_stale_lock();
+	let i = 0;
+	while (i < 40) {
+		if (system(sprintf('mkdir %s 2>/dev/null', LOCK)) == 0)
+			return true;
+		system('sleep 0.05');
+		i++;
+	}
+	steal_stale_lock();
+	return system(sprintf('mkdir %s 2>/dev/null', LOCK)) == 0;
+}
+
+function alert_unlock() {
+	system(sprintf('rmdir %s 2>/dev/null', LOCK));
+}
+
+function wan_autofix_handles(iface) {
+	if (!as_bool(cfg('autofix', '0'), false))
+		return false;
+	if (!as_bool(cfg('autofix_wan', '1'), true))
+		return false;
+	if (iface == null || iface == '')
+		return false;
+	if (cfg('wfix_' + iface, '1') == '0')
+		return false;
+	return true;
+}
+
+function down_alert_should_ding(key, push) {
+	if (push == false || push == 0 || push == '0')
+		return false;
+	if (key == null || key == '')
+		return true;
+	if (!match('' + key, /^down-[A-Za-z0-9_]+$/))
+		return true;
+	return !wan_autofix_handles(replace('' + key, /^down-/, ''));
+}
+
+function up_suppressed_by_autofix(key) {
+	if (key == null || key == '')
+		return false;
+	let m = match('' + key, /^up-([A-Za-z0-9_]+)$/);
+	if (!m)
+		return false;
+	return wan_autofix_handles(m[1]);
+}
+
+function spawn_autofix(key) {
+	let sk = 'afix-' + key;
+	let cdn = +cfg('autofix_cooldown', 600);
+	if (cdn < 120)
+		cdn = 120;
+	let st = load_state();
+	let last = +st[sk];
+	if (last > 0 && (time() - last) < cdn)
+		return;
+	st[sk] = time();
+	save_state(st);
+	system(sprintf("/bin/sh -c \"/usr/libexec/lede-autofix '%s' >>/tmp/lede-autofix.log 2>&1 &\"", replace(key, /'/g, '')));
+	log_event('信息', '系统', '自动维护启动', sprintf('已启动处理 %s', key));
 }
 
 function cooled(key) {
@@ -340,26 +447,26 @@ function held_long_enough(key, active, minutes) {
 function notify(level, cat, title, detail, key, push) {
 	log_event(level, cat, title, detail);
 	if (as_bool(cfg('autofix', '0'), false) && key != null && key != '' &&
-	    match('' + key, /^down-[A-Za-z0-9_]+$/)) {
-		system(sprintf("/usr/libexec/lede-autofix '%s' >/dev/null 2>&1 &", key));
-	}
+	    match('' + key, /^down-[A-Za-z0-9_]+$/))
+		spawn_autofix(key);
 	if (level == '信息')
 		return true;
-	if (push == false || push == 0 || push == '0')
+	if (up_suppressed_by_autofix(key))
+		return true;
+	if (!down_alert_should_ding(key, push))
 		return true;
 	if (key == null || key == '')
 		key = 'misc';
-	if (cooled(key))
+	if (!alert_lock())
 		return true;
+	if (cooled(key)) {
+		alert_unlock();
+		return true;
+	}
 	let ok = deliver_ding(sprintf('[%s] %s：%s', hostname(), title, detail));
 	if (ok)
 		stamp(key);
-	else {
-		let last = trim(readfile('/tmp/wan-alert.last') || '');
-		if (last == '')
-			last = '无响应或未出网，已排队补发';
-		log_event('一般', '系统', '钉钉未发出', last);
-	}
+	alert_unlock();
 	return ok;
 }
 
@@ -427,7 +534,7 @@ function kick_wan_autofix() {
 			} catch (e) {}
 		}
 		if (bad)
-			system(sprintf("/usr/libexec/lede-autofix 'down-%s' >/dev/null 2>&1 &", name));
+			system(sprintf("/bin/sh -c \"/usr/libexec/lede-autofix 'down-%s' >>/tmp/lede-autofix.log 2>&1 &\"", name));
 	});
 	if (u)
 		try { u.disconnect(); } catch (e) {}
@@ -550,7 +657,7 @@ function handle(event, iface) {
 		break;
 	case 'down':
 		notify('严重', '线路', '断线告警',
-			sprintf('当前网口 %s 异常/掉线。%s', iface, wan_cause(iface)),
+			sprintf('【%s】判定为外网不可用（尚未自动修复）。%s', iface, wan_cause(iface)),
 			'down-' + iface, as_bool(cfg('alert_down', '1'), true));
 		if (count_up_wans() == 0)
 			notify('严重', '线路', '全部 WAN 掉线',
@@ -561,7 +668,6 @@ function handle(event, iface) {
 		notify('一般', '线路', '线路恢复',
 			sprintf('网口 %s 已恢复正常。', iface),
 			'up-' + iface, as_bool(cfg('alert_up', '1'), true));
-		try { flush_ding_queue(); } catch (e) {}
 		break;
 	case 'fix-done': {
 		let r = {};
@@ -573,16 +679,33 @@ function handle(event, iface) {
 			break;
 		log_event(r.level || '一般', r.cat || '系统', r.title || '自动维护', r.detail || msg);
 		let fk = 'fix-' + replace('' + (r.key || 'x'), /[^A-Za-z0-9._-]/g, '_');
-		if (cooled(fk))
+		let wan_bounce = r.kind == 'wan_bounce' || match('' + (r.key || ''), /^down-[A-Za-z0-9_]+$/);
+		let locked = alert_lock();
+		if (locked && cooled(fk)) {
+			alert_unlock();
 			break;
+		}
+		if (wan_bounce) {
+			let ding = sprintf('[%s] 自动维护：%s', hostname(), msg);
+			if (trim(r.detail || '') != '')
+				ding += '；' + trim(r.detail);
+			if (deliver_ding(ding, false)) {
+				if (locked)
+					stamp(fk);
+			} else
+				log_event('一般', '系统', '自动维护钉钉未发出', ding);
+			if (locked)
+				alert_unlock();
+			break;
+		}
+		if ((r.level || '一般') == '一般') {
+			stamp(fk);
+			alert_unlock();
+			break;
+		}
 		if (deliver_ding(sprintf('[%s] %s', hostname(), msg), true))
 			stamp(fk);
-		else {
-			let last = trim(readfile('/tmp/wan-alert.last') || '');
-			if (last == '')
-				last = '无响应或未出网，已排队补发';
-			log_event('一般', '系统', '钉钉未发出', last);
-		}
+		alert_unlock();
 		break;
 	}
 	case 'boot-reason': {
@@ -602,6 +725,7 @@ function handle(event, iface) {
 		break;
 	}
 	case 'watch':
+		alert_unlock();
 		try { persist_system_logs(); } catch (e) {}
 		if (!readfile('/tmp/lede-boot-reason.done')) {
 			try { handle('boot-reason', ''); } catch (e) {}
@@ -614,7 +738,7 @@ function handle(event, iface) {
 			acc += 1;
 			if (acc % 10 == 0) {
 				try { persist_system_logs(); } catch (e) {}
-				try { flush_ding_queue(); } catch (e) {}
+				try { try_flush_offline_queue(); } catch (e) {}
 			}
 			let n = +cfg('check_interval', 60);
 			if (n < 30)

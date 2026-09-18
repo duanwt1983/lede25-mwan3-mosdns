@@ -42,7 +42,21 @@ function bplus_down(m) {
 	return +(m.down_v4_bps || 0) + +(m.down_v6_bps || 0);
 }
 
-function bplus_iface_rates(m) {
+function bplus_iface_is_lan(iface) {
+	if (type(iface) != 'object')
+		return false;
+	let zone = lc(trim(`${iface.zone || ''}`));
+	if (zone == 'lan')
+		return true;
+	let ifname = trim(`${iface.ifname || ''}`);
+	return ifname == 'br-lan';
+}
+
+/* Bandix 接口: up=Inbound/RX, down=Outbound/TX。
+ * WAN 用户下载=RX；LAN 用户下载=TX。按 zone 换算成拓扑用的 down/up。 */
+function bplus_iface_rates(m, lan) {
+	if (lan)
+		return { down_bps: bplus_down(m), up_bps: bplus_up(m) };
 	return { down_bps: bplus_up(m), up_bps: bplus_down(m) };
 }
 
@@ -135,7 +149,7 @@ export function bandix_build_maps(bj) {
 		if (ifname == '')
 			continue;
 		let m = iface.metrics || {};
-		if_rates[ifname] = bplus_iface_rates(m);
+		if_rates[ifname] = bplus_iface_rates(m, bplus_iface_is_lan(iface));
 	}
 
 	let devs = bj.data.devices || [];

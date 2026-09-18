@@ -6,6 +6,9 @@ seed() {
 	uci set "wanalert.main.$1=$2"
 }
 
+seed wan_down_hold 5
+seed wan_up_hold 3
+
 for o in alert_down alert_up alert_all_down alert_cpu alert_load alert_mem \
 	alert_disk alert_temp alert_conntrack alert_dhcp alert_arp alert_overlay alert_hw; do
 	seed "$o" 1

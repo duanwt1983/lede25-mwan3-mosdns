@@ -73,6 +73,10 @@ return view.extend({
 		this.polling = false;
 	},
 
+	handleRemove() {
+		this.stopPolling();
+	},
+
 	refreshStatus() {
 		return fs.exec('/usr/libexec/packet-cap', ['status']).then(r => {
 			const st = this.parseStatus(r);
@@ -475,6 +479,13 @@ return view.extend({
 			limitWrap.style.display = v === 'manual' ? 'none' : '';
 			document.getElementById('pcap-limit-unit').textContent =
 				v === 'P' ? _('包') : _('秒');
+			if (v === 'T') {
+				limitInput.max = '1800';
+				if (+limitInput.value > 1800)
+					limitInput.value = '1800';
+			} else {
+				limitInput.removeAttribute('max');
+			}
 		});
 
 		const validHost = function(v, label) {
@@ -532,6 +543,8 @@ return view.extend({
 						ui.addNotification(null, E('p', {}, _('请填写停止数量')), 'error');
 						return Promise.resolve();
 					}
+					if (unit === 'T' && Number(limit) > 1800)
+						limit = '1800';
 				}
 				return self.saveCapDir(dirInput.value, false).then(() =>
 					fs.exec('/usr/libexec/packet-cap', [
@@ -712,6 +725,7 @@ return view.extend({
 						E('span', { 'class': 'pcap-field' }, [E('label', {}, _('停止')), stopSel, limitWrap]),
 						E('span', { 'class': 'pcap-field' }, [btnStart, btnStop, dlLink])
 					]),
+					E('p', { 'class': 'hint' }, _('手动停止时后台仍有最长 30 分钟、约 200MB 的安全上限，磁盘剩余不足也会自动停，避免写满。按时长最多 1800 秒。')),
 				]),
 				E('div', { 'class': 'cbi-section pcap-card' }, [
 					E('h3', {}, [

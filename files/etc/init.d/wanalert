@@ -5,6 +5,7 @@ STOP=10
 USE_PROCD=1
 
 start_service() {
+	rmdir /tmp/wan-alert.lock 2>/dev/null || true
 	procd_open_instance
 	procd_set_param command /usr/libexec/wan-alert watch
 	procd_set_param respawn 5 10 0
@@ -12,5 +13,6 @@ start_service() {
 }
 
 stop_service() {
+	rmdir /tmp/wan-alert.lock 2>/dev/null || true
 	return 0
 }

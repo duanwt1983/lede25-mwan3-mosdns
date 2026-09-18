@@ -167,6 +167,7 @@ return baseclass.extend({
 	o = s.option(form.Flag, 'autofix', _('启用自动维护'));
 	o.default = o.disabled;
 	o.rmempty = false;
+	o.description = _('启用后：断线告警只写日志，钉钉由自动维护推送网卡重启结果。关闭时：断线告警直接发钉钉。');
 	o.render = function(option_index, section_id) {
 		return flagCbiBox(this, section_id, option_index, 'lede-fix-master', {
 			'title': _('打开后才执行下面的自动处理')
