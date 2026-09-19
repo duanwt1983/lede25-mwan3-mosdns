@@ -472,7 +472,7 @@ if [ -f files/www/luci-static/resources/view/status/index.js ]; then
           cp files/www/luci-static/resources/view/status/syslog.js "$(dirname "$f")/syslog.js"
           echo "syslog: replaced $f with readable syslog.js"
         fi
-        for extra in logcenter.js loghub.js alertlog.js wanmonitor.js wanalert.js alertmap.js mosdnscache.js wanalert-page.js wanalert-layout.js; do
+        for extra in logcenter.js loghub.js alertlog.js wanalert.js alertmap.js mosdnscache.js wanalert-page.js wanalert-layout.js; do
           if [ -f "files/www/luci-static/resources/view/status/$extra" ]; then
             cp "files/www/luci-static/resources/view/status/$extra" "$(dirname "$f")/$extra"
             echo "status: installed $(dirname "$f")/$extra"
@@ -837,6 +837,13 @@ if grep -R --include='*.json' -F '宽带监控' "$_LEDE_FILES/usr/share/luci/men
   exit 1
 fi
 echo "absent OK: 宽带监控 menu"
+[ ! -e "$_LEDE_FILES/www/luci-static/resources/view/status/wanmonitor.js" ] || {
+  echo "ERROR: unused 宽带监控 page still in overlay"
+  exit 1
+}
+assert_grep 'autofix_hold_min' "$_LEDE_FILES/usr/libexec/wan-alert"
+assert_grep 'ping -c 2' "$_LEDE_FILES/usr/share/ucode/lede-wan-probe.uc"
+assert_grep "option autofix_hold_min '5'" "$_LEDE_FILES/etc/config/wanalert"
 
 _SYSJS=$(find feeds/luci package -path '*/view/system/system.js' -type f 2>/dev/null | head -n 1 || true)
 [ -n "$_SYSJS" ] || { echo "ERROR: system.js not found after luci-mod-system patch"; exit 1; }
