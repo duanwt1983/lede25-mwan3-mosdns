@@ -78,6 +78,42 @@ function addHostTable(m, type, title, desc) {
 	return s;
 }
 
+function buildAllowMap() {
+	const m = new form.Map('lede-lansec');
+	m.title = null;
+	addHostTable(m, 'dhcp_allow', _('非法 DHCP · 服务器白名单'),
+		_('允许在本网分配地址的 DHCP 服务器。本机网关无需填写。同一 MAC 不能同时出现在禁止列表。'));
+	addHostTable(m, 'nat_allow', _('二级路由 / 热点 / 共享 · 白名单'),
+		_('允许存在的旁路、AP、小路由、手机热点或系统共享，不按威胁处理。同一 MAC 不能同时出现在禁止列表。'));
+	return m;
+}
+
+function buildDenyMap() {
+	const m = new form.Map('lede-lansec');
+	m.title = null;
+	addHostTable(m, 'dhcp_ban', _('非法DHCP服务器'),
+		_('封禁这些 MAC：不能再发地址，也不能经本机上网或访问本机。同一 MAC 不能同时出现在白名单。'));
+	addHostTable(m, 'nat_block', _('二级路由'),
+		_('禁止这些设备为后面的终端代理上网。同一 MAC 不能同时出现在白名单。'));
+	return m;
+}
+
+function reloadLansecUci() {
+	if (typeof uci.unload === 'function')
+		uci.unload('lede-lansec');
+	return uci.load('lede-lansec');
+}
+
+function replacePane(view, id, node) {
+	const old = view._panes && view._panes[id];
+	node.setAttribute('data-lansec-pane', id);
+	node.style.display = (view._tab === id) ? '' : 'none';
+	ledeTheme.enhanceMapNode(node);
+	if (old && old.parentNode)
+		old.parentNode.replaceChild(node, old);
+	view._panes[id] = node;
+}
+
 function parsePending(raw) {
 	if (raw && typeof raw === 'object' && !Array.isArray(raw) && raw.data != null)
 		raw = raw.data;
@@ -227,35 +263,79 @@ function renderLogTable(rows, emptyHint) {
 	]);
 }
 
-function renderPager(page, pages, total, pageSize, onPage, onSize) {
+function logPageState(view) {
+	const all = newestFirst(view._logs || [], 'time');
+	const total = all.length;
+	const size = clampPageSize(view._logPageSize);
+	const pages = Math.max(1, Math.ceil(total / size) || 1);
+	if (view._logPage > pages)
+		view._logPage = pages;
+	if (view._logPage < 1)
+		view._logPage = 1;
+	const start = (view._logPage - 1) * size;
+	return {
+		total: total,
+		size: size,
+		pages: pages,
+		rows: all.slice(start, start + size)
+	};
+}
+
+function makeLogPager(view) {
+	const totalEl = E('span', {}, _('共 0 条'));
+	const pageEl = E('span', {}, _('第 1 / 1 页'));
+	const prev = E('button', { type: 'button', 'class': 'btn cbi-button' }, _('上一页'));
+	const next = E('button', { type: 'button', 'class': 'btn cbi-button' }, _('下一页'));
 	const sizeSel = E('select', { 'style': 'min-width:4.5em' });
 	LOG_PAGE_SIZES.forEach(function(n) {
-		sizeSel.appendChild(E('option', { value: String(n), selected: n === pageSize }, String(n)));
+		sizeSel.appendChild(E('option', { value: String(n) }, String(n)));
 	});
-	sizeSel.addEventListener('change', function() {
-		onSize(clampPageSize(this.value));
+	sizeSel.value = String(clampPageSize(view._logPageSize));
+	prev.addEventListener('click', function(ev) {
+		ev.preventDefault();
+		ev.stopPropagation();
+		if (view._logPage > 1) {
+			view._logPage--;
+			view._paintLogTable();
+		}
 	});
-	const prev = E('button', { type: 'button', 'class': 'btn cbi-button', disabled: page <= 1 }, _('上一页'));
-	const next = E('button', { type: 'button', 'class': 'btn cbi-button', disabled: page >= pages }, _('下一页'));
-	prev.addEventListener('click', function() {
-		if (page > 1)
-			onPage(page - 1);
+	next.addEventListener('click', function(ev) {
+		ev.preventDefault();
+		ev.stopPropagation();
+		if (view._logPage < (view._logPages || 1)) {
+			view._logPage++;
+			view._paintLogTable();
+		}
 	});
-	next.addEventListener('click', function() {
-		if (page < pages)
-			onPage(page + 1);
+	sizeSel.addEventListener('change', function(ev) {
+		ev.preventDefault();
+		ev.stopPropagation();
+		view._logPageSize = clampPageSize(this.value);
+		view._logPage = 1;
+		uci.set('lede-lansec', 'main', 'log_page_size', String(view._logPageSize));
+		view._paintLogTable();
 	});
+	view._logPagerEls = {
+		total: totalEl, page: pageEl, prev: prev, next: next, size: sizeSel
+	};
 	return E('div', {
 		'style': 'display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:.5rem 0'
 	}, [
-		E('span', {}, _('共 %d 条').format(total)),
-		prev,
-		E('span', {}, _('第 %d / %d 页').format(page, pages)),
-		next,
-		E('span', {}, _('每页')),
-		sizeSel,
-		E('span', {}, _('条'))
+		totalEl, prev, pageEl, next,
+		E('span', {}, _('每页')), sizeSel, E('span', {}, _('条'))
 	]);
+}
+
+function updateLogPager(view, st) {
+	const els = view._logPagerEls;
+	if (!els)
+		return;
+	els.total.textContent = _('共 %d 条').format(st.total);
+	els.page.textContent = _('第 %d / %d 页').format(view._logPage, st.pages);
+	els.prev.disabled = view._logPage <= 1;
+	els.next.disabled = view._logPage >= st.pages;
+	if (els.size.value !== String(st.size))
+		els.size.value = String(st.size);
 }
 
 function pendingKey(it) {
@@ -281,17 +361,20 @@ function runPendingAction(view, action) {
 	if (!it)
 		return Promise.resolve();
 	const key = pendingKey(it);
-	return fs.exec('/usr/libexec/lede-lansec', ['decide', action, it.kind || 'dhcp', it.mac || '']).then(function() {
+	return fs.exec('/usr/libexec/lede-lansec', ['decide', action, it.kind || 'dhcp', it.mac || '']).then(function(r) {
+		if (r && r.code)
+			throw new Error(String(r.stderr || r.stdout || _('未能写入名单')).trim());
 		view._pending = (view._pending || []).filter(function(x) {
 			return pendingKey(x) !== key;
 		});
 		view._selKey = '';
 		view._logSig = '';
-		if (view._paintLog)
+		if (view._paintPending)
+			view._paintPending();
+		else if (view._paintLog)
 			view._paintLog();
-		return uci.load('lede-lansec');
-	}).then(function() {
-		return view.refreshLogs();
+		const lists = view.refreshLists ? view.refreshLists() : reloadLansecUci();
+		return Promise.all([lists, view.refreshLogs()]);
 	}).catch(function(e) {
 		ui.addNotification(null, E('p', {}, e.message || String(e)), 'warning');
 	});
@@ -350,7 +433,10 @@ function renderPending(items, view) {
 		]);
 		tr.addEventListener('click', function() {
 			view._selKey = (view._selKey === key) ? '' : key;
-			view._paintLog();
+			if (view._paintPending)
+				view._paintPending();
+			else if (view._paintLog)
+				view._paintLog();
 		});
 		rows.push(tr);
 	});
@@ -435,15 +521,6 @@ return view.extend({
 		o.datatype = 'uinteger';
 		o.default = '120';
 
-		o = s.option(form.ListValue, 'log_page_size', _('日志每页条数'));
-		o.value('10', '10');
-		o.value('20', '20');
-		o.value('30', '30');
-		o.value('50', '50');
-		o.default = '20';
-		o.rmempty = false;
-		o.description = _('日志页按时间倒序显示，有新记录会自动出现。');
-
 		s = mPolicy.section(form.NamedSection, 'main', 'main', _('非法 DHCP 服务器'));
 		s.addremove = false;
 		s.description = _('防止局域网里出现未经允许的 DHCP 服务器，避免终端被分配错误地址、网关或 DNS。');
@@ -515,19 +592,8 @@ return view.extend({
 		o.depends('arp_enabled', '1');
 		o.description = _('只允许租约中的 IP 与 MAC 配对。静态地址或双网卡环境请谨慎开启。');
 
-		const mAllow = new form.Map('lede-lansec');
-		mAllow.title = null;
-		addHostTable(mAllow, 'dhcp_allow', _('非法 DHCP · 服务器白名单'),
-			_('允许在本网分配地址的 DHCP 服务器。本机网关无需填写。同一 MAC 不能同时出现在禁止列表。'));
-		addHostTable(mAllow, 'nat_allow', _('二级路由 / 热点 / 共享 · 白名单'),
-			_('允许存在的旁路、AP、小路由、手机热点或系统共享，不按威胁处理。同一 MAC 不能同时出现在禁止列表。'));
-
-		const mDeny = new form.Map('lede-lansec');
-		mDeny.title = null;
-		addHostTable(mDeny, 'dhcp_ban', _('非法DHCP服务器'),
-			_('封禁这些 MAC：不能再发地址，也不能经本机上网或访问本机。同一 MAC 不能同时出现在白名单。'));
-		addHostTable(mDeny, 'nat_block', _('二级路由'),
-			_('禁止这些设备为后面的终端代理上网。同一 MAC 不能同时出现在白名单。'));
+		const mAllow = buildAllowMap();
+		const mDeny = buildDenyMap();
 
 		this.maps = [mPolicy, mAllow, mDeny];
 		const view = this;
@@ -546,43 +612,36 @@ return view.extend({
 				log: E('div', { 'class': 'cbi-map lede-themed-page' })
 			};
 
-			const logBox = E('div');
-			view._logBox = logBox;
-			view._paintLog = function() {
+			const pendingBox = E('div');
+			const tableBox = E('div');
+			const pagerBar = makeLogPager(view);
+			view._paintPending = function() {
 				if (view._selKey && !selectedPending(view))
 					view._selKey = '';
-				const all = newestFirst(view._logs || [], 'time');
-				const total = all.length;
-				const size = clampPageSize(view._logPageSize);
-				const pages = Math.max(1, Math.ceil(total / size) || 1);
-				if (view._logPage > pages)
-					view._logPage = pages;
-				if (view._logPage < 1)
-					view._logPage = 1;
-				const start = (view._logPage - 1) * size;
-				const pageRows = all.slice(start, start + size);
-				dom.content(logBox, [
-					E('h3', {}, _('待确认')),
-					E('p', { 'class': 'cbi-section-descr' },
-						_('已发现、尚未决定留用或禁止的设备。点选一行后，用上面的按钮决定去向。')),
-					renderPending(view._pending, view),
-					E('h3', { 'style': 'margin-top:1.2rem' }, _('相关日志')),
-					E('p', { 'class': 'cbi-section-descr' },
-						_('非法 DHCP、二级路由和 ARP 欺骗相关的事件记录。最新的在最上面，有新记录会自动出现。')),
-					renderPager(view._logPage, pages, total, size, function(p) {
-						view._logPage = p;
-						view._paintLog();
-					}, function(n) {
-						view._logPageSize = n;
-						view._logPage = 1;
-						uci.set('lede-lansec', 'main', 'log_page_size', String(n));
-						view._paintLog();
-					}),
-					renderLogTable(pageRows, _('还没有相关记录。'))
-				]);
+				dom.content(pendingBox, [renderPending(view._pending, view)]);
 			};
+			view._paintLogTable = function() {
+				const st = logPageState(view);
+				view._logPages = st.pages;
+				updateLogPager(view, st);
+				dom.content(tableBox, [renderLogTable(st.rows, _('还没有相关记录。'))]);
+			};
+			view._paintLog = function() {
+				view._paintPending();
+				view._paintLogTable();
+			};
+			view._panes.log.appendChild(E('div', {}, [
+				E('h3', {}, _('待确认')),
+				E('p', { 'class': 'cbi-section-descr' },
+					_('已发现、尚未决定留用或禁止的设备。点选一行后，用上面的按钮决定去向。')),
+				pendingBox,
+				E('h3', { 'style': 'margin-top:1.2rem' }, _('相关日志')),
+				E('p', { 'class': 'cbi-section-descr' },
+					_('非法 DHCP、二级路由和 ARP 欺骗相关的事件记录。最新的在最上面，有新记录会自动出现。')),
+				pagerBar,
+				tableBox
+			]));
 			view._paintLog();
-			view._panes.log.appendChild(logBox);
 
 			const host = E('div', { 'class': 'lede-themed-page' });
 			view._host = host;
@@ -630,6 +689,22 @@ return view.extend({
 		});
 		if (id === 'log')
 			this.refreshLogs();
+	},
+
+	refreshLists() {
+		const view = this;
+		const mPolicy = (view.maps && view.maps[0]) || null;
+		return reloadLansecUci().then(function() {
+			const mAllow = buildAllowMap();
+			const mDeny = buildDenyMap();
+			view.maps = mPolicy ? [mPolicy, mAllow, mDeny] : [mAllow, mDeny];
+			return Promise.all([mAllow.render(), mDeny.render()]);
+		}).then(function(nodes) {
+			replacePane(view, 'allow', nodes[0]);
+			replacePane(view, 'deny', nodes[1]);
+			if (ui.changes && typeof ui.changes.init === 'function')
+				return ui.changes.init();
+		});
 	},
 
 	refreshLogs() {
