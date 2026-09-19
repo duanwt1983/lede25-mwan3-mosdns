@@ -34,6 +34,28 @@ GitHub Actions 工作流显示名：`Build Lean 25 x86-64 PassWall samba4`。
 
 **没有「宽带监控」菜单。** 拓扑图、硬件信息用的后台采集还在，只是不再单独开一页。
 
+## 界面截图
+
+状态概览拓扑图：
+
+![1 拓扑图](docs/screenshots/1.png)
+
+系统报警（钉钉、PushPlus、自动维护与日志）：
+
+![2 钉钉](docs/screenshots/2.png)
+
+![3 PushPlus](docs/screenshots/3.png)
+
+![4 自动维护与日志](docs/screenshots/4.png)
+
+多线负载自动配置：
+
+![5 多线负载](docs/screenshots/5.png)
+
+局域网安全：
+
+![6 局域网安全](docs/screenshots/6.png)
+
 ## 网络与 DNS
 
 | 用途 | 实际做法 |
