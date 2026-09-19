@@ -389,16 +389,16 @@ function parse_alert_line(line) {
 	}
 	let m = match(line, /^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s+(ALERT|WAN|INFO|TEST)\s+(.*)$/);
 	if (!m)
-		return { time: '', level: '一般', cat: '告警', title: '记录', detail: line, raw: line };
+		return { time: '', level: '一般', cat: '系统', title: '记录', detail: line, raw: line };
 	let kind = m[2];
 	let msg = m[3];
 	let level = '一般';
-	let cat = '状态';
+	let cat = '系统';
 	let title = '状态采样';
 	if (kind == 'ALERT') {
-		level = '严重';
-		cat = '告警';
-		title = '资源告警';
+		level = '中等';
+		cat = '系统';
+		title = '系统告警';
 		if (match(msg, /DHCP/))
 			title = 'DHCP 告警';
 		else if (match(msg, /CPU/))
@@ -413,13 +413,13 @@ function parse_alert_line(line) {
 			title = '温度告警';
 	} else if (kind == 'WAN') {
 		level = match(msg, /恢复/) ? '一般' : '中等';
-		cat = '线路';
+		cat = '网络';
 		title = match(msg, /恢复/) ? '线路恢复' : '线路异常';
 	} else if (kind == 'TEST') {
-		cat = '测试';
+		cat = '系统';
 		title = '测试';
 	} else if (kind == 'INFO') {
-		cat = '采样';
+		cat = '系统';
 		title = '状态采样';
 	}
 	return { time: fmt_log_time(m[1]), level, cat, title, detail: msg, raw: line };
@@ -457,21 +457,33 @@ function read_file_lines(path, limit) {
 	return rows;
 }
 
+function alert_cat_group(cat) {
+	if (cat == '线路')
+		return '网络';
+	if (cat == '客户端')
+		return '设备';
+	if (cat == 'ARP' || cat == '登录')
+		return '安全';
+	if (cat == '资源' || cat == '硬件' || cat == '内核' || cat == 'DHCP' || cat == '告警' || cat == '采样' || cat == '状态' || cat == '测试')
+		return '系统';
+	return cat;
+}
+
 function filter_rows(rows, filt) {
 	if (filt == null || filt == '' || filt == 'all')
 		return rows;
 	let out = [];
 	for (let r in rows) {
 		if (filt == 'alarm') {
-			if (r.title == '状态采样' || r.cat == '采样')
+			if (r.level == '信息' || r.title == '状态采样' || r.cat == '采样')
 				continue;
 			if (r.title == '系统启动' || match(r.detail || '', /告警服务已启动/))
 				continue;
 			push(out, r);
 		}
-		else if (filt == 'alert' && (r.level == '严重' || r.level == '中等' || r.cat == '告警' || r.cat == '线路'))
+		else if (filt == 'alert' && (r.level == '严重' || r.level == '中等' || r.cat == '告警' || r.cat == '线路' || r.cat == '网络'))
 			push(out, r);
-		else if (filt == 'event' && r.title != '状态采样')
+		else if (filt == 'event' && r.title != '状态采样' && r.level != '信息')
 			push(out, r);
 		else if (filt == 'sample' && r.title == '状态采样')
 			push(out, r);
@@ -485,7 +497,7 @@ function filter_rows(rows, filt) {
 			push(out, r);
 		else if (filt == 'svc' && (r.cat == '服务' || r.cat == 'DNS' || r.cat == '文件共享' || r.cat == '代理'))
 			push(out, r);
-		else if (r.cat == filt || r.level == filt)
+		else if (alert_cat_group(r.cat) == filt || r.cat == filt || r.level == filt)
 			push(out, r);
 	}
 	return out;

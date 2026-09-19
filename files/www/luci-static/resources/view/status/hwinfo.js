@@ -114,8 +114,6 @@ function speedZh(s) {
 	const n = Number(s);
 	if (!isFinite(n) || n <= 0)
 		return '—';
-	if (n >= 1000)
-		return (n / 1000) + ' Gbps';
 	return n + ' Mbps';
 }
 

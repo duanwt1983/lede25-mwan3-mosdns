@@ -169,14 +169,13 @@ function formatByteRateDecimal(n) {
 
 function formatBitRate(n) {
 	n = asNum(n);
-	if (n <= 0) return '0 bps';
-	var u = [ 'bps', 'Kbps', 'Mbps', 'Gbps', 'Tbps' ];
-	var i = 0;
-	while (n >= 1000 && i < u.length - 1) {
-		n /= 1000;
-		i++;
-	}
-	return (i === 0 ? String(Math.round(n)) : n.toFixed(2)) + ' ' + u[i];
+	if (n <= 0) return '0 Mbps';
+	var mbps = n / 1e6;
+	if (mbps >= 100)
+		return mbps.toFixed(1) + ' Mbps';
+	if (mbps >= 1)
+		return mbps.toFixed(2) + ' Mbps';
+	return mbps.toFixed(3) + ' Mbps';
 }
 
 /** Input is byte/s, output follows global unit mode. */

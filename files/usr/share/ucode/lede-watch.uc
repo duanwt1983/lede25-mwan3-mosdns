@@ -151,7 +151,7 @@ function check_arp(ctx, st, now, out) {
 		return;
 	if (neigh[self.ip] && neigh[self.ip] != self.mac) {
 		let detail = sprintf('网关 %s 应为 %s，邻居表是 %s', self.ip, self.mac, neigh[self.ip]);
-		ev(out, '严重', 'ARP', '网关地址被冒充', detail, 'arp-gw', arp_flag);
+		ev(out, '严重', '安全', '网关地址被冒充', detail, 'arp-gw', arp_flag);
 		push(issues, { kind: 'gateway', ip: self.ip, mac: neigh[self.ip] });
 	}
 	if (type(st.arp.prev2) != 'object')
@@ -168,7 +168,7 @@ function check_arp(ctx, st, now, out) {
 			let osc = (st.arp.prev2[ip] || '') == mac;
 			if (osc && dt > 0 && dt < 300) {
 				let detail = sprintf('%s 的 MAC 在 %s 与 %s 之间来回切换', ip, prev.mac, mac);
-				ev(out, '中等', 'ARP', '同一 IP 的 MAC 来回切换', detail, 'arp-flip-' + ip, arp_flag);
+				ev(out, '中等', '安全', '同一 IP 的 MAC 来回切换', detail, 'arp-flip-' + ip, arp_flag);
 				push(issues, { kind: 'flap', ip, from: prev.mac, to: mac, dt });
 			}
 			st.arp.prev2[ip] = prev.mac;
@@ -180,7 +180,7 @@ function check_arp(ctx, st, now, out) {
 			st.arp.mm[ip] = n;
 			if (n >= 2) {
 				let detail = sprintf('%s 租约 %s，邻居表 %s', ip, lease_mac, mac);
-				ev(out, '中等', 'ARP', '有人占用已分配地址', detail, 'arp-lease-' + ip, arp_flag);
+				ev(out, '中等', '安全', '有人占用已分配地址', detail, 'arp-lease-' + ip, arp_flag);
 				push(issues, { kind: 'lease', ip, arp: mac, lease: lease_mac });
 			}
 		} else
@@ -435,7 +435,7 @@ function scan_bandix_burst(ctx, st, out, bj, lan_ip, now, leases, arp) {
 		let ustr = sprintf('%.1f', up_mbps);
 		let prev = st.clients[ip];
 		if (!prev) {
-			st.clients[ip] = { mac, down_since: 0, up_since: 0, log_down: 0, log_up: 0, alert_down: 0, alert_up: 0, t: now };
+			st.clients[ip] = { mac, down_since: 0, up_since: 0, alert_down: 0, alert_up: 0, t: now };
 			prev = st.clients[ip];
 		}
 		prev.mac = mac || prev.mac;
@@ -444,52 +444,30 @@ function scan_bandix_burst(ctx, st, out, bj, lan_ip, now, leases, arp) {
 		if (down_l > 0 && down_mbps >= down_l) {
 			if (!(+prev.down_since > 0))
 				prev.down_since = now;
-			if (!prev.log_down) {
-				prev.log_down = 1;
-				ev(out, '一般', '客户端', '下行突发',
-					sprintf('%s 下行 %s Mbit/s（阈值 %s）。', who, dstr, down_l),
-					'burst-down-log-' + ip, '');
-			}
 			if (now - +prev.down_since >= hold && !prev.alert_down) {
 				prev.alert_down = 1;
-				ev(out, '中等', '客户端', '下行突发持续',
-					sprintf('%s 下行 %s Mbit/s，已持续 %d 秒（阈值 %s Mbit/s / %d 秒）。',
+				ev(out, '中等', '设备', '下行突发持续',
+					sprintf('%s 下行 %s Mbps，已持续 %d 秒（阈值 %s Mbps / %d 秒）。',
 						who, dstr, now - +prev.down_since, down_l, hold),
 					'burst-down-' + ip, 'alert_burst_down');
 			}
 		} else {
-			if (prev.log_down)
-				ev(out, '信息', '客户端', '下行突发结束',
-					sprintf('%s 当前下行 %s Mbit/s。', who, dstr),
-					'burst-down-end-' + ip, '');
 			prev.down_since = 0;
-			prev.log_down = 0;
 			prev.alert_down = 0;
 		}
 
 		if (up_l > 0 && up_mbps >= up_l) {
 			if (!(+prev.up_since > 0))
 				prev.up_since = now;
-			if (!prev.log_up) {
-				prev.log_up = 1;
-				ev(out, '一般', '客户端', '上行突发',
-					sprintf('%s 上行 %s Mbit/s（阈值 %s）。', who, ustr, up_l),
-					'burst-up-log-' + ip, '');
-			}
 			if (now - +prev.up_since >= hold && !prev.alert_up) {
 				prev.alert_up = 1;
-				ev(out, '中等', '客户端', '上行突发持续',
-					sprintf('%s 上行 %s Mbit/s，已持续 %d 秒（阈值 %s Mbit/s / %d 秒）。',
+				ev(out, '中等', '设备', '上行突发持续',
+					sprintf('%s 上行 %s Mbps，已持续 %d 秒（阈值 %s Mbps / %d 秒）。',
 						who, ustr, now - +prev.up_since, up_l, hold),
 					'burst-up-' + ip, 'alert_burst_up');
 			}
 		} else {
-			if (prev.log_up)
-				ev(out, '信息', '客户端', '上行突发结束',
-					sprintf('%s 当前上行 %s Mbit/s。', who, ustr),
-					'burst-up-end-' + ip, '');
 			prev.up_since = 0;
-			prev.log_up = 0;
 			prev.alert_up = 0;
 		}
 		st.clients[ip] = prev;
@@ -571,14 +549,14 @@ function dns_track(st, out, key, ok, title_fail, title_ok, detail, nlim) {
 		d = { n: 0, hit: 0 };
 	if (ok) {
 		if (d.hit)
-			ev(out, '一般', 'DNS', title_ok, detail, 'dns-up-' + key, 'alert_dns');
+			ev(out, '一般', '网络', title_ok, detail, 'dns-up-' + key, 'alert_dns');
 		st.dns[key] = { n: 0, hit: 0 };
 		return;
 	}
 	d.n = +d.n + 1;
 	if (d.n >= nlim && !d.hit) {
 		d.hit = 1;
-		ev(out, '中等', 'DNS', title_fail,
+		ev(out, '中等', '网络', title_fail,
 			sprintf('%s 连续 %d 次未获应答。', detail, d.n),
 			'dns-down-' + key, 'alert_dns');
 	}
@@ -666,22 +644,20 @@ function scan_logread(st, out) {
 				started = true;
 			continue;
 		}
-		if (match(line, /Bad password|Login attempt|auth(entication)? fail/i) && match(line, /dropbear|sshd|lede-login/i)) {
+		if (match(line, /Bad password|Login attempt|auth(entication)? fail/i) && match(line, /dropbear|sshd|lede-login/i))
 			push(fails, now);
-			ev(out, '中等', '登录', '登录失败', line, 'login-fail-line', 'alert_login_fail');
-		}
 		if (match(line, /CHAP authentication failed|PAP authentication failed|Unable to authenticate/i))
-			ev(out, '严重', '线路', '拨号认证失败', line, 'ppp-auth', 'alert_ppp_fail');
+			ev(out, '中等', '网络', '拨号认证失败', line, 'ppp-auth', 'alert_ppp_fail');
 		if (match(line, /no address available|no addresses available/i))
-			ev(out, '中等', 'DHCP', '地址池空了', line, 'dhcp-empty', 'alert_dhcp');
+			ev(out, '中等', '系统', '地址池空了', line, 'dhcp-empty', 'alert_dhcp');
 		if (match(line, /lost tracking on interface|tracking is down/i))
-			ev(out, '中等', '线路', '线路探测失败', line, 'track-log', 'alert_track');
+			ev(out, '中等', '网络', '线路探测失败', line, 'track-log', 'alert_track');
 	}
 	st.logcur = newest;
 	st.login_fails = fails;
 	let nlim = +st._login_n || 5;
 	if (length(fails) >= nlim)
-		ev(out, '中等', '登录', '登录失败次数过多',
+		ev(out, '中等', '安全', '登录失败次数过多',
 			sprintf('近 10 分钟失败 %d 次（阈值 %d）。', length(fails), nlim),
 			'login-fail-burst', 'alert_login_fail');
 }
@@ -727,7 +703,7 @@ function emit_wan_updown(ctx, st, out) {
 				let cause = '';
 				try { cause = wan_cause(w.name); } catch (e) { cause = ''; }
 				let trnote = (w.track && w.track != '') ? sprintf('mwan3探测=%s。', w.track) : '';
-				ev(out, '严重', '线路', '断线告警',
+				ev(out, '中等', '网络', '断线告警',
 					sprintf('【%s】判定为外网不可用（尚未自动修复）。%s%s', w.name, trnote, cause),
 					'down-' + w.name, 'alert_down');
 			}
@@ -739,7 +715,7 @@ function emit_wan_updown(ctx, st, out) {
 					st.wan_up_t[w.name] = now;
 				let since = now - (+st.wan_up_t[w.name] || now);
 				if (up_hold == 0 || since >= up_hold) {
-					ev(out, '一般', '线路', '线路恢复',
+					ev(out, '一般', '网络', '线路恢复',
 						sprintf('网口 %s 已恢复正常。', w.name),
 						'up-' + w.name, 'alert_up');
 					delete st.wan_up_t[w.name];
@@ -755,11 +731,11 @@ function emit_wan_updown(ctx, st, out) {
 		let tr = w.track || '';
 		let prevt = st.track[w.name] || '';
 		if (w.up && tr == 'offline' && prevt != 'offline')
-			ev(out, '中等', '线路', '线路探测失败',
+			ev(out, '中等', '网络', '线路探测失败',
 				sprintf('【%s】逻辑接口 up，但 mwan3 外网探测 offline（物理链路可能仍正常）。', w.name),
 				'track-' + w.name, 'alert_track');
 		else if (prevt == 'offline' && tr == 'online')
-			ev(out, '一般', '线路', '线路探测恢复',
+			ev(out, '一般', '网络', '线路探测恢复',
 				sprintf('%s 探测已恢复 online。', w.name),
 				'track-up-' + w.name, 'alert_track');
 		st.track[w.name] = tr;
@@ -776,7 +752,7 @@ function emit_wan_updown(ctx, st, out) {
 	}
 	if (n_wan >= 2 && n_up == 0 && n_down_ok == n_wan) {
 		if (!st.all_down_sent)
-			ev(out, '严重', '线路', '全部 WAN 掉线',
+			ev(out, '严重', '网络', '全部 WAN 掉线',
 				'所有已启用 WAN 均不可用，内网将无法上网。',
 				'all-down', 'alert_all_down');
 		st.all_down_sent = true;
@@ -856,17 +832,17 @@ export function collect_interval(ctx) {
 			st.link[w.name] = spd;
 		if (last >= 1000 && spd > 0 && spd <= 100 && !st.link_hit[w.name]) {
 			st.link_hit[w.name] = 1;
-			ev(out, '中等', '线路', '网口协商降速',
+			ev(out, '中等', '网络', '网口协商降速',
 				sprintf('%s 设备 %s 由 %d M 降为 %d M。', w.name, w.dev || w.phy, last, spd),
 				'link-' + w.name, 'alert_link_speed');
 		} else if (last > 0 && spd > 0 && spd < last && spd * 2 <= last && !st.link_hit[w.name]) {
 			st.link_hit[w.name] = 1;
-			ev(out, '中等', '线路', '网口协商降速',
+			ev(out, '中等', '网络', '网口协商降速',
 				sprintf('%s 设备 %s 由 %d M 降为 %d M。', w.name, w.dev || w.phy, last, spd),
 				'link-' + w.name, 'alert_link_speed');
 		} else if (spd > 0 && last > 0 && spd >= last && st.link_hit[w.name]) {
 			st.link_hit[w.name] = 0;
-			ev(out, '一般', '线路', '网口速率恢复',
+			ev(out, '一般', '网络', '网口速率恢复',
 				sprintf('%s 当前 %d M。', w.name, spd),
 				'link-up-' + w.name, 'alert_link_speed');
 		}
@@ -882,8 +858,8 @@ export function collect_interval(ctx) {
 					st.bw_since[dkey] = now;
 				if (now - +st.bw_since[dkey] >= bw_hold * 60 && !st.bw_hit[dkey]) {
 					st.bw_hit[w.name + '-d'] = 1;
-					ev(out, '中等', '线路', 'WAN 下行接近上限',
-						sprintf('%s 下行 %.1f Mbit/s，配置上限 %s M（阈值 %d%%），已持续至少 %d 分钟。',
+					ev(out, '中等', '网络', 'WAN 下行接近上限',
+						sprintf('%s 下行 %.1f Mbps，配置上限 %s Mbps（阈值 %d%%），已持续至少 %d 分钟。',
 							w.name, down_mbps, w.bw_down, bw_pct, bw_hold),
 						'wanbw-d-' + w.name, 'alert_wan_bw');
 				}
@@ -898,8 +874,8 @@ export function collect_interval(ctx) {
 					st.bw_since[ukey] = now;
 				if (now - +st.bw_since[ukey] >= bw_hold * 60 && !st.bw_hit[ukey]) {
 					st.bw_hit[ukey] = 1;
-					ev(out, '中等', '线路', 'WAN 上行接近上限',
-						sprintf('%s 上行 %.1f Mbit/s，配置上限 %s M（阈值 %d%%），已持续至少 %d 分钟。',
+					ev(out, '中等', '网络', 'WAN 上行接近上限',
+						sprintf('%s 上行 %.1f Mbps，配置上限 %s Mbps（阈值 %d%%），已持续至少 %d 分钟。',
 							w.name, up_mbps, w.bw_up, bw_pct, bw_hold),
 						'wanbw-u-' + w.name, 'alert_wan_bw');
 				}
@@ -916,7 +892,7 @@ export function collect_interval(ctx) {
 	if (conn_max > 0 && conn * 100 / conn_max >= cpct) {
 		if (!st.conn_hit) {
 			st.conn_hit = 1;
-			ev(out, '中等', '资源', '连接跟踪占用高',
+			ev(out, '中等', '系统', '连接跟踪占用高',
 				sprintf('当前 %d / %d（%d%%），阈值 %d%%。', conn, conn_max, int(conn * 100 / conn_max), cpct),
 				'conntrack', 'alert_conntrack');
 		}
@@ -939,7 +915,7 @@ export function collect_interval(ctx) {
 		if (!st.macs[mac]) {
 			st.macs[mac] = 1;
 			if (seeded)
-				ev(out, '一般', '客户端', '新设备入网',
+				ev(out, '一般', '设备', '新设备入网',
 					sprintf('MAC %s 获得 %s%s', mac, ip, host != '' ? ('（' + host + '）') : ''),
 					'newmac-' + mac, 'alert_new_mac');
 		}
@@ -987,7 +963,7 @@ export function collect_interval(ctx) {
 			if (q)
 				q.close();
 			if (match(body, /FAILED|FAILING|SMART overall-health.*FAILED/i))
-				ev(out, '严重', '硬件', '磁盘健康异常', d + ' ' + trim(body), 'smart-' + replace(d, /\//g, '_'), 'alert_smart');
+				ev(out, '严重', '系统', '磁盘健康异常', d + ' ' + trim(body), 'smart-' + replace(d, /\//g, '_'), 'alert_smart');
 		}
 	}
 

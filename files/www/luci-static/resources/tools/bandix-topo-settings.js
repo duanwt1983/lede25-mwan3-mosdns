@@ -72,8 +72,7 @@ function normalizeMacKey(mac) {
 function formatLimitKbps(v) {
 	var n = asNum(v);
 	if (n <= 0) return '不限速';
-	if (n >= 1000) return (n / 1000).toFixed(2) + ' Mbps';
-	return Math.round(n) + ' kbps';
+	return (n / 1000).toFixed(n >= 1000 ? 2 : 3) + ' Mbps';
 }
 
 function formatDayLabels(days) {

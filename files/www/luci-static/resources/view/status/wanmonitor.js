@@ -29,13 +29,12 @@ const callRateHist = rpc.declare({
 function fmtBitrate(bps) {
 	if (!isFinite(bps) || bps < 0)
 		bps = 0;
-	if (bps < 1000)
-		return bps.toFixed(0) + ' bps';
-	if (bps < 1e6)
-		return (bps / 1e3).toFixed(1) + ' Kbps';
-	if (bps < 1e9)
-		return (bps / 1e6).toFixed(2) + ' Mbps';
-	return (bps / 1e9).toFixed(2) + ' Gbps';
+	const mbps = bps / 1e6;
+	if (mbps >= 100)
+		return mbps.toFixed(1) + ' Mbps';
+	if (mbps >= 1)
+		return mbps.toFixed(2) + ' Mbps';
+	return mbps.toFixed(3) + ' Mbps';
 }
 
 function fmtBytes(n) {

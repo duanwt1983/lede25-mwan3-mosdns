@@ -624,7 +624,7 @@ function handle_dhcp(st, mac, ip) {
 	let reason = '在本网分配地址';
 	add_pending('dhcp', mac, ip, reason);
 	if (as_bool(cfg('dhcp_log', '1'), true) || as_bool(cfg('dhcp_notify', '1'), true))
-		push_alert(st, '严重', 'DHCP', '发现非法 DHCP 服务器',
+		push_alert(st, '严重', '安全', '发现非法 DHCP 服务器',
 			sprintf('%s%s %s', mac, ip != '' ? (' ' + ip) : '', reason), 'dhcp-' + mac,
 			as_bool(cfg('dhcp_notify', '1'), true));
 	if (as_bool(cfg('dhcp_ban', '1'), true) && persist_dhcp_ban(mac, '自动发现')) {

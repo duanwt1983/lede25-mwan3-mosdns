@@ -434,6 +434,9 @@ export function persist_system_logs() {
 
 /* line: TIME|LEVEL|CAT|TITLE|DETAIL */
 export function append_event(path, max_kb, level, cat, title, detail) {
+	level = level || '一般';
+	if (level == '信息')
+		return path;
 	path = ensure_log_file(path, 'sys-alert.log');
 	if (path == '')
 		return null;
@@ -449,7 +452,6 @@ export function append_event(path, max_kb, level, cat, title, detail) {
 	}
 	if (!fh)
 		return null;
-	level = level || '信息';
 	cat = cat || '系统';
 	title = replace(`${title || ''}`, /\|/g, '/');
 	detail = replace(`${detail || ''}`, /\|/g, '/');
@@ -476,14 +478,15 @@ export function parse_line(line) {
 	let m = match(line, /^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s+(\S+)\s+(.*)$/);
 	if (m) {
 		let kind = m[2];
-		let level = '信息';
+		let level = '一般';
 		let cat = '系统';
-		if (kind == 'ALERT') { level = '中等'; cat = '资源'; }
-		else if (kind == 'WAN') { level = '严重'; cat = '线路'; }
+		if (kind == 'ALERT') { level = '中等'; cat = '系统'; }
+		else if (kind == 'WAN') { level = match(m[3], /恢复/) ? '一般' : '中等'; cat = '网络'; }
 		else if (kind == 'TEST') { level = '一般'; cat = '系统'; }
+		else if (kind == 'INFO') { level = '一般'; cat = '系统'; }
 		return { time: m[1], level, cat, title: kind, detail: m[3] };
 	}
-	return { time: '', level: '信息', cat: '系统', title: '原始', detail: line };
+	return { time: '', level: '一般', cat: '系统', title: '原始', detail: line };
 }
 
 export function read_tail(path, max_lines) {

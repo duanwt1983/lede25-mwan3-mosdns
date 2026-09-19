@@ -225,7 +225,7 @@ return baseclass.extend({
 	o.default = '512';
 
 	o = s.option(form.Flag, 'log_sample', _('定期记录当前数值'),
-		_('未超阈值也会按检查间隔写一行 CPU/内存/负载/磁盘/温度/DHCP。默认关闭，不写进报警日志。'));
+		_('此开关不再写入报警日志。报警日志只保留告警与恢复。'));
 	o.default = '0';
 
 	o = s.option(form.Value, 'check_interval', _('全面检查间隔（秒）'),
@@ -284,7 +284,7 @@ return baseclass.extend({
 	o.default = '80';
 
 	o = s.option(form.Value, 'wan_bw_percent', _('WAN 带宽占用配置上限的（%）'),
-		_('需在接口上填写 lede_bw_down / lede_bw_up（Mbit/s）。未填则不检测该方向。'));
+		_('需在接口上填写 lede_bw_down / lede_bw_up（Mbps）。未填则不检测该方向。'));
 	o.datatype = 'range(1,100)';
 	o.default = '90';
 	o = s.option(form.Value, 'wan_bw_hold_min', _('持续时间（分钟）'),
@@ -303,17 +303,18 @@ return baseclass.extend({
 
 	s = m.section(form.NamedSection, 'main', 'wanalert', _('客户端突发'));
 	s.addremove = false;
-	s.description = _('按连接跟踪字节差估算 LAN 客户端速率，日志含 MAC 与 IP。超过阈值即记一条；持续达到设定秒数才视为可推送的告警。上下行分开。限速惩罚未启用。');
+	s.description = _('按连接跟踪字节差估算 LAN 客户端速率，日志含 MAC 与 IP。超过阈值即记一条；持续达到设定秒数才视为可推送的告警（按秒，不是分钟）。上下行分开。限速惩罚未启用。');
 
-	o = s.option(form.Value, 'burst_down_mbps', _('下行超过（Mbit/s）'));
+	o = s.option(form.Value, 'burst_down_mbps', _('下行超过（Mbps）'));
 	o.datatype = 'ufloat';
 	o.default = '50';
 
-	o = s.option(form.Value, 'burst_up_mbps', _('上行超过（Mbit/s）'));
+	o = s.option(form.Value, 'burst_up_mbps', _('上行超过（Mbps）'));
 	o.datatype = 'ufloat';
 	o.default = '20';
 
-	o = s.option(form.Value, 'burst_hold_sec', _('持续（秒）后才告警'));
+	o = s.option(form.Value, 'burst_hold_sec', _('持续（秒）后才告警'),
+		_('按秒计时。填写 60 表示持续 60 秒，不是 60 分钟。最短 10 秒。'));
 	o.datatype = 'uinteger';
 	o.default = '60';
 

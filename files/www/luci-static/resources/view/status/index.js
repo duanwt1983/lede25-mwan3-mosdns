@@ -712,7 +712,19 @@ const TOPO_ICON = {
 	router: { src: 'vendor/topo-icons/router.svg', w: 98, h: 40 },
 	switch: { src: 'vendor/topo-icons/switch.svg', w: 120, h: 88 },
 	host: { src: 'vendor/topo-icons/client-pc.svg', w: 48, h: 36 },
-	phone: { src: 'vendor/topo-icons/client-phone.svg', w: 30, h: 50 }
+	phone: { src: 'vendor/topo-icons/client-phone.svg', w: 30, h: 50 },
+	'xiaomi-phone': { src: 'vendor/topo-icons/client-xiaomi-phone.svg', w: 30, h: 50 },
+	'apple-phone': { src: 'vendor/topo-icons/client-apple-phone.svg', w: 30, h: 50 },
+	'huawei-phone': { src: 'vendor/topo-icons/client-huawei-phone.svg', w: 30, h: 50 },
+	'windows-pc': { src: 'vendor/topo-icons/client-windows-pc.svg', w: 48, h: 36 },
+	'macos-pc': { src: 'vendor/topo-icons/client-macos-pc.svg', w: 48, h: 36 },
+	'huawei-ap': { src: 'vendor/topo-icons/client-huawei-ap.svg', w: 40, h: 40 },
+	nvr: { src: 'vendor/topo-icons/client-nvr.svg', w: 44, h: 36 }
+};
+
+const HUAWEI_OUI = {
+	f40e11: 1, '00e0fc': 1, '04c06f': 1, '286ed4': 1, '4846fb': 1,
+	'643e8c': 1, '708cb6': 1, '80717a': 1, '9c28ef': 1, ace215: 1, c8d15e: 1
 };
 
 function topoIconKind(kind, client) {
@@ -728,7 +740,7 @@ function topoIconScale(kind) {
 		return 1.7;
 	if (kind === 'cloud')
 		return 1.55;
-	if (kind === 'phone')
+	if (kind === 'phone' || /phone$/.test(kind) || kind === 'huawei-ap' || kind === 'nvr')
 		return 1.15;
 	return 1.25;
 }
@@ -738,12 +750,46 @@ function topoUseIconSkin(kind, key) {
 		|| key === 'internet' || key === 'gateway' || key === 'switch';
 }
 
+function macOui6(mac) {
+	const m = String(mac || '').replace(/[^0-9a-fA-F]/g, '').toLowerCase();
+	return m.length >= 6 ? m.slice(0, 6) : '';
+}
+
+function macRandomized(mac) {
+	const m = String(mac || '').replace(/[^0-9a-fA-F]/g, '');
+	if (m.length < 2)
+		return false;
+	return (parseInt(m.slice(0, 2), 16) & 0x02) !== 0;
+}
+
 function clientIconKind(c) {
 	if (!c)
 		return 'host';
-	const n = String(c.name || c.hostname || '').toLowerCase();
-	if (/phone|android|iphone|ipad|mobile|mi-|redmi|huawei|honor|oppo|vivo|pixel|galaxy/.test(n))
+	const n = String(clientHostname(c) || c.name || c.hostname || '').toLowerCase();
+	const mac = String(c.mac || '');
+	const oui = macOui6(mac);
+	if (/tilink|tiandy|hikvision|ezviz|dahua|\bnvr\b|\bdvr\b|\bipc\b|camera|录像|\bh6c[-_]/.test(n))
+		return 'nvr';
+	if (/\bap\b|access.?point|wifi.?ap|wireless.?ap/.test(n))
+		return 'huawei-ap';
+	if (/iphone|ipad/.test(n))
+		return 'apple-phone';
+	if (/macbook|imac|mac-mini|macos|macintosh/.test(n))
+		return 'macos-pc';
+	if (/xiaomi|redmi|\bmi[-_]|\bmi\d|poco|mix\d/.test(n))
+		return 'xiaomi-phone';
+	if (/huawei|honor|rong-yao|[a-z0-9]{2,6}-a[ln]\d{2}|[a-z0-9]{2,6}-tl\d{2}/.test(n))
+		return 'huawei-phone';
+	if (/desktop-|laptop-|windows|\bwin-|\bpc-/.test(n))
+		return 'windows-pc';
+	if (/vivo|oppo|oneplus|iqoo|galaxy|pixel|android|phone|mobile/.test(n))
 		return 'phone';
+	if (!n && !macRandomized(mac)) {
+		if (HUAWEI_OUI[oui])
+			return 'huawei-ap';
+		if (oui === '00e04c')
+			return 'windows-pc';
+	}
 	return 'host';
 }
 
@@ -1683,7 +1729,7 @@ return view.extend({
 		const y = cy - h / 2;
 		const ok = tone !== 'bad' && tone !== 'warn';
 		if (kind === 'client' || kind === 'host') {
-			const phone = client && clientIconKind(client) === 'phone';
+			const phone = client && /phone$/.test(clientIconKind(client));
 			if (phone) {
 				g.appendChild(svgEl('rect', {
 					x: cx - w * 0.18, y: cy - h * 0.42, width: w * 0.36, height: h * 0.84, rx: 4,
@@ -2689,7 +2735,7 @@ return view.extend({
 
 	drawClient(layer, x, y, c, key, stackIndex, stackCount, layout, summary) {
 		layout = layout || this.clientLayout([c]);
-		const iconW = 22;
+		const iconW = 26;
 		const w = layout.width + iconW;
 		const h = Math.max(20, CLI_PITCH - 6);
 		const g = svgEl('g', {

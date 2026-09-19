@@ -827,6 +827,16 @@ done
 assert_grep 'enable_data_mount_service' "$_LEDE_FILES/usr/libexec/lede-data-setup"
 assert_grep 'chmod +x /usr/libexec/lede-data-setup' "$_LEDE_FILES/etc/uci-defaults/10-lede-data-enable"
 assert_grep 'lede_fixup_script_modes' "$_LEDE_FILES/etc/uci-defaults/99-custom"
+assert_absent '宽带监控' "$_LEDE_FILES/usr/share/luci/menu.d/luci-app-wan-monitor.json"
+assert_grep 'xiaomi-phone' "$_LEDE_FILES/www/luci-static/resources/view/status/index.js"
+assert_overlay 'www/luci-static/resources/vendor/topo-icons/client-xiaomi-phone.svg'
+assert_overlay 'www/luci-static/resources/vendor/topo-icons/client-huawei-ap.svg'
+assert_overlay 'www/luci-static/resources/vendor/topo-icons/client-nvr.svg'
+if grep -R --include='*.json' -F '宽带监控' "$_LEDE_FILES/usr/share/luci/menu.d" >/dev/null 2>&1; then
+  echo "ERROR: 宽带监控 menu leaked into LuCI overlay"
+  exit 1
+fi
+echo "absent OK: 宽带监控 menu"
 
 _SYSJS=$(find feeds/luci package -path '*/view/system/system.js' -type f 2>/dev/null | head -n 1 || true)
 [ -n "$_SYSJS" ] || { echo "ERROR: system.js not found after luci-mod-system patch"; exit 1; }

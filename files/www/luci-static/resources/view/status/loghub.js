@@ -163,7 +163,7 @@ return view.extend({
 		]);
 
 		const catsSys = ['网络', 'DHCP', '登录', '内核', '服务', '无线', 'DNS', '文件共享', '代理', '其它'];
-		const catsAlert = ['线路', '资源', 'DHCP', '系统', '硬件', '内核', '网络', '登录', '客户端', '服务', 'DNS', '告警'];
+		const catsAlert = ['网络', '设备', '安全', '系统'];
 		const levels = ['严重', '中等', '一般', '信息'];
 
 		function fillSelect(sel, values, current) {
@@ -417,7 +417,7 @@ return view.extend({
 
 		let s = m.section(form.NamedSection, 'alert', 'store', _('报警日志'));
 		s.addremove = false;
-		s.description = _('线路和资源告警。');
+		s.description = _('网络、设备、安全、系统告警。');
 		let o = s.option(form.Flag, 'enabled', _('写入文件'));
 		o.default = o.enabled;
 		o = s.option(form.Value, 'path', _('存储路径'));

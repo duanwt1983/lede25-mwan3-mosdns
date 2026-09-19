@@ -57,7 +57,7 @@ function renderTable(rows, emptyHint) {
 		E('tr', { 'class': 'tr table-titles' }, [
 			E('th', { 'class': 'th' }, _('时间')),
 			E('th', { 'class': 'th' }, _('级别')),
-			E('th', { 'class': 'th', 'title': _('哪一类问题：线路、资源、DHCP、系统、网络、登录等') }, _('分类')),
+			E('th', { 'class': 'th', 'title': _('分类：网络、设备、安全、系统') }, _('分类')),
 			E('th', { 'class': 'th' }, _('发生了什么')),
 			E('th', { 'class': 'th' }, _('说明'))
 		]),
@@ -180,7 +180,7 @@ return view.extend({
 
 		let s = m.section(form.NamedSection, 'alert', 'store', _('报警日志'));
 		s.addremove = false;
-		s.description = _('线路和资源告警。默认文件名 sys-alert.log。');
+		s.description = _('网络、设备、安全、系统告警。默认文件名 sys-alert.log。');
 		let o = s.option(form.Flag, 'enabled', _('写入文件'));
 		o.default = o.enabled;
 		o = s.option(form.Value, 'path', _('存储路径'),
