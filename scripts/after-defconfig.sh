@@ -105,6 +105,9 @@ select_wanted() {
   disable_pkg nftables-nojson
   enable_pkg kmod-nft-core
   enable_pkg kmod-nft-nat
+  enable_pkg kmod-nft-bridge
+  enable_pkg kmod-nft-arp
+  enable_pkg kmod-nfnetlink-log
   enable_pkg kmod-nft-socket
   enable_pkg kmod-nft-tproxy
   enable_pkg kmod-nft-offload

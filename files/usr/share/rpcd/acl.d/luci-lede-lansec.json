@@ -1,0 +1,21 @@
+{
+	"luci-lede-lansec": {
+		"description": "LAN security policy (UCI only until backend lands)",
+		"read": {
+			"uci": [ "lede-lansec" ],
+			"file": {
+				"/usr/libexec/lede-log-read": [ "exec" ],
+				"/etc/lede-lansec-pending.json": [ "read" ],
+				"/tmp/lede-lansec-pending.json": [ "read" ],
+				"/tmp/lede-lansec-status.json": [ "read" ]
+			}
+		},
+		"write": {
+			"uci": [ "lede-lansec" ],
+			"file": {
+				"/etc/init.d/lede-lansec": [ "exec" ],
+				"/usr/libexec/lede-lansec": [ "exec" ]
+			}
+		}
+	}
+}

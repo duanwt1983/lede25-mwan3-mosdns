@@ -1,6 +1,8 @@
 # Dev scripts
 
-Firmware changes belong in `files/`, `patches/`, and `diy-part2.sh`. A full image build installs everything; **no hotfix step is required after flashing**.
+Firmware changes belong in `files/`, `patches/`, and `diy-part2.sh`. A full image build installs everything; **no hotfix or hot-deploy step is required after flashing**.
+
+`lede-lansec` (局域网安全) is part of that overlay: backend, init, LuCI page, menu, ACL, and uci-defaults. New images must get it from source, not from `deploy-lansec.ps1`.
 
 `diy-part2.sh` ends with **LEDE overlay compile self-check**, which verifies the same assets that used to be pushed by PowerShell hotfix scripts.
 

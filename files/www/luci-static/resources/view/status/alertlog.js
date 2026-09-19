@@ -20,15 +20,31 @@ function levelBadge(lv) {
 	}, lv || '');
 }
 
+const PAGE_SIZES = [10, 20, 30, 50];
+
 function parseJson(stdout) {
 	const t = (stdout || '').trim();
 	if (!t)
 		return [];
 	try {
-		return JSON.parse(t);
-	} catch (e) {
-		return [];
-	}
+		const data = JSON.parse(t);
+		if (Array.isArray(data))
+			return data;
+		if (data && Array.isArray(data.rows))
+			return data.rows;
+	} catch (e) {}
+	return [];
+}
+
+function newestFirst(rows) {
+	return (rows || []).slice().sort(function(a, b) {
+		return String((b && b.time) || '').localeCompare(String((a && a.time) || ''));
+	});
+}
+
+function clampPageSize(v) {
+	const n = parseInt(v, 10);
+	return PAGE_SIZES.indexOf(n) >= 0 ? n : 20;
 }
 
 function colStyle(kind) {
@@ -44,9 +60,15 @@ function colStyle(kind) {
 	return base + 'width:53%;word-break:break-word;overflow-wrap:anywhere;white-space:normal;';
 }
 
+function upMacs(s) {
+	return String(s || '').replace(/([0-9a-fA-F]{2}[:-]){5}[0-9a-fA-F]{2}/g, function(m) {
+		return m.toUpperCase().replace(/-/g, ':');
+	});
+}
+
 function renderTable(rows) {
 	const body = [];
-	const list = (rows || []).slice().reverse();
+	const list = rows || [];
 	for (let i = 0; i < list.length; i++) {
 		const r = list[i];
 		const look = levelLook(r.level);
@@ -58,14 +80,14 @@ function renderTable(rows) {
 			E('td', { 'class': 'td', 'style': colStyle('time') }, r.time || ''),
 			E('td', { 'class': 'td', 'style': colStyle('level') }, levelBadge(r.level)),
 			E('td', { 'class': 'td', 'style': colStyle('cat') }, r.cat || ''),
-			E('td', { 'class': 'td', 'style': colStyle('title') }, E('strong', {}, r.title || '')),
-			E('td', { 'class': 'td', 'style': colStyle('detail') }, r.detail || '')
+			E('td', { 'class': 'td', 'style': colStyle('title') }, E('strong', {}, upMacs(r.title || ''))),
+			E('td', { 'class': 'td', 'style': colStyle('detail') }, upMacs(r.detail || ''))
 		]));
 	}
 	if (!body.length)
 		body.push(E('tr', { 'class': 'tr' },
 			E('td', { 'class': 'td', colspan: 5 },
-				_('还没有报警记录。请到「系统报警」打开写入日志，并确认钉钉/阈值会触发。存储路径在「日志中心」。'))));
+				_('还没有报警记录。请到「系统报警」打开写入日志，并确认推送/阈值会触发。存储路径在「日志中心」。'))));
 	const head = E('tr', { 'class': 'tr table-titles' }, [
 		E('th', { 'class': 'th', 'style': colStyle('time') }, _('时间')),
 		E('th', { 'class': 'th', 'style': colStyle('level') }, _('级别')),
@@ -85,26 +107,65 @@ return view.extend({
 
 	render(rows) {
 		const view = this;
+		view._all = newestFirst(Array.isArray(rows) ? rows : []);
+		view._page = 1;
+		try { view._ps = clampPageSize(localStorage.getItem('lede-alertlog-ps')); }
+		catch (e) { view._ps = 20; }
 		view._box = E('div');
+		view._paint = function() {
+			const all = view._all || [];
+			const size = clampPageSize(view._ps);
+			const pages = Math.max(1, Math.ceil(all.length / size) || 1);
+			if (view._page > pages)
+				view._page = pages;
+			const start = (view._page - 1) * size;
+			const sizeSel = E('select', { 'style': 'min-width:4.5em' });
+			PAGE_SIZES.forEach(function(n) {
+				sizeSel.appendChild(E('option', { value: String(n), selected: n === size }, String(n)));
+			});
+			sizeSel.addEventListener('change', function() {
+				view._ps = clampPageSize(this.value);
+				view._page = 1;
+				try { localStorage.setItem('lede-alertlog-ps', String(view._ps)); } catch (e) {}
+				view._paint();
+			});
+			const prev = E('button', { type: 'button', 'class': 'btn cbi-button', disabled: view._page <= 1 }, _('上一页'));
+			const next = E('button', { type: 'button', 'class': 'btn cbi-button', disabled: view._page >= pages }, _('下一页'));
+			prev.addEventListener('click', function() { view._page -= 1; view._paint(); });
+			next.addEventListener('click', function() { view._page += 1; view._paint(); });
+			dom.content(view._box, [
+				E('div', { 'style': 'display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:0 0 .6em' }, [
+					E('span', {}, _('共 %d 条').format(all.length)),
+					prev,
+					E('span', {}, _('第 %d / %d 页').format(view._page, pages)),
+					next,
+					E('span', {}, _('每页')),
+					sizeSel,
+					E('span', {}, _('条'))
+				]),
+				renderTable(all.slice(start, start + size))
+			]);
+		};
 		view._refresh = function() {
 			return fs.exec('/usr/libexec/lede-log-read', ['read', 'alert', '500', 'alarm']).then(r => {
-				dom.content(view._box, renderTable(parseJson(r && r.stdout)));
+				const next = newestFirst(parseJson(r && r.stdout));
+				const sig = JSON.stringify(next);
+				if (sig === view._sig)
+					return;
+				view._sig = sig;
+				view._all = next;
+				view._paint();
 			}).catch(e => {
 				dom.content(view._box, E('p', {}, e.message || String(e)));
 			});
 		};
-		dom.content(view._box, renderTable(rows || []));
-		poll.add(L.bind(view._refresh, view), 15);
+		view._paint();
+		poll.add(L.bind(view._refresh, view), 8);
 
 		return E('div', {}, [
 			E('h2', {}, _('报警日志')),
-			E('p', {}, _('线路掉线/恢复、CPU/内存/磁盘/温度/DHCP 池不足等。不含定时状态采样。钉钉机器人在「系统报警」里配。')),
+			E('p', {}, _('线路掉线/恢复、CPU/内存/磁盘/温度/DHCP 池不足等。不含定时状态采样。最新的在最上面，有新记录会自动出现。钉钉 / PushPlus 在「系统报警」里配。')),
 			E('div', { 'style': 'margin:.5em 0 1em' }, [
-				E('button', {
-					'class': 'btn cbi-button cbi-button-action',
-					'click': ui.createHandlerFn(view, view._refresh)
-				}, _('刷新')),
-				' ',
 				E('a', {
 					'class': 'btn cbi-button',
 					'href': L.url('admin/status/wanalert')

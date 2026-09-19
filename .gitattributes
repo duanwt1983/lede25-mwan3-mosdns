@@ -6,8 +6,12 @@
 .config text eol=lf
 files/usr/libexec/** text eol=lf
 files/usr/sbin/** text eol=lf
+files/usr/share/** text eol=lf
 files/etc/init.d/** text eol=lf
 files/etc/hotplug.d/** text eol=lf
 files/etc/uci-defaults/** text eol=lf
+files/etc/config/** text eol=lf
+files/www/**/*.js text eol=lf
+files/www/**/*.json text eol=lf
 package/mosdns-mwan/files/** text eol=lf
 # After adding overlay scripts on Windows, run: scripts/fix-overlay-exec.ps1

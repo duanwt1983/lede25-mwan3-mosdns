@@ -1,0 +1,56 @@
+#!/bin/sh
+[ -f /etc/config/lede-lansec ] || {
+	touch /etc/config/lede-lansec
+	uci -q batch <<'EOF'
+set lede-lansec.main=main
+set lede-lansec.main.enabled=0
+set lede-lansec.main.iface=br-lan
+set lede-lansec.main.notify_cooldown=120
+set lede-lansec.main.log_page_size=20
+set lede-lansec.main.dhcp_enabled=1
+set lede-lansec.main.dhcp_log=1
+set lede-lansec.main.dhcp_notify=1
+set lede-lansec.main.dhcp_ban=1
+set lede-lansec.main.nat_enabled=1
+set lede-lansec.main.nat_log=1
+set lede-lansec.main.nat_notify=0
+set lede-lansec.main.arp_enabled=1
+set lede-lansec.main.arp_log=1
+set lede-lansec.main.arp_notify=1
+set lede-lansec.main.arp_drop_gw=1
+set lede-lansec.main.arp_bind_gw=1
+set lede-lansec.main.arp_enforce_lease=0
+commit lede-lansec
+EOF
+}
+
+seed() {
+	uci -q get "lede-lansec.main.$1" >/dev/null 2>&1 && return 0
+	uci set "lede-lansec.main.$1=$2"
+}
+
+uci -q get lede-lansec.main >/dev/null 2>&1 || uci set lede-lansec.main=main
+seed enabled 0
+seed iface br-lan
+seed notify_cooldown 120
+seed log_page_size 20
+seed dhcp_enabled 1
+seed dhcp_log 1
+seed dhcp_notify 1
+seed dhcp_ban 1
+seed nat_enabled 1
+seed nat_log 1
+seed nat_notify 0
+seed arp_enabled 1
+seed arp_log 1
+seed arp_notify 1
+seed arp_drop_gw 1
+seed arp_bind_gw 1
+seed arp_enforce_lease 0
+uci commit lede-lansec
+chmod +x /usr/libexec/lede-lansec /etc/init.d/lede-lansec /etc/hotplug.d/iface/29-lede-lansec 2>/dev/null || true
+if [ -x /etc/init.d/lede-lansec ]; then
+	/etc/init.d/lede-lansec enable
+	/etc/init.d/lede-lansec start >/dev/null 2>&1 || true
+fi
+exit 0

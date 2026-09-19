@@ -1,0 +1,708 @@
+#!/usr/bin/ucode
+'use strict';
+
+import { cursor } from 'uci';
+import { readfile, writefile, popen, unlink, stat } from 'fs';
+import { append_event, configured_path } from '/usr/share/ucode/lede-log.uc';
+import { now_fmt } from '/usr/share/ucode/lede-metrics.uc';
+
+const CONF = 'lede-lansec';
+const NFT = '/var/run/lede-lansec.nft';
+const STATE = '/tmp/lede-lansec.state';
+const PENDING = '/etc/lede-lansec-pending.json';
+const PENDING_OLD = '/tmp/lede-lansec-pending.json';
+const STATUS = '/tmp/lede-lansec-status.json';
+const EVT = '/tmp/lede-lansec-evt.json';
+const CURSOR = '/tmp/lede-lansec.logcur';
+
+let ctx = cursor();
+try { ctx.load(CONF); } catch (e) {}
+try { ctx.load('network'); } catch (e) {}
+
+function trim(s) {
+	return replace(`${s || ''}`, /^\s+|\s+$/g, '');
+}
+
+function as_bool(v, def) {
+	if (v == null || v == '')
+		return def;
+	return !(v == '0' || v == 0 || v == false || v == 'false' || v == 'off' || v == 'no');
+}
+
+function cfg(key, def) {
+	let v = ctx.get(CONF, 'main', key);
+	if (v == null || v == '')
+		return def;
+	return v;
+}
+
+function mac_norm(s) {
+	s = uc(trim(s));
+	if (!match(s, /^([0-9A-F]{2}:){5}[0-9A-F]{2}$/))
+		return '';
+	return s;
+}
+
+function reload_uci() {
+	try { ctx.unload(CONF); } catch (e) {}
+	try { ctx.load(CONF); } catch (e) {}
+	try { ctx.load('network'); } catch (e) {}
+}
+
+function load_json(path, fallback) {
+	try {
+		let o = json(readfile(path) || '');
+		return o != null ? o : fallback;
+	} catch (e) {
+		return fallback;
+	}
+}
+
+function save_json(path, obj) {
+	try { writefile(path, sprintf('%J\n', obj)); } catch (e) {}
+}
+
+function iface() {
+	let d = trim(cfg('iface', 'br-lan'));
+	return d != '' ? d : 'br-lan';
+}
+
+function lan_ident() {
+	let dev = iface();
+	let mac = trim(readfile('/sys/class/net/' + dev + '/address') || '');
+	mac = mac_norm(mac);
+	let ip = '';
+	ctx.foreach('network', 'interface', (s) => {
+		if (s['.name'] != 'lan' && (s.device || '') != dev)
+			return;
+		if (type(s.ipaddr) == 'array' && length(s.ipaddr) > 0)
+			ip = s.ipaddr[0];
+		else if (s.ipaddr && s.ipaddr != '')
+			ip = s.ipaddr;
+	});
+	if (ip == '') {
+		let p = popen(sprintf("ip -4 -o addr show dev '%s' 2>/dev/null | awk '{print $4; exit}'", dev), 'r');
+		let raw = p ? trim(p.read('all') || '') : '';
+		if (p)
+			p.close();
+		if (match(raw, /^([0-9.]+)/))
+			ip = match(raw, /^([0-9.]+)/)[1];
+	}
+	return { dev, mac, ip };
+}
+
+function host_rows(type) {
+	let out = [];
+	ctx.foreach(CONF, type, (s) => {
+		if (!as_bool(s.enabled, true))
+			return;
+		let mac = mac_norm(s.mac);
+		if (mac == '')
+			return;
+		push(out, { id: s['.name'], mac, note: trim(s.note || '') });
+	});
+	return out;
+}
+
+function mac_in(rows, mac) {
+	for (let r in rows) {
+		if (r.mac == mac)
+			return true;
+	}
+	return false;
+}
+
+function host_has(type, mac) {
+	let found = false;
+	ctx.foreach(CONF, type, (s) => {
+		if (mac_norm(s.mac) == mac)
+			found = true;
+	});
+	return found;
+}
+
+function nft_has_family(fam) {
+	let p = popen(sprintf("nft add table %s lede_lansec_probe 2>/dev/null; echo $?", fam), 'r');
+	let rc = p ? trim(p.read('all') || '1') : '1';
+	if (p)
+		p.close();
+	system(sprintf('nft delete table %s lede_lansec_probe 2>/dev/null', fam));
+	return rc == '0';
+}
+
+function set_elems(rows) {
+	let seen = {};
+	let els = [];
+	for (let r in rows) {
+		if (seen[r.mac])
+			continue;
+		seen[r.mac] = true;
+		push(els, r.mac);
+	}
+	if (length(els) == 0)
+		return '';
+	return ' elements = { ' + join(', ', els) + ' }';
+}
+
+function join(sep, arr) {
+	let s = '';
+	for (let i = 0; i < length(arr); i++) {
+		if (i > 0)
+			s += sep;
+		s += arr[i];
+	}
+	return s;
+}
+
+function lease_pairs() {
+	let pairs = [];
+	let ips = [];
+	let seen = {};
+	for (let line in split(readfile('/tmp/dhcp.leases') || '', '\n')) {
+		let f = split(trim(line), /[ \t]+/);
+		if (length(f) < 3)
+			continue;
+		let mac = mac_norm(f[1]);
+		let ip = f[2];
+		if (mac == '' || !match(ip, /^[0-9.]+$/))
+			continue;
+		let k = ip + '|' + mac;
+		if (seen[k])
+			continue;
+		seen[k] = true;
+		push(pairs, ip + ' . ' + mac);
+		push(ips, ip);
+	}
+	return { pairs, ips };
+}
+
+function flush_tables() {
+	system('nft delete table inet lede_lansec 2>/dev/null');
+	system('nft delete table bridge lede_lansec 2>/dev/null');
+	system('nft delete table arp lede_lansec 2>/dev/null');
+}
+
+function write_nft(self, dhcp_on, arp_on) {
+	let allow = host_rows('dhcp_allow');
+	if (self.mac != '' && !mac_in(allow, self.mac))
+		push(allow, { mac: self.mac, note: 'self' });
+	let ban = host_rows('dhcp_ban');
+	let nblock = host_rows('nat_block');
+	let lease = lease_pairs();
+	let drop_gw = arp_on && as_bool(cfg('arp_drop_gw', '1'), true);
+	let enforce = arp_on && as_bool(cfg('arp_enforce_lease', '0'), false);
+	let lines = [];
+	push(lines, 'table inet lede_lansec {');
+	push(lines, sprintf('\tset dhcp_allow { type ether_addr;%s }', set_elems(allow)));
+	push(lines, sprintf('\tset dhcp_ban { type ether_addr;%s }', set_elems(ban)));
+	push(lines, sprintf('\tset nat_block { type ether_addr;%s }', set_elems(nblock)));
+	push(lines, '\tchain input {');
+	push(lines, '\t\ttype filter hook input priority -5; policy accept;');
+	if (dhcp_on)
+		push(lines, sprintf('\t\tiifname "%s" udp sport 67 jump dhcp_in', self.dev));
+	if (length(ban) > 0)
+		push(lines, sprintf('\t\tiifname "%s" ether saddr @dhcp_ban counter drop', self.dev));
+	push(lines, '\t}');
+	push(lines, '\tchain forward {');
+	push(lines, '\t\ttype filter hook forward priority -5; policy accept;');
+	if (length(ban) > 0) {
+		push(lines, sprintf('\t\tiifname "%s" ether saddr @dhcp_ban counter drop', self.dev));
+		push(lines, sprintf('\t\toifname "%s" ether daddr @dhcp_ban counter drop', self.dev));
+	}
+	push(lines, sprintf('\t\tiifname "%s" ether saddr @nat_block counter drop', self.dev));
+	push(lines, '\t}');
+	if (length(ban) > 0) {
+		push(lines, '\tchain output {');
+		push(lines, '\t\ttype filter hook output priority -5; policy accept;');
+		push(lines, sprintf('\t\toifname "%s" ether daddr @dhcp_ban counter drop', self.dev));
+		push(lines, '\t}');
+	}
+	if (dhcp_on) {
+		push(lines, '\tchain dhcp_in {');
+		if (self.ip != '')
+			push(lines, sprintf('\t\tip saddr %s return', self.ip));
+		push(lines, '\t\tether saddr @dhcp_allow return');
+		push(lines, '\t\tether saddr @dhcp_ban limit rate 2/minute log prefix "lede-lansec-dhcp " drop');
+		push(lines, '\t\tlimit rate 10/minute burst 8 packets log prefix "lede-lansec-dhcp "');
+		push(lines, '\t}');
+	}
+	push(lines, '}');
+
+	if (nft_has_family('bridge')) {
+		push(lines, 'table bridge lede_lansec {');
+		push(lines, sprintf('\tset dhcp_allow { type ether_addr;%s }', set_elems(allow)));
+		push(lines, sprintf('\tset dhcp_ban { type ether_addr;%s }', set_elems(ban)));
+		push(lines, '\tchain forward {');
+		push(lines, '\t\ttype filter hook forward priority 0; policy accept;');
+		if (dhcp_on)
+			push(lines, '\t\tether type ip udp sport 67 ether saddr @dhcp_allow accept');
+		if (length(ban) > 0) {
+			push(lines, '\t\tether saddr @dhcp_ban counter drop');
+			push(lines, '\t\tether daddr @dhcp_ban counter drop');
+		}
+		if (drop_gw && self.ip != '' && self.mac != '')
+			push(lines, sprintf('\t\tether type arp arp saddr ip %s arp saddr ether != %s drop', self.ip, self.mac));
+		push(lines, '\t}');
+		push(lines, '}');
+	}
+
+	if (nft_has_family('arp') && (drop_gw || enforce) && self.dev != '') {
+		push(lines, 'table arp lede_lansec {');
+		if (enforce && length(lease.ips) > 0) {
+			push(lines, sprintf('\tset lease_ips { type ipv4_addr; elements = { %s } }', join(', ', lease.ips)));
+			push(lines, sprintf('\tset lease_ok { type ipv4_addr . ether_addr; elements = { %s } }', join(', ', lease.pairs)));
+		}
+		push(lines, '\tchain input {');
+		push(lines, '\t\ttype filter hook input priority 0; policy accept;');
+		push(lines, sprintf('\t\tiifname != "%s" return', self.dev));
+		if (drop_gw && self.ip != '' && self.mac != '')
+			push(lines, sprintf('\t\tarp saddr ip %s arp saddr ether != %s drop', self.ip, self.mac));
+		if (enforce && length(lease.ips) > 0) {
+			push(lines, '\t\tarp operation reply arp saddr ip . arp saddr ether @lease_ok return');
+			push(lines, '\t\tarp operation reply arp saddr ip @lease_ips drop');
+		}
+		push(lines, '\t}');
+		push(lines, '}');
+	}
+
+	writefile(NFT, join('\n', lines) + '\n');
+	let rc = system(sprintf("nft -f '%s' >/tmp/lede-lansec.nft.err 2>&1", NFT));
+	if (rc == 0)
+		return true;
+	/* inet 必须在；bridge/arp 语法失败时只保留 inet */
+	let inet = [];
+	for (let line in lines) {
+		if (match(line, /^table (bridge|arp) /))
+			break;
+		push(inet, line);
+	}
+	writefile(NFT, join('\n', inet) + '\n');
+	return system(sprintf("nft -f '%s' >/tmp/lede-lansec.nft.err 2>&1", NFT)) == 0;
+}
+
+function bind_gw(self) {
+	if (!as_bool(cfg('arp_bind_gw', '1'), true))
+		return;
+	if (self.ip == '' || self.mac == '' || self.dev == '')
+		return;
+	system(sprintf("ip neigh replace %s lladdr %s nud permanent dev '%s' 2>/dev/null", self.ip, self.mac, self.dev));
+}
+
+function normalize_stored_macs() {
+	let changed = false;
+	for (let type in [ 'dhcp_allow', 'dhcp_ban', 'nat_allow', 'nat_block' ]) {
+		ctx.foreach(CONF, type, (s) => {
+			let m = mac_norm(s.mac);
+			if (m != '' && s.mac != m) {
+				ctx.set(CONF, s['.name'], 'mac', m);
+				changed = true;
+			}
+		});
+	}
+	if (changed) {
+		ctx.commit(CONF);
+		reload_uci();
+	}
+}
+
+function apply() {
+	reload_uci();
+	try { normalize_stored_macs(); } catch (e) {}
+	try { reconcile_mutex(); } catch (e) {}
+	try { drop_settled_pending(); } catch (e) {}
+	let self = lan_ident();
+	let on = as_bool(cfg('enabled', '0'), false);
+	if (!on) {
+		flush_tables();
+		save_json(STATUS, { backend: 'lede-lansec', detail: '未启用', t: time() });
+		return true;
+	}
+	flush_tables();
+	let dhcp_on = as_bool(cfg('dhcp_enabled', '1'), true);
+	let arp_on = as_bool(cfg('arp_enabled', '1'), true);
+	let ok = write_nft(self, dhcp_on, arp_on);
+	if (arp_on)
+		bind_gw(self);
+	let err = trim(readfile('/tmp/lede-lansec.nft.err') || '');
+	save_json(STATUS, {
+		backend: 'lede-lansec',
+		detail: ok ? '运行中' : ('规则未完全生效 ' + err),
+		ok,
+		iface: self.dev,
+		t: time()
+	});
+	return ok;
+}
+
+function log_alert(level, cat, title, detail) {
+	let path = configured_path('alert');
+	if (path == '')
+		return;
+	try { append_event(path, 2048, level, cat, title, detail); } catch (e) {}
+}
+
+function cooled(st, key) {
+	let sec = +cfg('notify_cooldown', 120);
+	if (!(sec > 0))
+		sec = 120;
+	if (type(st.cool) != 'object')
+		st.cool = {};
+	let last = +(st.cool[key] || 0);
+	let now = time();
+	if (last > 0 && now - last < sec)
+		return true;
+	st.cool[key] = now;
+	return false;
+}
+
+function push_alert(st, level, cat, title, detail, key, do_push) {
+	if (cooled(st, key))
+		return;
+	if (do_push) {
+		save_json(EVT, { level, cat, title, detail, key, push: true });
+		system(sprintf("/usr/sbin/wan-alert event '%s' >/dev/null 2>&1", EVT));
+		return;
+	}
+	log_alert(level, cat, title, detail);
+}
+
+function load_pending() {
+	let box = load_json(PENDING, null);
+	if (box == null)
+		box = load_json(PENDING_OLD, { items: [] });
+	if (type(box) != 'object' || box == null)
+		box = { items: [] };
+	if (type(box.items) != 'array')
+		box.items = [];
+	for (let it in box.items) {
+		let m = mac_norm(it.mac);
+		if (m != '')
+			it.mac = m;
+	}
+	return box;
+}
+
+function save_pending(box) {
+	save_json(PENDING, box);
+	try { unlink(PENDING_OLD); } catch (e) {}
+}
+
+function pending_settled(it) {
+	let mac = mac_norm(it.mac);
+	if (mac == '')
+		return false;
+	if (it.kind == 'nat' || it.kind == 'share')
+		return host_has('nat_allow', mac) || host_has('nat_block', mac);
+	return host_has('dhcp_allow', mac) || host_has('dhcp_ban', mac);
+}
+
+function add_pending(kind, mac, ip, detail) {
+	mac = mac_norm(mac);
+	if (mac == '')
+		return;
+	if (pending_settled({ kind, mac }))
+		return;
+	let box = load_pending();
+	let now = time();
+	for (let it in box.items) {
+		if (it.kind == kind && mac_norm(it.mac) == mac) {
+			it.mac = mac;
+			it.when = now_fmt();
+			it.t = now;
+			it.ip = ip || it.ip;
+			it.detail = detail || it.detail;
+			save_pending(box);
+			return;
+		}
+	}
+	push(box.items, { t: now, when: now_fmt(), kind, mac, ip: ip || '', detail: detail || '' });
+	if (length(box.items) > 40) {
+		let keep = [];
+		let i = length(box.items) - 40;
+		while (i < length(box.items)) {
+			push(keep, box.items[i]);
+			i++;
+		}
+		box.items = keep;
+	}
+	save_pending(box);
+}
+
+function drop_settled_pending() {
+	let box = load_pending();
+	let keep = [];
+	for (let it in box.items) {
+		if (pending_settled(it))
+			continue;
+		push(keep, it);
+	}
+	if (length(keep) != length(box.items)) {
+		box.items = keep;
+		save_pending(box);
+	} else {
+		try { unlink(PENDING_OLD); } catch (e) {}
+	}
+}
+
+function drop_pending(kind, mac) {
+	mac = mac_norm(mac);
+	let box = load_pending();
+	let keep = [];
+	for (let it in box.items) {
+		let m = mac_norm(it.mac);
+		if (m != '' && m == mac && (kind == '' || it.kind == kind || (kind == 'nat' && it.kind == 'share')))
+			continue;
+		push(keep, it);
+	}
+	box.items = keep;
+	save_pending(box);
+}
+
+function mutex_peer(type) {
+	if (type == 'dhcp_allow')
+		return 'dhcp_ban';
+	if (type == 'dhcp_ban')
+		return 'dhcp_allow';
+	if (type == 'nat_allow')
+		return 'nat_block';
+	if (type == 'nat_block')
+		return 'nat_allow';
+	return '';
+}
+
+function remove_host(type, mac) {
+	let ids = [];
+	ctx.foreach(CONF, type, (s) => {
+		if (mac_norm(s.mac) == mac)
+			push(ids, s['.name']);
+	});
+	if (length(ids) == 0)
+		return false;
+	for (let id in ids)
+		ctx.delete(CONF, id);
+	ctx.commit(CONF);
+	reload_uci();
+	return true;
+}
+
+function persist_host(type, mac, note, on) {
+	let peer = mutex_peer(type);
+	if (peer != '')
+		remove_host(peer, mac);
+	let sid = '';
+	ctx.foreach(CONF, type, (s) => {
+		if (mac_norm(s.mac) == mac)
+			sid = s['.name'];
+	});
+	if (sid != '') {
+		if (trim(ctx.get(CONF, sid, 'mac') || '') != mac) {
+			ctx.set(CONF, sid, 'mac', mac);
+			ctx.commit(CONF);
+			reload_uci();
+		}
+		return true;
+	}
+	sid = ctx.add(CONF, type);
+	if (sid == null || sid == '')
+		return false;
+	ctx.set(CONF, sid, 'mac', mac);
+	ctx.set(CONF, sid, 'enabled', on ? '1' : '0');
+	if (note != '')
+		ctx.set(CONF, sid, 'note', note);
+	ctx.commit(CONF);
+	reload_uci();
+	return true;
+}
+
+function reconcile_mutex() {
+	let dhcp_ok = {};
+	let nat_ok = {};
+	ctx.foreach(CONF, 'dhcp_allow', (s) => {
+		let mac = mac_norm(s.mac);
+		if (mac != '')
+			dhcp_ok[mac] = true;
+	});
+	ctx.foreach(CONF, 'nat_allow', (s) => {
+		let mac = mac_norm(s.mac);
+		if (mac != '')
+			nat_ok[mac] = true;
+	});
+	let drop = [];
+	ctx.foreach(CONF, 'dhcp_ban', (s) => {
+		let mac = mac_norm(s.mac);
+		if (mac != '' && dhcp_ok[mac])
+			push(drop, s['.name']);
+	});
+	ctx.foreach(CONF, 'nat_block', (s) => {
+		let mac = mac_norm(s.mac);
+		if (mac != '' && nat_ok[mac])
+			push(drop, s['.name']);
+	});
+	let seen = {};
+	ctx.foreach(CONF, 'dhcp_allow', (s) => { mark_dup(seen, 'a', s, drop); });
+	ctx.foreach(CONF, 'dhcp_ban', (s) => { mark_dup(seen, 'b', s, drop); });
+	ctx.foreach(CONF, 'nat_allow', (s) => { mark_dup(seen, 'na', s, drop); });
+	ctx.foreach(CONF, 'nat_block', (s) => { mark_dup(seen, 'nb', s, drop); });
+	if (length(drop) == 0)
+		return;
+	for (let id in drop)
+		ctx.delete(CONF, id);
+	ctx.commit(CONF);
+	reload_uci();
+}
+
+function mark_dup(seen, prefix, s, drop) {
+	let mac = mac_norm(s.mac);
+	if (mac == '')
+		return;
+	let k = prefix + ':' + mac;
+	if (seen[k])
+		push(drop, s['.name']);
+	else
+		seen[k] = true;
+}
+
+function persist_dhcp_ban(mac, note) {
+	if (host_has('dhcp_allow', mac))
+		return false;
+	return persist_host('dhcp_ban', mac, note || '自动发现', true);
+}
+
+function decide(action, kind, mac) {
+	mac = mac_norm(mac);
+	if (mac == '')
+		return false;
+	reload_uci();
+	if (action == 'dhcp_allow') {
+		persist_host('dhcp_allow', mac, '待确认留用', true);
+		drop_pending('dhcp', mac);
+		apply();
+		return true;
+	}
+	if (action == 'dhcp_ban') {
+		persist_host('dhcp_ban', mac, '待确认禁止', true);
+		drop_pending('dhcp', mac);
+		apply();
+		return true;
+	}
+	if (action == 'nat_allow') {
+		persist_host('nat_allow', mac, '待确认留用', true);
+		drop_pending(kind != '' ? kind : 'nat', mac);
+		apply();
+		return true;
+	}
+	if (action == 'nat_block') {
+		persist_host('nat_block', mac, '待确认禁止', true);
+		drop_pending('nat', mac);
+		apply();
+		return true;
+	}
+	return false;
+}
+
+function parse_log_mac(line) {
+	let m = match(line, /MAC=([0-9a-fA-F:]{17}):(([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2})/);
+	if (m)
+		return mac_norm(m[2]);
+	m = match(line, /MAC=(([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2})/);
+	return m ? mac_norm(m[1]) : '';
+}
+
+function parse_log_ip(line) {
+	let m = match(line, /SRC=([0-9.]+)/);
+	return m ? m[1] : '';
+}
+
+function handle_dhcp(st, mac, ip) {
+	let self = lan_ident();
+	if (mac == '' || mac == self.mac)
+		return;
+	if (ip != '' && ip == self.ip)
+		return;
+	if (host_has('dhcp_allow', mac) || host_has('dhcp_ban', mac))
+		return;
+	let reason = '在本网分配地址';
+	add_pending('dhcp', mac, ip, reason);
+	if (as_bool(cfg('dhcp_log', '1'), true) || as_bool(cfg('dhcp_notify', '1'), true))
+		push_alert(st, '严重', 'DHCP', '发现非法 DHCP 服务器',
+			sprintf('%s%s %s', mac, ip != '' ? (' ' + ip) : '', reason), 'dhcp-' + mac,
+			as_bool(cfg('dhcp_notify', '1'), true));
+	if (as_bool(cfg('dhcp_ban', '1'), true) && persist_dhcp_ban(mac, '自动发现')) {
+		apply();
+		if (type(st.dhcp_hit) != 'object')
+			st.dhcp_hit = {};
+		st.dhcp_hit[mac] = 1;
+	}
+}
+
+function drain_logs(st) {
+	if (!as_bool(cfg('dhcp_enabled', '1'), true))
+		return;
+	let p = popen("logread -l 80 2>/dev/null | grep -F 'lede-lansec-dhcp' || true", 'r');
+	let raw = p ? (p.read('all') || '') : '';
+	if (p)
+		p.close();
+	let last = trim(readfile(CURSOR) || '');
+	let newest = last;
+	for (let line in split(raw, '\n')) {
+		line = trim(line);
+		if (line == '' || !match(line, /lede-lansec-dhcp/))
+			continue;
+		if (last != '' && line <= last)
+			continue;
+		newest = line;
+		handle_dhcp(st, parse_log_mac(line), parse_log_ip(line));
+	}
+	if (newest != last)
+		writefile(CURSOR, newest);
+}
+
+function cfg_stamp() {
+	let st = stat('/etc/config/lede-lansec');
+	return sprintf('%s-%s-%s', (st && st.mtime) || 0, cfg('enabled', '0'), cfg('iface', 'br-lan'));
+}
+
+function watch() {
+	let st = load_json(STATE, {});
+	let last = '';
+	let last_scan = 0;
+	apply();
+	try { save_json(PENDING, load_pending()); } catch (e) {}
+	while (true) {
+		reload_uci();
+		let stamp = cfg_stamp();
+		if (stamp != last) {
+			apply();
+			last = stamp;
+		}
+		if (!as_bool(cfg('enabled', '0'), false)) {
+			system('sleep 15');
+			continue;
+		}
+		try { drain_logs(st); } catch (e) {}
+		let now = time();
+		if (now - last_scan >= 60) {
+			last_scan = now;
+			if (as_bool(cfg('arp_enabled', '1'), true) && as_bool(cfg('arp_bind_gw', '1'), true))
+				try { bind_gw(lan_ident()); } catch (e) {}
+		}
+		save_json(STATE, st);
+		system('sleep 5');
+	}
+}
+
+let cmd = ARGV[0] || 'apply';
+if (cmd == 'watch')
+	watch();
+else if (cmd == 'scan')
+	drain_logs(load_json(STATE, {}));
+else if (cmd == 'decide')
+	exit(decide(ARGV[1] || '', ARGV[2] || '', ARGV[3] || '') ? 0 : 1);
+else if (cmd == 'prune') {
+	reload_uci();
+	drop_settled_pending();
+	exit(0);
+}
+else
+	apply();
+exit(0);

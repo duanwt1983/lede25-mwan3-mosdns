@@ -108,6 +108,19 @@ lede_chmod_overlay_exec() {
   done
 }
 lede_chmod_overlay_exec
+# Windows editors may leave CR; firmware runs on Linux.
+lede_strip_overlay_cr() {
+  find files \
+    \( -name '*.sh' -o -name '*.uc' -o -name '*.js' -o -name '*.json' \
+       -o -path '*/init.d/*' -o -path '*/hotplug.d/*/*' \
+       -o -path '*/uci-defaults/*' -o -path '*/libexec/*' \
+       -o -path '*/usr/sbin/*' \) -type f 2>/dev/null \
+  | while read -r f; do
+    [ -f "$f" ] || continue
+    sed -i 's/\r$//' "$f"
+  done
+}
+lede_strip_overlay_cr
 
 # ubusd/rpcd default nofile=1024; long-open topology + WAN monitor exhausts it.
 lede_bump_ubus_nofile() {
@@ -417,6 +430,12 @@ if [ -f files/www/luci-static/resources/view/network/packetcap.js ]; then
     echo "packetcap: $(dirname "$f")/packetcap.js"
   done
 fi
+if [ -f files/www/luci-static/resources/view/network/lansec.js ]; then
+  find feeds/luci package -path '*/view/network/interfaces.js' -type f 2>/dev/null | while read -r f; do
+    cp files/www/luci-static/resources/view/network/lansec.js "$(dirname "$f")/lansec.js"
+    echo "lansec: $(dirname "$f")/lansec.js"
+  done
+fi
 if [ -f files/www/luci-static/resources/view/system/remote.js ]; then
   find feeds/luci package -path '*/view/system/system.js' -type f 2>/dev/null | while read -r f; do
     case "$f" in
@@ -633,6 +652,15 @@ assert_grep() {
   echo "content OK: $needle"
 }
 
+assert_absent() {
+  local needle="$1" file="$2"
+  if grep -Fq "$needle" "$file"; then
+    echo "ERROR: $(basename "$file") still has removed content: $needle"
+    exit 1
+  fi
+  echo "absent OK: $needle"
+}
+
 assert_pkg_file() {
   local needle="$1"
   shift
@@ -683,6 +711,18 @@ for _rel in \
   usr/share/ucode/lede-watch.uc \
   usr/libexec/rpcd/wanmonitor \
   usr/libexec/wan-alert \
+  usr/libexec/lede-lansec \
+  etc/init.d/lede-lansec \
+  etc/config/lede-lansec \
+  etc/uci-defaults/60-lede-lansec \
+  etc/hotplug.d/iface/29-lede-lansec \
+  www/luci-static/resources/view/network/lansec.js \
+  usr/share/luci/menu.d/luci-lede-lansec.json \
+  usr/share/rpcd/acl.d/luci-lede-lansec.json \
+  www/luci-static/resources/view/status/alertmap.js \
+  www/luci-static/resources/view/status/alertlog.js \
+  etc/config/wanalert \
+  etc/uci-defaults/50-wanalert-alert-flags \
   usr/libexec/packet-cap \
   etc/hotplug.d/net/90-lede-wan-carrier \
   etc/hotplug.d/iface/28-bandix-plus-restart \
@@ -748,7 +788,32 @@ assert_grep 'paintStatus' "$_LEDE_FILES/www/luci-static/resources/view/status/au
 assert_grep 'autolimit_status' "$_LEDE_FILES/usr/share/ucode/lede-autolimit.uc"
 assert_grep 'bplus_iface_is_lan' "$_LEDE_FILES/usr/share/ucode/lede-bandix.uc"
 assert_grep 'all_down_sent' "$_LEDE_FILES/usr/share/ucode/lede-watch.uc"
+assert_grep '有人占用已分配地址' "$_LEDE_FILES/usr/share/ucode/lede-watch.uc"
 assert_grep 'MAX_CAP_SEC' "$_LEDE_FILES/usr/libexec/packet-cap"
+assert_grep 'function send_pushplus' "$_LEDE_FILES/usr/libexec/wan-alert"
+assert_grep 'lede-lansec-dhcp' "$_LEDE_FILES/usr/libexec/lede-lansec"
+assert_grep 'ether saddr @dhcp_ban counter drop' "$_LEDE_FILES/usr/libexec/lede-lansec"
+assert_grep 'ether daddr @dhcp_ban counter drop' "$_LEDE_FILES/usr/libexec/lede-lansec"
+assert_grep "cmd == 'decide'" "$_LEDE_FILES/usr/libexec/lede-lansec"
+assert_grep "cmd == 'prune'" "$_LEDE_FILES/usr/libexec/lede-lansec"
+assert_grep 'nat_block' "$_LEDE_FILES/usr/libexec/lede-lansec"
+assert_grep 'mac_norm' "$_LEDE_FILES/usr/libexec/lede-lansec"
+assert_grep 'drop_settled_pending' "$_LEDE_FILES/usr/libexec/lede-lansec"
+assert_grep '/etc/lede-lansec-pending.json' "$_LEDE_FILES/usr/libexec/lede-lansec"
+assert_grep 'fmtMac' "$_LEDE_FILES/www/luci-static/resources/view/network/lansec.js"
+assert_grep '待确认' "$_LEDE_FILES/www/luci-static/resources/view/network/lansec.js"
+assert_grep 'handleSaveApply' "$_LEDE_FILES/www/luci-static/resources/view/network/lansec.js"
+assert_grep 'admin/network/lansec' "$_LEDE_FILES/usr/share/luci/menu.d/luci-lede-lansec.json"
+assert_grep '/etc/init.d/lede-lansec enable' "$_LEDE_FILES/etc/uci-defaults/99-custom"
+assert_grep 'mac_norm' "$_LEDE_FILES/usr/share/ucode/lede-watch.uc"
+assert_grep '网关地址被冒充' "$_LEDE_FILES/usr/share/ucode/lede-watch.uc"
+assert_absent 'lede-lansec-nat' "$_LEDE_FILES/usr/libexec/lede-lansec"
+assert_absent 'RE_ROUTER' "$_LEDE_FILES/usr/libexec/lede-lansec"
+assert_absent "ip ttl" "$_LEDE_FILES/usr/libexec/lede-lansec"
+assert_grep 'batchSend' "$_LEDE_FILES/usr/libexec/wan-alert"
+assert_grep 'pushplus_token' "$_LEDE_FILES/www/luci-static/resources/view/status/alertmap.js"
+assert_grep "option pushplus_enabled '0'" "$_LEDE_FILES/etc/config/wanalert"
+assert_grep 'seed pushplus_wechat 1' "$_LEDE_FILES/etc/uci-defaults/50-wanalert-alert-flags"
 for _bad in \
   etc/init.d/lede-lan-guard \
   usr/libexec/lede-lan-guard \

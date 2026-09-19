@@ -87,6 +87,7 @@ function layoutCards(root) {
 	sections.forEach(function(sec) {
 		sec.classList.add('wanalert-card');
 		if ((optionBox(sec, 'dingtalk_webhook') && optionBox(sec, 'security')) ||
+		    optionBox(sec, 'pushplus_token') ||
 		    sec.querySelector('.cbi-value[data-name^="alert_"]') ||
 		    optionBox(sec, 'cpu_percent'))
 			sec.classList.add('wanalert-card-wide');

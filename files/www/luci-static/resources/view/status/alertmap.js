@@ -11,7 +11,7 @@ return baseclass.extend({
 	this.wanNames = wanNames || [];
 	this.svc = svc || {};
 	const m = new form.Map('wanalert', _('系统报警'),
-		_('钉钉自定义机器人通知 WAN 异常和本机资源阈值。安全设置须与机器人页面一致：自定义关键词，或加签。采样数据同时写入日志文件。Webhook 不要泄露。'));
+		_('钉钉群机器人和 PushPlus（个人微信公众号 + App）通知 WAN 异常和本机资源阈值。可只开其中一种，也可同时发。采样写入日志。Webhook / Token 不要泄露。'));
 
 	function flagCbiBox(opt, section_id, option_index, labelClass, labelExtra) {
 		const config_name = opt.uciconfig ?? opt.section.uciconfig ?? opt.map.config;
@@ -80,12 +80,12 @@ return baseclass.extend({
 	o.rmempty = false;
 
 	o = s.option(form.Value, 'extra_text', _('附加说明'),
-		_('钉钉正文第一行：自定义关键词 --- 附加说明。后面仍是时间、报警内容。可留空，此时第一行只有关键词。'));
+		_('推送正文第一行：自定义关键词 --- 附加说明。后面仍是时间、报警内容。可留空，此时第一行只有关键词。钉钉关键词校验仍用上面的词。'));
 	o.optional = true;
 	o.rmempty = false;
 
 	o = s.option(form.Value, 'cooldown', _('同一事件冷却（秒）'),
-		_('只限制钉钉，不限制写入日志。钉钉每机器人每分钟最多约 20 条。'));
+		_('只限制对外推送，不限制写入日志。钉钉每机器人每分钟最多约 20 条；PushPlus 微信通道免费约 200 条/天。'));
 	o.datatype = 'uinteger';
 	o.default = '120';
 
@@ -100,17 +100,38 @@ return baseclass.extend({
 		}).then(function(res) {
 			const out = ((res && (res.stdout || res.stderr)) || '').trim();
 			if (res && res.code)
-				ui.addNotification(null, E('p', _('发送失败') + (out ? ': ' + out : _('。请填写 Webhook 后点保存，再测一次。'))), 'error');
+				ui.addNotification(null, E('p', _('发送失败') + (out ? ': ' + out : _('。请填写钉钉 Webhook 或 PushPlus Token 后保存，再测一次。'))), 'error');
 			else
-				ui.addNotification(null, E('p', _('已请求发送。请到钉钉群确认。') + (out ? ' ' + out : '')), 'info');
+				ui.addNotification(null, E('p', _('已请求发送。请到已启用的钉钉群、微信公众号或 PushPlus App 确认。') + (out ? ' ' + out : '')), 'info');
 		}).catch(e => {
 			ui.addNotification(null, E('p', _('发送失败: %s').format(e.message)), 'error');
 		});
 	};
 
-	s = m.section(form.NamedSection, 'main', 'wanalert', _('推送到钉钉'));
+	s = m.section(form.NamedSection, 'main', 'wanalert', _('PushPlus 微信 / App'));
 	s.addremove = false;
-	s.description = _('下列事件都会写入报警日志。打开开关才向钉钉推送。');
+	s.description = _('发给绑定此 Token 的个人微信（「pushplus 推送加」公众号会话），以及 PushPlus App。默认同一条同时发两端，不用建微信群。');
+
+	o = s.option(form.Flag, 'pushplus_enabled', _('启用 PushPlus 推送'));
+	o.default = o.disabled;
+	o.rmempty = false;
+
+	o = s.option(form.Value, 'pushplus_token', _('Token'),
+		_('PushPlus 控制台复制。只填本机，不要写进公开仓库。'));
+	o.password = true;
+	o.rmempty = false;
+
+	o = s.option(form.Flag, 'pushplus_wechat', _('同时发到微信'));
+	o.default = o.enabled;
+	o.rmempty = false;
+
+	o = s.option(form.Flag, 'pushplus_app', _('同时发到 App'));
+	o.default = o.enabled;
+	o.rmempty = false;
+
+	s = m.section(form.NamedSection, 'main', 'wanalert', _('推送这些事件'));
+	s.addremove = false;
+	s.description = _('下列事件都会写入报警日志。打开开关才向已启用的钉钉 / PushPlus 推送。');
 
 	o = s.option(CompactFlag, 'alert_down', _('WAN 掉线'));
 	o.default = o.enabled;
@@ -167,7 +188,7 @@ return baseclass.extend({
 	o = s.option(form.Flag, 'autofix', _('启用自动维护'));
 	o.default = o.disabled;
 	o.rmempty = false;
-	o.description = _('启用后：断线告警只写日志，钉钉由自动维护推送网卡重启结果。关闭时：断线告警直接发钉钉。');
+	o.description = _('启用后：断线告警只写日志，已启用的推送通道由自动维护发送网卡重启结果。关闭时：断线告警直接推送。');
 	o.render = function(option_index, section_id) {
 		return flagCbiBox(this, section_id, option_index, 'lede-fix-master', {
 			'title': _('打开后才执行下面的自动处理')
@@ -214,7 +235,7 @@ return baseclass.extend({
 
 	s = m.section(form.NamedSection, 'main', 'wanalert', _('检测阈值'));
 	s.addremove = false;
-	s.description = _('达到阈值并连续保持设定分钟数后才触发；低于阈值会清零并重新计时。是否钉钉由上面的开关决定。');
+	s.description = _('达到阈值并连续保持设定分钟数后才触发；低于阈值会清零并重新计时。是否推送由上面的事件开关和通道开关决定。');
 
 	o = s.option(form.Value, 'dhcp_remain', _('DHCP 剩余地址少于（个）'));
 	o.datatype = 'uinteger';

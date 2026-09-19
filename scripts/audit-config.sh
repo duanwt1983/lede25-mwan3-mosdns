@@ -31,6 +31,9 @@ must_y=(
   CONFIG_PACKAGE_tcpdump
   CONFIG_PACKAGE_wireshark
   CONFIG_PACKAGE_firewall4
+  CONFIG_PACKAGE_kmod-nft-bridge
+  CONFIG_PACKAGE_kmod-nft-arp
+  CONFIG_PACKAGE_kmod-nfnetlink-log
   CONFIG_TARGET_ROOTFS_EXT4FS
   CONFIG_GRUB_EFI_IMAGES
   CONFIG_VMDK_IMAGES

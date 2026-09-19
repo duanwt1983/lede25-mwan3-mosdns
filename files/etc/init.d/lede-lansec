@@ -1,0 +1,26 @@
+#!/bin/sh /etc/rc.common
+
+START=91
+STOP=12
+USE_PROCD=1
+
+start_service() {
+	[ -x /usr/libexec/lede-lansec ] || return 0
+	/usr/libexec/lede-lansec apply >/dev/null 2>&1 || true
+	procd_open_instance
+	procd_set_param command /usr/libexec/lede-lansec watch
+	procd_set_param respawn 5 15 0
+	procd_set_param file /etc/config/lede-lansec
+	procd_close_instance
+}
+
+stop_service() {
+	nft delete table inet lede_lansec 2>/dev/null || true
+	nft delete table bridge lede_lansec 2>/dev/null || true
+	nft delete table arp lede_lansec 2>/dev/null || true
+	return 0
+}
+
+reload_service() {
+	[ -x /usr/libexec/lede-lansec ] && /usr/libexec/lede-lansec apply
+}

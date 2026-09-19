@@ -1,0 +1,5 @@
+#!/bin/sh
+[ "$ACTION" = ifup ] || [ "$ACTION" = ifupdate ] || exit 0
+[ "$INTERFACE" = lan ] || exit 0
+[ -x /usr/libexec/lede-lansec ] || exit 0
+/usr/libexec/lede-lansec apply >/dev/null 2>&1 || true

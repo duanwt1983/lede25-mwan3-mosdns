@@ -164,6 +164,78 @@ function send_dingtalk(text, force) {
 	return false;
 }
 
+function pushplus_token() {
+	return trim(cfg('pushplus_token', ''));
+}
+
+function pushplus_on() {
+	return as_bool(cfg('pushplus_enabled', '0'), false);
+}
+
+function pushplus_channel() {
+	let wechat = as_bool(cfg('pushplus_wechat', '1'), true);
+	let app = as_bool(cfg('pushplus_app', '1'), true);
+	if (wechat && app)
+		return 'wechat,app';
+	if (app)
+		return 'app';
+	return 'wechat';
+}
+
+function http_post_json(bodyfile, url, outfile) {
+	try { unlink(outfile); } catch (e) {}
+	if (system('command -v curl >/dev/null') == 0)
+		system(sprintf("curl -sS -m 12 -H 'Content-Type: application/json; charset=utf-8' -d @%s '%s' > '%s' 2>&1", bodyfile, url, outfile));
+	else
+		system(sprintf("wget -q -O '%s' --timeout=12 --header='Content-Type: application/json' --post-data=\"$(cat %s)\" '%s'", outfile, bodyfile, url));
+	return trim(readfile(outfile) || '');
+}
+
+function send_pushplus(title, detail, force) {
+	if (!force && !pushplus_on())
+		return true;
+	let token = pushplus_token();
+	if (token == '') {
+		print('未填写 PushPlus Token，请填写后保存再测试\n');
+		return false;
+	}
+	if (!match(token, /^[A-Za-z0-9_-]+$/)) {
+		print('PushPlus Token 只能包含字母、数字、下划线和短横线\n');
+		return false;
+	}
+	let ch = pushplus_channel();
+	let multi = match(ch, /,/) != null;
+	let url = multi ? 'https://www.pushplus.plus/batchSend' : 'https://www.pushplus.plus/send';
+	let payload = {
+		token: token,
+		title: title != '' ? title : '系统报警',
+		content: compose_text(detail),
+		template: 'txt',
+		channel: ch
+	};
+	if (multi)
+		payload.option = ',';
+	writefile('/tmp/wan-alert.pp.body', sprintf('%J', payload));
+	system('chmod 600 /tmp/wan-alert.pp.body /tmp/wan-alert.pp.last 2>/dev/null');
+	let last = http_post_json('/tmp/wan-alert.pp.body', url, '/tmp/wan-alert.pp.last');
+	try { unlink('/tmp/wan-alert.pp.body'); } catch (e) {}
+	if (match(last, /"code"\s*:\s*200/))
+		return true;
+	if (last == '')
+		print('PushPlus 无响应（请检查 HTTPS 出网）\n');
+	else
+		print(last + '\n');
+	return false;
+}
+
+function ding_want() {
+	return as_bool(cfg('enabled', '0'), false);
+}
+
+function any_push_on() {
+	return ding_want() || pushplus_on();
+}
+
 function q_persist_path() {
 	let p = alert_log_path();
 	if (p == null || p == '' || match(p, /^\/(tmp|var)\//))
@@ -202,9 +274,9 @@ function save_ding_q(arr) {
 		try { writefile(p, s); } catch (e) {}
 }
 
-function enqueue_ding(text, why) {
+function enqueue_ding(text, why, title) {
 	let q = load_ding_q();
-	push(q, { t: time(), when: now_fmt(), text: `${text}`, why: why || '当时发不出去' });
+	push(q, { t: time(), when: now_fmt(), text: `${text}`, title: title || '系统报警', why: why || '当时发不出去' });
 	save_ding_q(q);
 }
 
@@ -273,8 +345,20 @@ function has_uplink() {
 	return false;
 }
 
+function send_all_channels(text, force, title) {
+	let ding_ok = true;
+	let pp_ok = true;
+	if (ding_want())
+		ding_ok = send_dingtalk(text, force);
+	if (pushplus_on())
+		pp_ok = send_pushplus(title != '' ? title : '系统报警', text, force);
+	if (!ding_want() && !pushplus_on())
+		return true;
+	return ding_ok && pp_ok;
+}
+
 function try_flush_offline_queue() {
-	if (!as_bool(cfg('enabled', '0'), false))
+	if (!any_push_on())
 		return;
 	if (!has_uplink())
 		return;
@@ -290,7 +374,7 @@ function try_flush_offline_queue() {
 	let left = [];
 	for (let item in q) {
 		let extra = sprintf('\n（补发）原记录时间 %s。当时：%s。', item.when || '', item.why || '发不出去');
-		if (!send_dingtalk((item.text || '') + extra, false))
+		if (!send_all_channels((item.text || '') + extra, false, item.title || '系统报警补发'))
 			push(left, item);
 	}
 	save_ding_q(left);
@@ -300,23 +384,25 @@ function try_flush_offline_queue() {
 	save_state(st);
 }
 
-function deliver_ding(text, force) {
-	if (!force && !as_bool(cfg('enabled', '0'), false))
+function deliver_ding(text, force, title) {
+	if (!force && !any_push_on())
 		return true;
 	if (!has_uplink()) {
-		enqueue_ding(text, '全部WAN掉线或无默认路由，钉钉发不出去');
+		enqueue_ding(text, '全部WAN掉线或无默认路由，推送发不出去', title || '系统报警');
 		mark_ding_offline();
-		log_event('一般', '系统', '钉钉待补发', '全部 WAN 不可用，已记下内容，出网恢复后再发。');
+		log_event('一般', '系统', '推送待补发', '全部 WAN 不可用，已记下内容，出网恢复后再发。');
 		return false;
 	}
-	if (send_dingtalk(text, force)) {
+	if (send_all_channels(text, force, title || '')) {
 		try_flush_offline_queue();
 		return true;
 	}
 	let last = trim(readfile('/tmp/wan-alert.last') || '');
 	if (last == '')
+		last = trim(readfile('/tmp/wan-alert.pp.last') || '');
+	if (last == '')
 		last = '无响应或接口错误';
-	log_event('一般', '系统', '钉钉发送失败', last);
+	log_event('一般', '系统', '推送发送失败', last);
 	return false;
 }
 
@@ -463,7 +549,7 @@ function notify(level, cat, title, detail, key, push) {
 		alert_unlock();
 		return true;
 	}
-	let ok = deliver_ding(sprintf('[%s] %s：%s', hostname(), title, detail));
+	let ok = deliver_ding(sprintf('[%s] %s：%s', hostname(), title, detail), false, title);
 	if (ok)
 		stamp(key);
 	alert_unlock();
@@ -644,14 +730,31 @@ function check_metrics() {
 function handle(event, iface) {
 	let host = hostname();
 	switch (event) {
-	case 'test':
+	case 'test': {
 		system('uci commit wanalert >/dev/null 2>&1');
 		try { ctx.unload(CONF); } catch (e) {}
 		ctx.load(CONF);
-		log_event('一般', '系统', '报警测试', '已请求发送钉钉测试消息');
-		if (!send_dingtalk(sprintf('[%s] 报警测试', host), true))
+		log_event('一般', '系统', '报警测试', '已请求发送测试消息');
+		let tried = 0;
+		let ok = true;
+		if (ding_want() || cfg('dingtalk_webhook', '') != '') {
+			tried++;
+			if (!send_dingtalk(sprintf('[%s] 报警测试', host), true))
+				ok = false;
+		}
+		if (pushplus_on() || pushplus_token() != '') {
+			tried++;
+			if (!send_pushplus('报警测试', sprintf('[%s] 报警测试', host), true))
+				ok = false;
+		}
+		if (tried == 0) {
+			print('请先填写钉钉 Webhook 或 PushPlus Token\n');
+			exit(1);
+		}
+		if (!ok)
 			exit(1);
 		break;
+	}
 	case 'check':
 		check_metrics();
 		break;
@@ -693,7 +796,7 @@ function handle(event, iface) {
 				if (locked)
 					stamp(fk);
 			} else
-				log_event('一般', '系统', '自动维护钉钉未发出', ding);
+				log_event('一般', '系统', '自动维护推送未发出', ding);
 			if (locked)
 				alert_unlock();
 			break;
@@ -722,6 +825,16 @@ function handle(event, iface) {
 			cat = '内核';
 		notify(r.level, cat, r.title, r.detail, 'boot-reason', as_bool(cfg('alert_hw', '1'), true));
 		try { unlink(shutdown_mark_path()); } catch (e) {}
+		break;
+	}
+	case 'event': {
+		let path = iface;
+		if (path == '' || path == 'unknown')
+			path = '/tmp/lede-lansec-evt.json';
+		let e = {};
+		try { e = json(readfile(path) || '{}') || {}; } catch (e2) { e = {}; }
+		if (e.title && e.title != '')
+			notify(e.level || '一般', e.cat || '网络', e.title, e.detail || '', e.key || 'lansec', e.push != false && e.push != '0');
 		break;
 	}
 	case 'watch':

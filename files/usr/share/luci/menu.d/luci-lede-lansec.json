@@ -1,0 +1,13 @@
+{
+	"admin/network/lansec": {
+		"title": "局域网安全",
+		"order": 70,
+		"action": {
+			"type": "view",
+			"path": "network/lansec"
+		},
+		"depends": {
+			"acl": [ "luci-lede-lansec" ]
+		}
+	}
+}

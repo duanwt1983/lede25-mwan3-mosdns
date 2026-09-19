@@ -43,20 +43,8 @@ function ev(out, level, cat, title, detail, key, flag) {
 	push(out, { level, cat, title, detail, key, flag });
 }
 
-function mac_lc(s) {
-	s = trim(s);
-	let out = '';
-	for (let i = 0; i < length(s); i++) {
-		let ch = substr(s, i, 1);
-		if (ch == 'A') ch = 'a';
-		else if (ch == 'B') ch = 'b';
-		else if (ch == 'C') ch = 'c';
-		else if (ch == 'D') ch = 'd';
-		else if (ch == 'E') ch = 'e';
-		else if (ch == 'F') ch = 'f';
-		out += ch;
-	}
-	return out;
+function mac_norm(s) {
+	return uc(trim(s));
 }
 
 function arp_map(dev) {
@@ -67,7 +55,9 @@ function arp_map(dev) {
 	let text = p.read('all') || '';
 	p.close();
 	for (let line in split(text, '\n')) {
-		if (index(line, 'FAILED') >= 0 || index(line, 'INCOMPLETE') >= 0)
+		if (index(line, 'FAILED') >= 0 || index(line, 'INCOMPLETE') >= 0 || index(line, 'STALE') >= 0)
+			continue;
+		if (index(line, 'REACHABLE') < 0 && index(line, 'DELAY') < 0 && index(line, 'PROBE') < 0)
 			continue;
 		let f = split(trim(line), /[ \t]+/);
 		if (length(f) < 5)
@@ -75,7 +65,7 @@ function arp_map(dev) {
 		let ip = f[0];
 		for (let i = 0; i < length(f); i++) {
 			if (f[i] == 'lladdr' && i + 1 < length(f))
-				m[ip] = mac_lc(f[i + 1]);
+				m[ip] = mac_norm(f[i + 1]);
 		}
 	}
 	return m;
@@ -106,7 +96,7 @@ function lan_ident(ctx) {
 	dev = replace(`${dev}`, /[^A-Za-z0-9._-]/g, '');
 	if (dev == '')
 		dev = 'br-lan';
-	let mac = mac_lc(trim(readfile('/sys/class/net/' + dev + '/address') || ''));
+	let mac = mac_norm(trim(readfile('/sys/class/net/' + dev + '/address') || ''));
 	let ip = '';
 	let p = popen(sprintf("ip -4 -o addr show dev '%s' 2>/dev/null", dev), 'r');
 	if (p) {
@@ -120,27 +110,27 @@ function lan_ident(ctx) {
 }
 
 function arp_table(dev) {
-	let m = arp_map(dev);
-	for (let line in split(readfile('/proc/net/arp') || '', '\n')) {
-		let f = split(trim(line), /[ \t]+/);
-		if (length(f) < 6)
-			continue;
-		if (!match(f[0], /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/))
-			continue;
-		if (f[5] != dev)
-			continue;
-		if (f[2] == '0x0' || f[2] == '0x00')
-			continue;
-		let mac = mac_lc(f[3]);
-		if (mac == '' || mac == '00:00:00:00:00:00' || mac == '*')
-			continue;
-		if (!m[f[0]])
-			m[f[0]] = mac;
-	}
-	return m;
+	return arp_map(dev);
+}
+
+function lansec_arp(ctx) {
+	try { ctx.load('lede-lansec'); } catch (e) {}
+	if (!as_bool(ctx.get('lede-lansec', 'main', 'enabled'), false))
+		return { detect: true, log: true, notify: true, scoped: false };
+	if (!as_bool(ctx.get('lede-lansec', 'main', 'arp_enabled'), true))
+		return { detect: false, log: false, notify: false, scoped: true };
+	return {
+		detect: true,
+		log: as_bool(ctx.get('lede-lansec', 'main', 'arp_log'), true),
+		notify: as_bool(ctx.get('lede-lansec', 'main', 'arp_notify'), true),
+		scoped: true
+	};
 }
 
 function check_arp(ctx, st, now, out) {
+	let ls = lansec_arp(ctx);
+	if (!ls.detect)
+		return;
 	let self = lan_ident(ctx);
 	if (self.ip == '' || self.mac == '')
 		return;
@@ -156,43 +146,42 @@ function check_arp(ctx, st, now, out) {
 	let leases = {};
 	try { leases = lease_meta(); } catch (e) { leases = {}; }
 	let issues = [];
+	let arp_flag = (!ls.scoped || ls.notify) ? 'alert_arp' : '';
+	if (ls.scoped && !ls.log && !ls.notify)
+		return;
 	if (neigh[self.ip] && neigh[self.ip] != self.mac) {
-		let detail = sprintf('网关地址 %s 本机网卡 %s，邻居表却是 %s。局域网里有设备在应答这个地址。',
-			self.ip, self.mac, neigh[self.ip]);
-		ev(out, '严重', 'ARP', '网关地址被冒充', detail, 'arp-gw', 'alert_arp');
+		let detail = sprintf('网关 %s 应为 %s，邻居表是 %s', self.ip, self.mac, neigh[self.ip]);
+		ev(out, '严重', 'ARP', '网关地址被冒充', detail, 'arp-gw', arp_flag);
 		push(issues, { kind: 'gateway', ip: self.ip, mac: neigh[self.ip] });
 	}
+	if (type(st.arp.prev2) != 'object')
+		st.arp.prev2 = {};
 	for (let ip in neigh) {
 		let mac = neigh[ip];
 		if (ip == self.ip)
 			continue;
+		let L = leases[ip];
+		let lease_mac = (L && L.mac && L.mac != '*' && L.mac != '') ? mac_norm(L.mac) : '';
 		let prev = st.arp.ipmac[ip];
 		if (prev && prev.mac && prev.mac != mac) {
 			let dt = now - +(prev.t || 0);
-			if (dt > 0 && dt < 300) {
-				let n = +(st.arp.flipn[ip] || 0) + 1;
-				st.arp.flipn[ip] = n;
-				let detail = sprintf('%s 在 %d 秒内由 %s 变成 %s。可能是 ARP 欺骗，也可能是设备刚换网卡。',
-					ip, dt, prev.mac, mac);
-				if (n >= 2) {
-					ev(out, '中等', 'ARP', '同一 IP 的 MAC 被改写', detail, 'arp-flip-' + ip, 'alert_arp');
-					push(issues, { kind: 'flap', ip, from: prev.mac, to: mac, dt });
-				} else
-					ev(out, '信息', 'ARP', '同一 IP 的 MAC 被改写', detail + ' 先记日志，连续两次才推送。', 'arp-flip-log-' + ip, '');
+			let osc = (st.arp.prev2[ip] || '') == mac;
+			if (osc && dt > 0 && dt < 300) {
+				let detail = sprintf('%s 的 MAC 在 %s 与 %s 之间来回切换', ip, prev.mac, mac);
+				ev(out, '中等', 'ARP', '同一 IP 的 MAC 来回切换', detail, 'arp-flip-' + ip, arp_flag);
+				push(issues, { kind: 'flap', ip, from: prev.mac, to: mac, dt });
 			}
-		} else
-			st.arp.flipn[ip] = 0;
+			st.arp.prev2[ip] = prev.mac;
+		} else if (!prev || prev.mac == mac)
+			st.arp.prev2[ip] = '';
 		st.arp.ipmac[ip] = { mac, t: now };
-		let L = leases[ip];
-		if (L && L.mac && L.mac != '*' && L.mac != '' && L.mac != mac) {
+		if (lease_mac != '' && lease_mac != mac) {
 			let n = +(st.arp.mm[ip] || 0) + 1;
 			st.arp.mm[ip] = n;
 			if (n >= 2) {
-				let host = L.host ? ('（' + L.host + '）') : '';
-				let detail = sprintf('%s%s 邻居表 MAC %s，DHCP 租约是 %s，连续两次检测不一致。',
-					ip, host, mac, L.mac);
-				ev(out, '中等', 'ARP', 'ARP 与 DHCP 租约不符', detail, 'arp-lease-' + ip, 'alert_arp');
-				push(issues, { kind: 'lease', ip, arp: mac, lease: L.mac });
+				let detail = sprintf('%s 租约 %s，邻居表 %s', ip, lease_mac, mac);
+				ev(out, '中等', 'ARP', '有人占用已分配地址', detail, 'arp-lease-' + ip, arp_flag);
+				push(issues, { kind: 'lease', ip, arp: mac, lease: lease_mac });
 			}
 		} else
 			st.arp.mm[ip] = 0;
@@ -200,16 +189,6 @@ function check_arp(ctx, st, now, out) {
 	for (let ip in st.arp.ipmac) {
 		if (now - +(st.arp.ipmac[ip].t || 0) > 3600)
 			delete st.arp.ipmac[ip];
-	}
-	let p = popen("dmesg 2>/dev/null | grep -iE 'duplicate address|IPv4: Duplicate' | tail -n 3", 'r');
-	let klog = p ? (p.read('all') || '') : '';
-	if (p)
-		p.close();
-	klog = trim(klog);
-	if (klog != '' && klog != (st.arp.klog || '')) {
-		st.arp.klog = klog;
-		ev(out, '严重', 'ARP', '内核报地址冲突', klog, 'arp-kdup', 'alert_arp');
-		push(issues, { kind: 'kernel', detail: klog });
 	}
 	try {
 		writefile('/tmp/lede-arp-guard.json', sprintf('%J', {
@@ -226,7 +205,7 @@ function lease_meta() {
 		let f = split(trim(line), /[ \t]+/);
 		if (length(f) < 3)
 			continue;
-		by_ip[f[2]] = { mac: mac_lc(f[1]), host: (length(f) >= 4 && f[3] != '*') ? f[3] : '' };
+		by_ip[f[2]] = { mac: mac_norm(f[1]), host: (length(f) >= 4 && f[3] != '*') ? f[3] : '' };
 	}
 	return by_ip;
 }
@@ -952,7 +931,7 @@ export function collect_interval(ctx) {
 		let f = split(trim(line), /[ \t]+/);
 		if (length(f) < 3)
 			continue;
-		let mac = mac_lc(f[1]);
+		let mac = mac_norm(f[1]);
 		let ip = f[2];
 		let host = (length(f) >= 4 && f[3] != '*') ? f[3] : '';
 		if (mac == '' || mac == '*')

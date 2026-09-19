@@ -59,6 +59,11 @@ if [ -x /etc/init.d/wanalert ]; then
   /etc/init.d/wanalert enable
   /etc/init.d/wanalert start >/dev/null 2>&1 || true
 fi
+chmod +x /usr/libexec/lede-lansec /etc/init.d/lede-lansec /etc/hotplug.d/iface/29-lede-lansec 2>/dev/null || true
+if [ -x /etc/init.d/lede-lansec ]; then
+  /etc/init.d/lede-lansec enable
+  /etc/init.d/lede-lansec start >/dev/null 2>&1 || true
+fi
 [ -x /usr/libexec/mosdns-fix-dns-forward ] && /usr/libexec/mosdns-fix-dns-forward 2>/dev/null || true
 [ -x /usr/libexec/mosdns-unify-conf ] && /usr/libexec/mosdns-unify-conf 2>/dev/null || true
 mkdir -p /etc/mwan3/isp
