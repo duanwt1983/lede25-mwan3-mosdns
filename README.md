@@ -46,7 +46,6 @@ GitHub Actions 工作流显示名：`Build Lean 25 x86-64 PassWall samba4`。
 
 ![3 PushPlus](docs/screenshots/3.png)
 
-![4 自动维护与日志](docs/screenshots/4.png)
 
 多线负载自动配置：
 
