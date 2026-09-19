@@ -8,11 +8,6 @@
 - 防火墙：只保留 **firewall4 + nftables**（不要 iptables / legacy）
 - 默认 LAN：`192.168.9.1/24`，账号 `root` / `password`
 
-GitHub Actions 工作流显示名：`Build Lean 25 x86-64 PassWall samba4`。  
-改 `.config` / `diy-*.sh` / `files/` / `package/` / `patches/` / `scripts/` 或工作流文件并推到 `main` 会触发编译；只改本 README 不会。
-
-刷入本仓库编译的镜像即带齐下面列出的功能，**不依赖热部署**。默认账号密码只适合先装机，上线后请改掉。
-
 ## 当前固件现状（菜单）
 
 | 位置 | 有什么 |
