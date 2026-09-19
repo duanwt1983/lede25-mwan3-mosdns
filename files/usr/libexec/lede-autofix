@@ -48,6 +48,15 @@ function phy_link_up(dev) {
 	system(sprintf("ip link set dev '%s' up >/dev/null 2>&1", dev));
 }
 
+function phy_carrier(dev) {
+	if (dev == '' || !match(dev, /^[A-Za-z0-9_.-]+$/))
+		return true;
+	let c = trim(readfile('/sys/class/net/' + dev + '/carrier') || '');
+	if (c == '')
+		return true;
+	return c != '0';
+}
+
 function bounce_iface(name, dev) {
 	if (!match(name, /^[A-Za-z0-9_]+$/))
 		return false;
@@ -73,7 +82,7 @@ function report(key, ok, iface, log_detail) {
 		level: ok ? '一般' : '中等',
 		cat: '系统',
 		title: '自动维护',
-		msg: sprintf('%s 断网后重启网卡【%s】', iface, outcome),
+		msg: sprintf('%s 已重拨该口【%s】', iface, outcome),
 		detail: log_detail || ''
 	}));
 	mark('reported-' + key);
@@ -110,16 +119,19 @@ let host = track_ip_for(ctx, iface);
 let phy = ctx.get('network', iface, 'device') || '';
 
 if (wan_probe_ok(ctx, ufix, iface)) {
-	if (!cooled('reported-' + key, cdn))
-		report(key, true, iface, sprintf('探测 %s 已通，未执行 ifup。', host));
+	/* Already reachable: do not claim a reconnect. */
 	system(sprintf('rmdir %s 2>/dev/null', lock));
 	try { ufix.disconnect(); } catch (e) {}
 	exit(0);
 }
 
 if (cooled(wan_fail_key(iface), 90) || cooled(key, cdn)) {
-	if (!cooled('reported-' + key, cdn))
-		report(key, false, iface, sprintf('仍在处理间隔内，外网探测 %s 未通。', host));
+	system(sprintf('rmdir %s 2>/dev/null', lock));
+	try { ufix.disconnect(); } catch (e) {}
+	exit(0);
+}
+
+if (!phy_carrier(phy)) {
 	system(sprintf('rmdir %s 2>/dev/null', lock));
 	try { ufix.disconnect(); } catch (e) {}
 	exit(0);

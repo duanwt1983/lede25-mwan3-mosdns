@@ -198,7 +198,7 @@ function layoutAutofixSection(sectionEl, root) {
 	grpWan.appendChild(wanKids);
 	grid.appendChild(grpWan);
 
-	sectionEl.querySelectorAll('.cbi-value[data-name="autofix_cooldown"]').forEach(function(box) {
+	sectionEl.querySelectorAll('.cbi-value[data-name="autofix_hold_min"], .cbi-value[data-name="autofix_cooldown"]').forEach(function(box) {
 		moveBox(box, grid);
 		box.classList.add('lede-fix-cool');
 	});

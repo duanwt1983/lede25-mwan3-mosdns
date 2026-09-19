@@ -490,7 +490,6 @@ function spawn_autofix(key) {
 	st[sk] = time();
 	save_state(st);
 	system(sprintf("/bin/sh -c \"/usr/libexec/lede-autofix '%s' >>/tmp/lede-autofix.log 2>&1 &\"", replace(key, /'/g, '')));
-	log_event('一般', '系统', '自动维护启动', sprintf('已启动处理 %s', key));
 }
 
 function cooled(key) {
@@ -536,9 +535,6 @@ function notify(level, cat, title, detail, key, push) {
 	if (level == '信息')
 		return true;
 	log_event(level, cat, title, detail);
-	if (as_bool(cfg('autofix', '0'), false) && key != null && key != '' &&
-	    match('' + key, /^down-[A-Za-z0-9_]+$/))
-		spawn_autofix(key);
 	if (up_suppressed_by_autofix(key))
 		return true;
 	if (!down_alert_should_ding(key, push))
@@ -572,16 +568,68 @@ function drain(list) {
 }
 
 const KICK_PROBE_ST = '/tmp/lede-wan-kick-probe.json';
+const KICK_GAP_SEC = 30;
 
-function kick_probe_due(name, sec) {
-	let st = {};
-	try { st = json(readfile(KICK_PROBE_ST) || '{}') || {}; } catch (e) { st = {}; }
-	let last = +st[name] || 0;
-	if (last > 0 && (time() - last) < sec)
-		return false;
-	st[name] = time();
+function kick_probe_load() {
+	try {
+		return json(readfile(KICK_PROBE_ST) || '{}') || {};
+	} catch (e) {
+		return {};
+	}
+}
+
+function kick_probe_save(st) {
 	try { writefile(KICK_PROBE_ST, sprintf('%J', st)); } catch (e) {}
-	return true;
+}
+
+function phy_carrier(dev) {
+	if (dev == null || dev == '' || !match(dev, /^[A-Za-z0-9_.-]+$/))
+		return true;
+	let c = trim(readfile('/sys/class/net/' + dev + '/carrier') || '');
+	if (c == '')
+		return true;
+	return c != '0';
+}
+
+function autofix_hold_min() {
+	let n = +cfg('autofix_hold_min', 5);
+	if (n < 2)
+		n = 2;
+	if (n > 30)
+		n = 30;
+	return n;
+}
+
+function kick_need_fails() {
+	let need = int((autofix_hold_min() * 60 + KICK_GAP_SEC - 1) / KICK_GAP_SEC);
+	if (need < 3)
+		need = 3;
+	return need;
+}
+
+function kick_due(name) {
+	let st = kick_probe_load();
+	let last = +st[name + '_t'] || 0;
+	return !(last > 0 && (time() - last) < KICK_GAP_SEC);
+}
+
+function kick_clear(name) {
+	let st = kick_probe_load();
+	st[name + '_t'] = time();
+	st[name + '_n'] = 0;
+	st[name + '_since'] = 0;
+	kick_probe_save(st);
+}
+
+function kick_fail(name) {
+	let st = kick_probe_load();
+	st[name + '_t'] = time();
+	let n = (+st[name + '_n'] || 0) + 1;
+	if (!(+st[name + '_since'] > 0))
+		st[name + '_since'] = time();
+	st[name + '_n'] = n;
+	kick_probe_save(st);
+	return { n: n, since: +st[name + '_since'] || time() };
 }
 
 function kick_wan_autofix() {
@@ -591,6 +639,10 @@ function kick_wan_autofix() {
 		return;
 	let u = null;
 	try { u = ubus.connect(); } catch (e) { u = null; }
+	if (!u)
+		return;
+	let need = kick_need_fails();
+	let hold_sec = autofix_hold_min() * 60;
 	ctx.foreach('network', 'interface', (s) => {
 		let name = s['.name'];
 		if (name == null || name == '' || name == 'loopback' || name == 'lan' || name == 'wan6')
@@ -610,22 +662,32 @@ function kick_wan_autofix() {
 			return;
 		if (!match(name, /^[A-Za-z0-9_]+$/))
 			return;
-		let bad = true;
-		if (u) {
-			try {
-				let st = u.call('network.interface.' + name, 'status');
-				if (st && (st.up == true || st.up == 1)) {
-					bad = false;
-					if (kick_probe_due(name, 30))
-						bad = !wan_probe_ok(ctx, u, name);
-				}
-			} catch (e) {}
+		let phy = s.device || ctx.get('network', name, 'device') || '';
+		if (!phy_carrier(phy)) {
+			kick_clear(name);
+			return;
 		}
-		if (bad)
-			system(sprintf("/bin/sh -c \"/usr/libexec/lede-autofix 'down-%s' >>/tmp/lede-autofix.log 2>&1 &\"", name));
+		if (!kick_due(name))
+			return;
+		let up = false;
+		try {
+			let ist = u.call('network.interface.' + name, 'status');
+			up = !!(ist && (ist.up == true || ist.up == 1));
+		} catch (e) {
+			return;
+		}
+		if (up && wan_probe_ok(ctx, u, name)) {
+			kick_clear(name);
+			return;
+		}
+		let sm = kick_fail(name);
+		if (sm.n < need)
+			return;
+		if (!(sm.since > 0) || (time() - sm.since) < hold_sec)
+			return;
+		system(sprintf("/bin/sh -c \"/usr/libexec/lede-autofix 'down-%s' >>/tmp/lede-autofix.log 2>&1 &\"", name));
 	});
-	if (u)
-		try { u.disconnect(); } catch (e) {}
+	try { u.disconnect(); } catch (e) {}
 }
 
 function check_metrics() {
@@ -836,6 +898,7 @@ function handle(event, iface) {
 		let acc = 0;
 		while (true) {
 			try { drain(collect_tick(ctx)); } catch (e) {}
+			try { kick_wan_autofix(); } catch (e) {}
 			acc += 1;
 			if (acc % 10 == 0) {
 				try { persist_system_logs(); } catch (e) {}

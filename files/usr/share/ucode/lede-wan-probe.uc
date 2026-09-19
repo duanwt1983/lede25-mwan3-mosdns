@@ -34,7 +34,7 @@ export function wan_ping_ok(dev, host) {
 		return false;
 	if (!match(dev, /^[A-Za-z0-9._-]+$/) || !is_ipv4(host))
 		return false;
-	return system(sprintf("ping -c 1 -W 2 -I '%s' '%s' >/dev/null 2>&1", dev, host)) == 0;
+	return system(sprintf("ping -c 2 -W 2 -I '%s' '%s' >/dev/null 2>&1", dev, host)) == 0;
 }
 
 export function wan_probe_ok(ctx, u, iface) {

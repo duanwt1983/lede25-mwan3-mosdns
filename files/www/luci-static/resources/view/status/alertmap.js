@@ -197,11 +197,17 @@ return baseclass.extend({
 
 	o = s.option(InlineFlag, 'autofix_wan', _('WAN 掉线且网线仍在 → 重拨该口'));
 	o.default = o.enabled;
+	o.description = _('闪断不要重拨。网线还在、外网连续失败满下方分钟数才 ifup；中间通一次就重新计时。多线时短暂掉线由 mwan3 切走即可。');
 
 	(this.wanNames || []).forEach(function(name) {
 		const f = s.option(InlineFlag, 'wfix_' + name, name);
 		f.default = f.enabled;
 	});
+
+	o = s.option(form.Value, 'autofix_hold_min', _('连续失败多久才重拨（分钟）'));
+	o.datatype = 'uinteger';
+	o.default = '5';
+	o.description = _('默认 5 分钟。每 30 秒探测一次（连续 2 个 ping），期间只要成功一次就清零。最短 2 分钟，避免偶发抖动把会话打掉。');
 
 	o = s.option(form.Value, 'autofix_cooldown', _('同一处理间隔（秒）'));
 	o.datatype = 'uinteger';
