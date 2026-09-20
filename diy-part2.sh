@@ -136,10 +136,9 @@ lede_bump_ubus_nofile() {
 }
 lede_bump_ubus_nofile
 
-_NGINX_UBUS_PATCH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/patches/nginx-ubus/apply.sh"
-if [ -f "$_NGINX_UBUS_PATCH" ]; then
-  sh "$_NGINX_UBUS_PATCH" .
-fi
+# nginx-ubus source patch disabled: LEDE's nginx 1.21.x package layout breaks
+# PatchDir integration in CI. Oversized /ubus bodies are mitigated in overlay
+# via 00-lede-http.conf and 12-lede-nginx-ubus instead.
 
 _DNSMASQ_PATCH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/patches/dnsmasq/apply.sh"
 if [ -f "$_DNSMASQ_PATCH" ]; then
