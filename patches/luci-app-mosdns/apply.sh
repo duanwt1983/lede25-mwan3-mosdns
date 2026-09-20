@@ -236,6 +236,7 @@ INIT="$(find "$APP" -path '*/init.d/mosdns' -type f | head -n 1)"
 if [ -n "$INIT" ]; then
 	python3 - "$INIT" <<'PY'
 from pathlib import Path
+import re
 import sys
 p = Path(sys.argv[1])
 t = p.read_text(encoding="utf-8")
