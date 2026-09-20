@@ -68,18 +68,30 @@ if 'Build/lede-data-part' not in mk:
     mk = mk.replace(anchor, hook + anchor, 1)
 
 repls = [
-    'IMAGE/combined-efi.img := grub-config efi | combined efi | grub-install efi | append-metadata',
-    'IMAGE/combined-efi.img := grub-config efi | combined efi | lede-data-part | grub-install efi | append-metadata',
-    'IMAGE/combined-efi.img.gz := grub-config efi | combined efi | grub-install efi | gzip | append-metadata',
-    'IMAGE/combined-efi.img.gz := grub-config efi | combined efi | lede-data-part | grub-install efi | gzip | append-metadata',
-    'IMAGE/combined-efi.vmdk := grub-config efi | combined efi | grub-install efi | qemu-image vmdk',
-    'IMAGE/combined-efi.vmdk := grub-config efi | combined efi | lede-data-part | grub-install efi | qemu-image vmdk',
-    'IMAGE/combined-efi.qcow2 := grub-config efi | combined efi | grub-install efi | qemu-image qcow2',
-    'IMAGE/combined-efi.qcow2 := grub-config efi | combined efi | lede-data-part | grub-install efi | qemu-image qcow2',
-    'IMAGE/combined-efi.vdi := grub-config efi | combined efi | grub-install efi | qemu-image vdi',
-    'IMAGE/combined-efi.vdi := grub-config efi | combined efi | lede-data-part | grub-install efi | qemu-image vdi',
-    'IMAGE/combined-efi.vhdx := grub-config efi | combined efi | grub-install efi | qemu-image vhdx -o subformat=dynamic',
-    'IMAGE/combined-efi.vhdx := grub-config efi | combined efi | lede-data-part | grub-install efi | qemu-image vhdx -o subformat=dynamic',
+    (
+        'IMAGE/combined-efi.img := grub-config efi | combined efi | grub-install efi | append-metadata',
+        'IMAGE/combined-efi.img := grub-config efi | combined efi | lede-data-part | grub-install efi | append-metadata',
+    ),
+    (
+        'IMAGE/combined-efi.img.gz := grub-config efi | combined efi | grub-install efi | gzip | append-metadata',
+        'IMAGE/combined-efi.img.gz := grub-config efi | combined efi | lede-data-part | grub-install efi | gzip | append-metadata',
+    ),
+    (
+        'IMAGE/combined-efi.vmdk := grub-config efi | combined efi | grub-install efi | qemu-image vmdk',
+        'IMAGE/combined-efi.vmdk := grub-config efi | combined efi | lede-data-part | grub-install efi | qemu-image vmdk',
+    ),
+    (
+        'IMAGE/combined-efi.qcow2 := grub-config efi | combined efi | grub-install efi | qemu-image qcow2',
+        'IMAGE/combined-efi.qcow2 := grub-config efi | combined efi | lede-data-part | grub-install efi | qemu-image qcow2',
+    ),
+    (
+        'IMAGE/combined-efi.vdi := grub-config efi | combined efi | grub-install efi | qemu-image vdi',
+        'IMAGE/combined-efi.vdi := grub-config efi | combined efi | lede-data-part | grub-install efi | qemu-image vdi',
+    ),
+    (
+        'IMAGE/combined-efi.vhdx := grub-config efi | combined efi | grub-install efi | qemu-image vhdx -o subformat=dynamic',
+        'IMAGE/combined-efi.vhdx := grub-config efi | combined efi | lede-data-part | grub-install efi | qemu-image vhdx -o subformat=dynamic',
+    ),
 ]
 for old, new in repls:
     if old in mk and new not in mk:
