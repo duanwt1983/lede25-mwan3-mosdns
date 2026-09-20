@@ -838,7 +838,7 @@ done
 assert_grep 'enable_data_mount_service' "$_LEDE_FILES/usr/libexec/lede-data-setup"
 assert_grep '$5=="/"' "$_LEDE_FILES/usr/libexec/lede-data-setup"
 assert_grep '/sys/dev/block/' "$_LEDE_FILES/usr/libexec/lede-data-setup"
-assert_grep 'find_label_part "$DISK"' "$_LEDE_FILES/usr/libexec/lede-data-setup"
+assert_grep 'find_label_part "$disk"' "$_LEDE_FILES/usr/libexec/lede-data-setup"
 assert_grep 'fix_gpt_table "$DISK"' "$_LEDE_FILES/usr/libexec/lede-data-setup"
 assert_grep 'grow_label_part' "$_LEDE_FILES/usr/libexec/lede-data-setup"
 assert_grep 'mount_existing_label_part' "$_LEDE_FILES/usr/libexec/lede-data-setup"
