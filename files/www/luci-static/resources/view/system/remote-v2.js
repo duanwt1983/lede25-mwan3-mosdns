@@ -140,23 +140,28 @@ return view.extend({
 		});
 	},
 
-	handleSave: function() {
+	saveRemote: function() {
 		var en, p;
-		return this.map.save().then(function() {
+		return this.map.save(function() {
 			en = uci.get('lede-remote', 'main', 'enabled');
 			p = uci.get('lede-remote', 'main', 'port') || '10443';
 			en = (en === '1' || en === 1 || en === true) ? '1' : '0';
-			return uci.apply();
 		}).then(function() {
 			return fs.exec('/usr/libexec/lede-wan-https', [en, String(p)]);
-		}).then(function() {
-			if (ui.changes && typeof ui.changes.displayChangeIndicator === 'function')
-				ui.changes.displayChangeIndicator(false);
-			window.location.reload();
+		}).then(function(res) {
+			if (!res || res.code !== 0)
+				throw new Error((res && (res.stderr || res.stdout)) || _('应用远程管理配置失败'));
+			return ui.changes.init();
 		});
 	},
 
-	handleSaveApply: function() {
-		return this.handleSave();
+	handleSave: function() {
+		return this.saveRemote();
+	},
+
+	handleSaveApply: function(ev, mode) {
+		return this.saveRemote().then(function() {
+			return ui.changes.apply(mode);
+		});
 	}
 });

@@ -11,6 +11,18 @@ MK="$PKG/Makefile"
 	exit 1
 }
 
+# Current openwrt/packages automatically discovers patches/nginx-mod-<name>
+# and applies them after unpacking that module.
+if grep -q 'PKG_MOD_PATCHED' "$MK"; then
+	mkdir -p "$PKG/patches/nginx-mod-ubus"
+	cp "$SELF/100-request-body-null-guard.patch" \
+		"$PKG/patches/nginx-mod-ubus/100-request-body-null-guard.patch"
+	echo "nginx ubus request-body guard installed"
+	exit 0
+fi
+
+# Compatibility with the older nginx package layout used by earlier LEDE
+# snapshots, where module patch directories were not auto-discovered.
 mkdir -p "$PKG/patches/ubus-nginx"
 cp "$SELF/100-request-body-null-guard.patch" \
 	"$PKG/patches/ubus-nginx/100-request-body-null-guard.patch"

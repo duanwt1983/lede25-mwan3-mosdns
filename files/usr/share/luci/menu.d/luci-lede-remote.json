@@ -4,7 +4,7 @@
 		"order": 20,
 		"action": {
 			"type": "view",
-			"path": "system/remote"
+			"path": "system/remote-v2"
 		},
 		"depends": {
 			"acl": [ "luci-lede-remote" ]
