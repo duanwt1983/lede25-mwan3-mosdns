@@ -58,15 +58,16 @@ text = re.sub(
     flags=re.MULTILINE,
 )
 
+# Insert before the quilt marker at the end of Build/Patch. Do not anchor on
+# rtmp/lua endif lines: LEDE Makefiles leave "endif" unindented.
 pattern = re.compile(
-    r'^([\t ]+\$\(call PatchDir,\$\(PKG_BUILD_DIR\),\$\(PATCH_DIR\)/rtmp-nginx,rtmp-nginx/\)\n'
-    r'[\t ]+endif\n)',
+    r'^(\t\$\(if \$\(QUILT\),touch \$\(PKG_BUILD_DIR\)/\.quilt_used\)\n)',
     re.MULTILINE,
 )
 if not pattern.search(text):
-    raise SystemExit('ERROR: nginx Build/Patch rtmp block not found')
+    raise SystemExit('ERROR: nginx Build/Patch quilt marker not found')
 
-text = pattern.sub(r'\1' + hook, text, count=1)
+text = pattern.sub(hook + r'\1', text, count=1)
 path.write_text(text)
 PY
 
