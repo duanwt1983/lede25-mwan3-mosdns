@@ -831,7 +831,7 @@ do
   [ ! -e "$_LEDE_FILES/$_bad" ] || { echo "ERROR: lan-guard leftover in overlay: $_bad"; exit 1; }
 done
 assert_grep 'enable_data_mount_service' "$_LEDE_FILES/usr/libexec/lede-data-setup"
-assert_grep '\$5=="/"' "$_LEDE_FILES/usr/libexec/lede-data-setup"
+assert_grep '$5=="/"' "$_LEDE_FILES/usr/libexec/lede-data-setup"
 assert_grep '/sys/dev/block/' "$_LEDE_FILES/usr/libexec/lede-data-setup"
 assert_grep 'find_label_part "$DISK"' "$_LEDE_FILES/usr/libexec/lede-data-setup"
 assert_absent 'FREE_START=${FREE_START%.*}' "$_LEDE_FILES/usr/libexec/lede-data-setup"
