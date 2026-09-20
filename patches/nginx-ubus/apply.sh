@@ -39,32 +39,22 @@ if 'PATCH_DIR)/ubus-nginx,nginx-ubus-module/' in text:
     print('nginx ubus patch hook already present')
     sys.exit(0)
 
-block = (
-	'ifneq "$(or $(CONFIG_NGINX_UBUS),$(QUILT))" ""\n'
-	'\t$(call PatchDir,$(PKG_BUILD_DIR),$(PATCH_DIR)/ubus-nginx,nginx-ubus-module/)\n'
-	'endif\n'
+# Drop the previous Build/Patch hook if an older apply.sh revision added it.
+text = re.sub(
+    r'\nifneq "\$\(or \$\(CONFIG_NGINX_UBUS\),\$\(QUILT\)\)" ""\n'
+    r'\t\$\(call PatchDir,\$\(PKG_BUILD_DIR\),\$\(PATCH_DIR\)/ubus-nginx,nginx-ubus-module/\)\n'
+    r'endif\n',
+    '\n',
+    text,
+    count=1,
 )
-anchor = re.search(
-	r'\t\$\(if \$\(QUILT\),touch \$\(PKG_BUILD_DIR\)/\.quilt_used\)\nendef',
-	text,
-)
-if anchor:
-	text = text[:anchor.start()] + block + text[anchor.start():]
-	path.write_text(text)
-	sys.exit(0)
 
-pattern = re.compile(
-	r'ifeq \(\$\(CONFIG_NGINX_UBUS\),y\)\n'
-	r'[\t ]+\$\(eval \$\(call Download,nginx-ubus-module\)\)\n'
-	r'[\t ]+\$\(Prepare/nginx-ubus-module\)\n'
-	r'endif\n'
-)
-new, n = pattern.subn(lambda m: m.group(0) + hook, text, count=1)
-if n:
-	path.write_text(new)
-	sys.exit(0)
+pattern = re.compile(r'^([\t ]+\$\(Prepare/nginx-ubus-module\)\n)', re.MULTILINE)
+if not pattern.search(text):
+    raise SystemExit('ERROR: nginx ubus Prepare block not found')
 
-raise SystemExit('ERROR: nginx ubus patch hook not found')
+text = pattern.sub(r'\1' + hook, text, count=1)
+path.write_text(text)
 PY
 
 grep -q 'PATCH_DIR)/ubus-nginx,nginx-ubus-module/' "$MK"

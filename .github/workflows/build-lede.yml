@@ -133,6 +133,11 @@ jobs:
             make package/install -j1 V=s 2>&1 | tail -n 250 || true
             failpkg=$(grep -R "ERROR: package/.* failed to build" logs 2>/dev/null | tail -n 1 | sed -n 's/.*ERROR: package\/\(.*\) failed to build.*/\1/p' || true)
             [ -z "$failpkg" ] && failpkg=wireshark
+            if [ "$failpkg" = "feeds/packages/nginx" ]; then
+              echo "===== nginx compile -j1 V=s (last 300 lines) ====="
+              make "package/feeds/packages/nginx/clean" || true
+              make "package/feeds/packages/nginx/compile" -j1 V=s 2>&1 | tail -n 300 || true
+            fi
             echo "===== ${failpkg} CMake logs ====="
             find build_dir -path "*${failpkg}*" \( -name CMakeError.log -o -name CMakeOutput.log -o -name CMakeCache.txt \) 2>/dev/null | while read -r f; do
               echo "----- $f (tail) -----"
