@@ -53,6 +53,11 @@ function strip_kstamp(line) {
 	return trim(replace(line, /^\[[\s0-9.]+\]\s*/, ''));
 }
 
+function kmsg_stamp(line) {
+	let m = match(line, /^\[\s*([0-9]+[.][0-9]+)\]/);
+	return m ? +m[1] : -1;
+}
+
 export function format_kmsg(line) {
 	let raw = trim(line);
 	let body = strip_kstamp(raw);
@@ -350,22 +355,29 @@ const LOGREAD_CRASH_TS = '/tmp/lede-logread-crash-alert.ts';
 
 export function kernel_new_faults() {
 	let text = cmd_out('dmesg 2>/dev/null', 80000);
-	let cur = sprintf('%d:%d', length(text), (length(text) > 80) ? ord(substr(text, length(text) - 20, 1)) : 0);
-	let prev = trim(readfile('/tmp/lede-kmsg.cursor') || '');
-	writefile('/tmp/lede-kmsg.cursor', cur + '\n');
-	if (prev == cur)
+	let lines = split(text, '\n');
+	let newest = -1;
+	for (let line in lines) {
+		let ts = kmsg_stamp(line);
+		if (ts > newest)
+			newest = ts;
+	}
+	if (newest < 0)
 		return null;
-	let chunk = text;
-	if (prev != '' && length(text) > 400)
-		chunk = substr(text, length(text) > 12000 ? length(text) - 12000 : 0);
+	let saved = trim(readfile('/tmp/lede-kmsg.cursor') || '');
+	let last = match(saved, /^[0-9]+([.][0-9]+)?$/) ? +saved : -1;
+	writefile('/tmp/lede-kmsg.cursor', sprintf('%.6f\n', newest));
+	/* Migrate the old length:byte cursor and baseline after a reboot. */
+	if (last < 0 || newest < last)
+		return null;
 	let bits = [];
 	let worst = '中等';
 	let title = '';
 	let titles = {};
 	let ntitle = 0;
-	for (let line in split(chunk, '\n')) {
+	for (let line in lines) {
 		line = trim(line);
-		if (line == '' || !is_serious_kmsg(line))
+		if (line == '' || kmsg_stamp(line) <= last || !is_serious_kmsg(line))
 			continue;
 		let f = format_kmsg(line);
 		if (f.level == '严重')

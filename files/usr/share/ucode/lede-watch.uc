@@ -716,7 +716,7 @@ function scan_logread(ctx, st, out) {
 	if (length(rows) == 0)
 		return;
 	let prev = +(st.logid || 0);
-	let newest = prev;
+	let newest = 0;
 	let fails = st.login_fails;
 	if (type(fails) != 'array')
 		fails = [];
@@ -732,12 +732,18 @@ function scan_logread(ctx, st, out) {
 		if (id > newest)
 			newest = id;
 	}
-	/* logd restart resets ids; begin at its current tail without replaying. */
-	if (!(prev > 0) || newest < prev) {
+	if (!(newest > 0))
+		return;
+	/* Establish the initial baseline without replaying the existing ring. */
+	if (!(prev > 0)) {
 		st.logid = newest;
 		st.login_fails = fails;
 		return;
 	}
+	/* A logd restart resets ids; its ring then contains only post-restart
+	 * entries, so consume that tail rather than dropping fresh events. */
+	if (newest < prev)
+		prev = 0;
 	for (let row in rows) {
 		let id = +(row.id || 0);
 		if (!(id > prev))

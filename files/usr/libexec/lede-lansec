@@ -658,17 +658,23 @@ function drain_logs(st) {
 	if (length(rows) == 0)
 		return;
 	let last = +(trim(readfile(CURSOR) || '0'));
-	let newest = last;
+	let newest = 0;
 	for (let row in rows) {
 		let id = +(row.id || 0);
 		if (id > newest)
 			newest = id;
 	}
-	/* The old cursor was a formatted line; logd restarts also reset ids. */
-	if (!(last > 0) || newest < last) {
+	if (!(newest > 0))
+		return;
+	/* The old cursor was a formatted line; establish an initial baseline. */
+	if (!(last > 0)) {
 		writefile(CURSOR, sprintf('%d\n', newest));
 		return;
 	}
+	/* logd restart resets ids. Its current ring contains only post-restart
+	 * entries, so consume that tail instead of silently dropping detections. */
+	if (newest < last)
+		last = 0;
 	for (let row in rows) {
 		let id = +(row.id || 0);
 		if (!(id > last))

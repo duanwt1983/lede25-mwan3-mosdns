@@ -137,8 +137,10 @@ part_path() {
 }
 
 find_label_part() {
-	local p
-	for p in /dev/sd*[0-9] /dev/vd*[0-9] /dev/hd*[0-9] /dev/nvme*n*p*[0-9] /dev/mmcblk*p*[0-9]; do
+	local disk="$1" n p
+	[ -b "$disk" ] || return 1
+	for n in $(parted -m -s "$disk" print 2>/dev/null | awk -F: '$1 ~ /^[0-9]+$/ { print $1 }'); do
+		p=$(part_path "$disk" "$n")
 		[ -b "$p" ] || continue
 		if blkid -o value -s LABEL "$p" 2>/dev/null | grep -qx "$LABEL"; then
 			echo "$p"
@@ -211,19 +213,6 @@ if data_mounted; then
 	exit 0
 fi
 
-EXIST=$(find_label_part || true)
-if [ -n "$EXIST" ]; then
-	UUID=$(blkid -o value -s UUID "$EXIST" 2>/dev/null || true)
-	if [ -n "$UUID" ]; then
-		write_fstab "$UUID"
-		if mount_uuid "$UUID"; then
-			ensure_dirs
-			log "mounted existing $LABEL $EXIST uuid=$UUID"
-			exit 0
-		fi
-	fi
-fi
-
 ROOT_PART=$(resolve_dev "$(root_src)") || {
 	log "cannot resolve root device, skip"
 	exit 0
@@ -239,6 +228,19 @@ if ! command -v parted >/dev/null 2>&1; then
 	exit 0
 fi
 
+EXIST=$(find_label_part "$DISK" || true)
+if [ -n "$EXIST" ]; then
+	UUID=$(blkid -o value -s UUID "$EXIST" 2>/dev/null || true)
+	if [ -n "$UUID" ]; then
+		write_fstab "$UUID"
+		if mount_uuid "$UUID"; then
+			ensure_dirs
+			log "mounted existing $LABEL $EXIST uuid=$UUID"
+			exit 0
+		fi
+	fi
+fi
+
 # Last free region on this disk only.
 FREE_LINE=$(parted -m -s "$DISK" unit MiB print free 2>/dev/null | awk -F: '
 	$0 ~ /:free;$/ {
@@ -251,7 +253,6 @@ FREE_LINE=$(parted -m -s "$DISK" unit MiB print free 2>/dev/null | awk -F: '
 FREE_START=$(echo "$FREE_LINE" | awk '{print $1}')
 FREE_SIZE=$(echo "$FREE_LINE" | awk '{print $2}')
 FREE_SIZE=${FREE_SIZE%.*}
-FREE_START=${FREE_START%.*}
 
 if [ -z "$FREE_SIZE" ] || [ "$FREE_SIZE" -lt "$MIN_MIB" ]; then
 	log "no leftover >= ${MIN_MIB}MiB on $DISK (got ${FREE_SIZE:-0}), skip"

@@ -19,6 +19,8 @@ must_y=(
   CONFIG_PACKAGE_luci-i18n-diskman-zh-cn
   CONFIG_PACKAGE_parted
   CONFIG_PACKAGE_blkid
+  CONFIG_PACKAGE_block-mount
+  CONFIG_PACKAGE_e2fsprogs
   CONFIG_PACKAGE_kmod-ixgbe
   CONFIG_PACKAGE_smartmontools
   CONFIG_PACKAGE_ip-full
