@@ -1,7 +1,8 @@
 #!/bin/sh
-# First-boot (and every boot): use leftover space on the *root disk* as ext4 /data.
-# Never touches other disks. Never formats a partition that already has a filesystem.
-# Mounts by UUID so device names (sda/nvme) can change.
+# First-boot: mount prebuilt LEDEDATA partition from the x86 image, grow it to
+# the physical disk end, format if needed, then mount /data by UUID.
+# Legacy images without LEDEDATA still fall back to creating a trailing partition.
+# Never touches disks other than the one hosting the running root filesystem.
 
 MARKER=/data/.lede-data
 MIN_MIB=1024
@@ -55,14 +56,11 @@ ensure_dirs() {
 		bn=$(basename "$f")
 		[ -f "/data/mosdns/cache/$bn" ] || mv "$f" "/data/mosdns/cache/$bn" 2>/dev/null || true
 	done
-	# PassWall / Xray geoip.dat geosite.dat（及同目录其它 .dat）
 	[ -d /usr/share/v2ray ] && seed_and_bind /usr/share/v2ray /data/geodata
 	if [ -d /usr/share/xray ] && ! grep -q ' /usr/share/xray ' /proc/mounts; then
 		mount --bind /data/geodata /usr/share/xray 2>/dev/null || true
 	fi
-	# PassWall 定时规则：gfwlist / chnroute / chnroute6 / chnlist 等
 	[ -d /usr/share/passwall/rules ] && seed_and_bind /usr/share/passwall/rules /data/passwall/rules
-	# MosDNS 广告源下载目录（anti-AD、AdRules 等 URL）
 	mkdir -p /etc/mosdns/rule/adlist
 	seed_and_bind /etc/mosdns/rule/adlist /data/mosdns/adlist
 	touch "$MARKER" 2>/dev/null || true
@@ -76,11 +74,7 @@ resolve_dev() {
 	local d="$1" mm node rootarg
 	[ -n "$d" ] || return 1
 	d=$(readlink -f "$d" 2>/dev/null || echo "$d")
-	# /dev/root → real partition
 	if [ "$d" = "/dev/root" ] || [ ! -e "$d" ]; then
-		# mountinfo field 3 is major:minor and field 5 is the mountpoint.
-		# Resolve through sysfs because the displayed source may still be the
-		# non-existent /dev/root used by x86 ext4 images.
 		mm=$(awk '$5=="/"{print $3; exit}' /proc/self/mountinfo 2>/dev/null)
 		if [ -n "$mm" ] && [ -e "/sys/dev/block/$mm" ]; then
 			node=$(basename "$(readlink -f "/sys/dev/block/$mm")")
@@ -90,7 +84,6 @@ resolve_dev() {
 	if [ -e /dev/root ] && [ "$d" = "/dev/root" -o -z "$d" ]; then
 		d=$(readlink -f /dev/root 2>/dev/null || true)
 	fi
-	# /dev/root or mapper: kernel cmdline
 	if [ ! -b "$d" ]; then
 		rootarg=$(sed -n 's/.*root=\([^ ]*\).*/\1/p' /proc/cmdline)
 		case "$rootarg" in
@@ -137,17 +130,29 @@ part_path() {
 }
 
 find_label_part() {
-	local disk="$1" n p
+	local disk="$1" n p name
 	[ -b "$disk" ] || return 1
+	p=$(blkid -t "LABEL=$LABEL" -o device 2>/dev/null | head -n 1)
+	[ -n "$p" ] && echo "$p" && return 0
+	p=$(blkid -t "PARTLABEL=$LABEL" -o device 2>/dev/null | head -n 1)
+	[ -n "$p" ] && echo "$p" && return 0
 	for n in $(parted -m -s "$disk" print 2>/dev/null | awk -F: '$1 ~ /^[0-9]+$/ { print $1 }'); do
+		name=$(parted -m -s "$disk" unit MiB print 2>/dev/null | awk -F: -v num="$n" '$1 == num { print $6 }')
+		[ "$name" = "$LABEL" ] || continue
 		p=$(part_path "$disk" "$n")
-		[ -b "$p" ] || continue
-		if blkid -o value -s LABEL "$p" 2>/dev/null | grep -qx "$LABEL"; then
-			echo "$p"
-			return 0
-		fi
+		[ -b "$p" ] && echo "$p" && return 0
 	done
 	return 1
+}
+
+label_part_num() {
+	local disk="$1"
+	sgdisk -p "$disk" 2>/dev/null | awk -v l="$LABEL" '
+		/^ *[0-9]+ / {
+			n=$1
+			name=$NF
+			if (name == l) { print n; exit }
+		}'
 }
 
 fstab_has_data() {
@@ -192,8 +197,6 @@ mount_uuid() {
 	if data_mounted; then
 		return 0
 	fi
-	# Do not call "block mount" here: it probes every fstype on /data and floods
-	# dmesg with F2FS/exFAT errors when fstype is not pinned in UCI.
 	mount -t ext4 -o rw,noatime "UUID=$uuid" /data 2>/dev/null || \
 		mount -t ext4 -o rw,noatime "/dev/disk/by-uuid/$uuid" /data 2>/dev/null || \
 		return 1
@@ -213,7 +216,13 @@ gpt_needs_fix() {
 }
 
 fix_gpt_table() {
-	local disk="$1" err
+	local disk="$1" err table
+
+	table=$(parted -m -s "$disk" print 2>/dev/null | awk -F: 'NR==2{print $6}')
+	if [ "$table" = "gpt" ] && command -v sgdisk >/dev/null 2>&1; then
+		sgdisk -e "$disk" >>"$LOG" 2>&1 || true
+		refresh_parts "$disk"
+	fi
 
 	gpt_needs_fix "$disk" || return 0
 	log "repairing GPT on $disk"
@@ -231,6 +240,71 @@ fix_gpt_table() {
 	[ -n "$err" ] && log "$err"
 	refresh_parts "$disk"
 	return 0
+}
+
+grow_label_part() {
+	local disk="$1" num start last disk_last uuid part fstype
+
+	command -v sgdisk >/dev/null 2>&1 || return 0
+	fix_gpt_table "$disk" || return 1
+
+	num=$(label_part_num "$disk") || return 0
+	[ -n "$num" ] || return 0
+
+	start=$(sgdisk -i "$num" "$disk" 2>/dev/null | awk '/First sector:/{print $3}')
+	last=$(sgdisk -i "$num" "$disk" 2>/dev/null | awk '/Last sector:/{print $3}')
+	disk_last=$(sgdisk -p "$disk" 2>/dev/null | awk '/^Disk .* sectors:/{print $(NF-1)}' | tr -d ',')
+	[ -n "$start" ] && [ -n "$last" ] && [ -n "$disk_last" ] || return 0
+	[ "$((disk_last - last))" -le 2048 ] && return 0
+
+	part=$(part_path "$disk" "$num")
+	uuid=$(blkid -o value -s UUID "$part" 2>/dev/null || true)
+	fstype=$(blkid -o value -s TYPE "$part" 2>/dev/null || true)
+
+	log "growing $LABEL partition $num on $disk (sectors $start-$last -> end)"
+	sgdisk -d "$num" "$disk" >>"$LOG" 2>&1
+	sgdisk -n "$num:${start}:0" -c "$num:$LABEL" -t "$num:8300" "$disk" >>"$LOG" 2>&1
+	[ -n "$uuid" ] && sgdisk -u "$num:$uuid" "$disk" >>"$LOG" 2>&1 || true
+	refresh_parts "$disk"
+
+	part=$(part_path "$disk" "$num")
+	if [ -n "$fstype" ] && command -v resize2fs >/dev/null 2>&1; then
+		resize2fs "$part" >>"$LOG" 2>&1 || log "resize2fs failed on $part"
+	fi
+}
+
+mount_existing_label_part() {
+	local disk="$1" part uuid fstype
+
+	part=$(find_label_part "$disk" || true)
+	[ -n "$part" ] || return 1
+
+	grow_label_part "$disk"
+	part=$(find_label_part "$disk" || echo "$part")
+
+	fstype=$(blkid -o value -s TYPE "$part" 2>/dev/null || true)
+	if [ -z "$fstype" ]; then
+		if ! command -v mkfs.ext4 >/dev/null 2>&1; then
+			log "mkfs.ext4 missing"
+			return 1
+		fi
+		mkfs.ext4 -F -L "$LABEL" -m 0 "$part" || {
+			log "mkfs.ext4 failed on $part"
+			return 1
+		}
+		log "formatted prebuilt $LABEL $part"
+	fi
+
+	uuid=$(blkid -o value -s UUID "$part" 2>/dev/null || true)
+	[ -n "$uuid" ] || return 1
+	write_fstab "$uuid"
+	if mount_uuid "$uuid"; then
+		ensure_dirs
+		log "mounted $LABEL $part uuid=$uuid"
+		return 0
+	fi
+	log "mount failed for $LABEL $part uuid=$uuid"
+	return 1
 }
 
 # --- already good ---
@@ -259,20 +333,11 @@ fix_gpt_table "$DISK" || {
 	exit 0
 }
 
-EXIST=$(find_label_part "$DISK" || true)
-if [ -n "$EXIST" ]; then
-	UUID=$(blkid -o value -s UUID "$EXIST" 2>/dev/null || true)
-	if [ -n "$UUID" ]; then
-		write_fstab "$UUID"
-		if mount_uuid "$UUID"; then
-			ensure_dirs
-			log "mounted existing $LABEL $EXIST uuid=$UUID"
-			exit 0
-		fi
-	fi
+if mount_existing_label_part "$DISK"; then
+	exit 0
 fi
 
-# Last free region on this disk only.
+# Legacy fallback: images without a prebuilt LEDEDATA partition.
 FREE_LINE=$(parted -m -s "$DISK" unit MiB print free 2>/dev/null | awk -F: '
 	$0 ~ /:free;$/ {
 		start=$2; size=$4
@@ -286,12 +351,12 @@ FREE_SIZE=$(echo "$FREE_LINE" | awk '{print $2}')
 FREE_SIZE=${FREE_SIZE%.*}
 
 if [ -z "$FREE_SIZE" ] || [ "$FREE_SIZE" -lt "$MIN_MIB" ]; then
-	log "no leftover >= ${MIN_MIB}MiB on $DISK (got ${FREE_SIZE:-0}), skip"
+	log "no LEDEDATA partition and no leftover >= ${MIN_MIB}MiB on $DISK (got ${FREE_SIZE:-0}), skip"
 	exit 0
 fi
 
 TABLE=$(parted -m -s "$DISK" print 2>/dev/null | awk -F: 'NR==2{print $6}')
-log "creating $LABEL on $DISK from ${FREE_START}MiB table=$TABLE free=${FREE_SIZE}MiB"
+log "legacy create $LABEL on $DISK from ${FREE_START}MiB table=$TABLE free=${FREE_SIZE}MiB"
 
 if [ "$TABLE" = "gpt" ]; then
 	ERR=$(parted -s "$DISK" -- mkpart "$LABEL" ext4 "${FREE_START}MiB" 100% 2>&1) || {
@@ -307,7 +372,6 @@ fi
 
 refresh_parts "$DISK"
 
-# New partition = highest number on this disk
 NEW_N=$(parted -m -s "$DISK" print 2>/dev/null | awk -F: '
 	$1 ~ /^[0-9]+$/ { n=$1 }
 	END { print n }
@@ -325,9 +389,7 @@ if [ ! -b "$NEW_PART" ]; then
 fi
 
 FSTYPE=$(blkid -o value -s TYPE "$NEW_PART" 2>/dev/null || true)
-if [ -n "$FSTYPE" ]; then
-	log "$NEW_PART already has fstype=$FSTYPE, will not format"
-else
+if [ -z "$FSTYPE" ]; then
 	if ! command -v mkfs.ext4 >/dev/null 2>&1; then
 		log "mkfs.ext4 missing"
 		exit 1

@@ -141,6 +141,11 @@ if [ -f "$_NGINX_UBUS_PATCH" ]; then
   sh "$_NGINX_UBUS_PATCH" "$(pwd)"
 fi
 
+_X86_IMAGE_PATCH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/patches/x86-image/apply.sh"
+if [ -f "$_X86_IMAGE_PATCH" ]; then
+  sh "$_X86_IMAGE_PATCH" "$(pwd)"
+fi
+
 _DNSMASQ_PATCH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/patches/dnsmasq/apply.sh"
 if [ -f "$_DNSMASQ_PATCH" ]; then
   sh "$_DNSMASQ_PATCH" .
@@ -835,6 +840,8 @@ assert_grep '$5=="/"' "$_LEDE_FILES/usr/libexec/lede-data-setup"
 assert_grep '/sys/dev/block/' "$_LEDE_FILES/usr/libexec/lede-data-setup"
 assert_grep 'find_label_part "$DISK"' "$_LEDE_FILES/usr/libexec/lede-data-setup"
 assert_grep 'fix_gpt_table "$DISK"' "$_LEDE_FILES/usr/libexec/lede-data-setup"
+assert_grep 'grow_label_part' "$_LEDE_FILES/usr/libexec/lede-data-setup"
+assert_grep 'mount_existing_label_part' "$_LEDE_FILES/usr/libexec/lede-data-setup"
 assert_absent 'FREE_START=${FREE_START%.*}' "$_LEDE_FILES/usr/libexec/lede-data-setup"
 assert_grep 'chmod +x /usr/libexec/lede-data-setup' "$_LEDE_FILES/etc/uci-defaults/10-lede-data-enable"
 assert_grep 'lede_fixup_script_modes' "$_LEDE_FILES/etc/uci-defaults/99-custom"
