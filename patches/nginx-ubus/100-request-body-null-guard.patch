@@ -1,20 +1,6 @@
-From f4c3e45d250d00c3dab1e9011aad761073da37e3 Mon Sep 17 00:00:00 2001
-From: Tobias Waldvogel <tobias.waldvogel@gmail.com>
-Date: Sun, 11 Oct 2020 12:25:34 +0200
-Subject: [PATCH] Fix SIGSEGV if request exceeds client body buffer
-
-Nginx stores oversized request bodies in a temporary-file buffer whose
-in-memory position is NULL. Reject that representation instead of passing
-the NULL pointer to ngx_memcpy().
-
-Signed-off-by: Tobias Waldvogel <tobias.waldvogel@gmail.com>
----
- src/ngx_http_ubus_module.c | 10 ++++++++++
- 1 file changed, 10 insertions(+)
-
---- a/src/ngx_http_ubus_module.c
-+++ b/src/ngx_http_ubus_module.c
-@@ -753,4 +753,14 @@ static void ngx_http_ubus_req_handler(ng
+--- a/nginx-ubus-module/src/ngx_http_ubus_module.c
++++ b/nginx-ubus-module/src/ngx_http_ubus_module.c
+@@ -754,6 +754,16 @@ static void ngx_http_ubus_req_handler(ngx_http_request_t *r) {
    for (in = r->request_body->bufs; in; in = in->next) {
      len = ngx_buf_size(in->buf);
 +
@@ -29,3 +15,4 @@ Signed-off-by: Tobias Waldvogel <tobias.waldvogel@gmail.com>
 +
      ngx_memcpy(buffer + pos, in->buf->pos, len);
      pos += len;
+ 

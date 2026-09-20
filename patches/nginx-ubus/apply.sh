@@ -21,7 +21,7 @@ if grep -q 'PKG_MOD_PATCHED' "$MK"; then
 	exit 0
 fi
 
-# Compatibility with the older nginx package layout used by LEDE snapshots.
+# LEDE/coolsnowwolf nginx 1.21.x: patch ubus module via Build/Patch like dav/lua.
 mkdir -p "$PKG/patches/ubus-nginx"
 cp "$SELF/100-request-body-null-guard.patch" \
 	"$PKG/patches/ubus-nginx/100-request-body-null-guard.patch"
@@ -33,25 +33,38 @@ import sys
 
 path = Path(sys.argv[1])
 text = path.read_text()
-hook = '\t$(call PatchDir,$(PKG_BUILD_DIR),$(PATCH_DIR)/ubus-nginx,nginx-ubus-module/)\n'
+hook = (
+	'ifneq "$(or $(CONFIG_NGINX_UBUS),$(QUILT))" ""\n'
+	'\t$(call PatchDir,$(PKG_BUILD_DIR),$(PATCH_DIR)/ubus-nginx,nginx-ubus-module/)\n'
+	'endif\n'
+)
 
 if 'PATCH_DIR)/ubus-nginx,nginx-ubus-module/' in text:
     print('nginx ubus patch hook already present')
     sys.exit(0)
 
-# Drop the previous Build/Patch hook if an older apply.sh revision added it.
+# Drop hooks from older apply.sh revisions.
 text = re.sub(
     r'\nifneq "\$\(or \$\(CONFIG_NGINX_UBUS\),\$\(QUILT\)\)" ""\n'
     r'\t\$\(call PatchDir,\$\(PKG_BUILD_DIR\),\$\(PATCH_DIR\)/ubus-nginx,nginx-ubus-module/\)\n'
     r'endif\n',
     '\n',
     text,
-    count=1,
+)
+text = re.sub(
+    r'^[\t ]+\$\(call PatchDir,\$\(PKG_BUILD_DIR\),\$\(PATCH_DIR\)/ubus-nginx,nginx-ubus-module/\)\n',
+    '',
+    text,
+    flags=re.MULTILINE,
 )
 
-pattern = re.compile(r'^([\t ]+\$\(Prepare/nginx-ubus-module\)\n)', re.MULTILINE)
+pattern = re.compile(
+    r'^([\t ]+\$\(call PatchDir,\$\(PKG_BUILD_DIR\),\$\(PATCH_DIR\)/rtmp-nginx,rtmp-nginx/\)\n'
+    r'[\t ]+endif\n)',
+    re.MULTILINE,
+)
 if not pattern.search(text):
-    raise SystemExit('ERROR: nginx ubus Prepare block not found')
+    raise SystemExit('ERROR: nginx Build/Patch rtmp block not found')
 
 text = pattern.sub(r'\1' + hook, text, count=1)
 path.write_text(text)
