@@ -16,7 +16,10 @@ if command -v sgdisk >/dev/null 2>&1; then
 		exit 0
 	fi
 	sgdisk -e "$IMG" >/dev/null 2>&1 || true
-	sgdisk -n 0:0 -c 0:"$LABEL" -t 0:8300 "$IMG"
+	if sgdisk -n 0:0 -c 0:"$LABEL" -t 0:8300 "$IMG" >/dev/null 2>&1; then
+		exit 0
+	fi
+	echo "WARN: sgdisk could not add $LABEL; relying on ptgen partition" >&2
 	exit 0
 fi
 

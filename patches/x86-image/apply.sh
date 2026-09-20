@@ -38,7 +38,7 @@ else:
 
     text = text.replace(
         '-p "${ROOTFSSIZE}m" ${ALIGN:+-l $ALIGN} -G "$GUID")',
-        '-p "${ROOTFSSIZE}m" -p "${DATAPARTSIZE}" -l LEDEDATA ${ALIGN:+-l $ALIGN} -G "$GUID")',
+        '-p "${ROOTFSSIZE}m" -N LEDEDATA -p "${DATAPARTSIZE}" ${ALIGN:+-l $ALIGN} -G "$GUID")',
     )
     text = text.replace(
         'GPT_DISK_SIZE=$((($3 + $4 + 1023) / 1024 + ${GPT_PADDING_KB:-1024}))',
@@ -46,7 +46,7 @@ else:
     )
     text = text.replace(
         '-p "${ROOTFSSIZE}m" ${ALIGN:+-l $ALIGN} ${SIGNATURE:+-S 0x$SIGNATURE} ${GUID:+-G $GUID})',
-        '-p "${ROOTFSSIZE}m" -p "${DATAPARTSIZE}" -l LEDEDATA ${ALIGN:+-l $ALIGN} ${SIGNATURE:+-S 0x$SIGNATURE} ${GUID:+-G $GUID})',
+        '-p "${ROOTFSSIZE}m" -N LEDEDATA -p "${DATAPARTSIZE}" ${ALIGN:+-l $ALIGN} ${SIGNATURE:+-S 0x$SIGNATURE} ${GUID:+-G $GUID})',
     )
     if 'DATAPARTSIZE' not in text or 'LEDEDATA' not in text:
         raise SystemExit('ERROR: failed to patch gen_image_generic.sh for LEDEDATA')
