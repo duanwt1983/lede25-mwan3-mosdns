@@ -73,20 +73,34 @@ root_src() {
 }
 
 resolve_dev() {
-	local d="$1"
+	local d="$1" mm node rootarg
 	[ -n "$d" ] || return 1
 	d=$(readlink -f "$d" 2>/dev/null || echo "$d")
 	# /dev/root → real partition
 	if [ "$d" = "/dev/root" ] || [ ! -e "$d" ]; then
-		d=$(awk '$2=="/"{print $1; exit}' /proc/self/mountinfo 2>/dev/null)
-		d=$(echo "$d" | awk '{print $1}')
+		# mountinfo field 3 is major:minor and field 5 is the mountpoint.
+		# Resolve through sysfs because the displayed source may still be the
+		# non-existent /dev/root used by x86 ext4 images.
+		mm=$(awk '$5=="/"{print $3; exit}' /proc/self/mountinfo 2>/dev/null)
+		if [ -n "$mm" ] && [ -e "/sys/dev/block/$mm" ]; then
+			node=$(basename "$(readlink -f "/sys/dev/block/$mm")")
+			[ -n "$node" ] && d="/dev/$node"
+		fi
 	fi
 	if [ -e /dev/root ] && [ "$d" = "/dev/root" -o -z "$d" ]; then
 		d=$(readlink -f /dev/root 2>/dev/null || true)
 	fi
 	# /dev/root or mapper: kernel cmdline
 	if [ ! -b "$d" ]; then
-		d=$(sed -n 's/.*root=\([^ ]*\).*/\1/p' /proc/cmdline)
+		rootarg=$(sed -n 's/.*root=\([^ ]*\).*/\1/p' /proc/cmdline)
+		case "$rootarg" in
+			PARTUUID=*|UUID=*|LABEL=*)
+				d=$(blkid -t "$rootarg" -o device 2>/dev/null | head -n 1)
+				;;
+			/dev/*)
+				d="$rootarg"
+				;;
+		esac
 	fi
 	if [ ! -b "$d" ]; then
 		d=$(awk '$2=="/" && $3=="ext4"{print $1; exit}' /proc/mounts)

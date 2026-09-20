@@ -38,6 +38,7 @@ fi
 if [ -f "$VIEW/logs.js" ]; then
 	python3 - "$VIEW/logs.js" <<'PY'
 from pathlib import Path
+import re
 import sys
 p = Path(sys.argv[1])
 t = p.read_text(encoding="utf-8")
@@ -277,17 +278,19 @@ stop_old = (
 if stop_old in t and 'stop_service() {\n\tconfig_load "mosdns"\n\tconfig_foreach get_config "mosdns"\n\tconfig_foreach get_config "config"' not in t:
     t = t.replace(stop_old, stop_old + '\n\tconfig_foreach get_config "config"', 1)
     print("init.d mosdns: stop_service loads config section")
-dup = (
-    'uci add_list dhcp.@dnsmasq[0].server="127.0.0.1#${listen_port:-5335}"\n'
-    '\t\tuci add_list dhcp.@dnsmasq[0].server="127.0.0.1#${listen_port:-5335}"'
+server_line = 'uci add_list dhcp.@dnsmasq[0].server="127.0.0.1#${listen_port:-5335}"'
+t, server_dups = re.subn(
+    r'(\n[ \t]*' + re.escape(server_line) + r')(?:\n[ \t]*' + re.escape(server_line) + r')+',
+    r'\1',
+    t,
 )
-if dup in t:
-    t = t.replace(
-        dup,
-        'uci add_list dhcp.@dnsmasq[0].server="127.0.0.1#${listen_port:-5335}"',
-        1,
-    )
+if server_dups:
     print("init.d mosdns: dedupe dhcp forward entry")
+t = re.sub(
+    r'(\n[ \t]*config_foreach get_config "config")(?:\n[ \t]*config_foreach get_config "config")+',
+    r'\1',
+    t,
+)
 stale = (
     '\t# Ensure stale daemon does not block listen ports (do not use killall mosdns: it matches init script too).\n'
     '\tfor _p in $(pidof mosdns); do\n'

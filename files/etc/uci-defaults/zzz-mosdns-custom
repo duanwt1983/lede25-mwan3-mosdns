@@ -33,7 +33,10 @@ fi
 uci commit mosdns
 [ -x /usr/libexec/mosdns-gen ] && /usr/libexec/mosdns-gen
 [ -x /etc/init.d/mosdns ] && {
+	# Keep the rc.d link installed. start_service() already checks the UCI
+	# enabled flag, so a fresh image remains stopped while a later UI enable
+	# survives reboot.
 	/etc/init.d/mosdns stop >/dev/null 2>&1 || true
-	/etc/init.d/mosdns disable >/dev/null 2>&1 || true
+	/etc/init.d/mosdns enable >/dev/null 2>&1 || true
 }
 exit 0

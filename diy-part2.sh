@@ -780,6 +780,7 @@ assert_grep 'luci.ispip' "$_LEDE_FILES/usr/share/rpcd/ucode/luci.isp-ip.uc"
 assert_grep 'luci.ispip' "$_LEDE_FILES/usr/share/rpcd/acl.d/luci-mwan3-isp.json"
 assert_grep 'sync-cron' "$_LEDE_FILES/usr/libexec/isp-ip-update"
 assert_grep "option enabled '0'" "$_LEDE_FILES/etc/config/mosdns"
+assert_grep '/etc/init.d/mosdns enable' "$_LEDE_FILES/etc/uci-defaults/zzz-mosdns-custom"
 _MWAN3_TAB_PKG=$(find package/luci-app-mwan3 \
   -path '*/menu.d/zzz-luci-mwan3-tab.json' -type f 2>/dev/null | head -n 1 || true)
 [ -n "$_MWAN3_TAB_PKG" ] || _MWAN3_TAB_PKG=$(find package/luci-app-mwan3 \
@@ -830,6 +831,8 @@ do
   [ ! -e "$_LEDE_FILES/$_bad" ] || { echo "ERROR: lan-guard leftover in overlay: $_bad"; exit 1; }
 done
 assert_grep 'enable_data_mount_service' "$_LEDE_FILES/usr/libexec/lede-data-setup"
+assert_grep '\$5=="/"' "$_LEDE_FILES/usr/libexec/lede-data-setup"
+assert_grep '/sys/dev/block/' "$_LEDE_FILES/usr/libexec/lede-data-setup"
 assert_grep 'chmod +x /usr/libexec/lede-data-setup' "$_LEDE_FILES/etc/uci-defaults/10-lede-data-enable"
 assert_grep 'lede_fixup_script_modes' "$_LEDE_FILES/etc/uci-defaults/99-custom"
 assert_absent '宽带监控' "$_LEDE_FILES/usr/share/luci/menu.d/luci-app-wan-monitor.json"
