@@ -18,6 +18,7 @@ must_y=(
   CONFIG_PACKAGE_luci-app-diskman
   CONFIG_PACKAGE_luci-i18n-diskman-zh-cn
   CONFIG_PACKAGE_parted
+  CONFIG_PACKAGE_gdisk
   CONFIG_PACKAGE_blkid
   CONFIG_PACKAGE_block-mount
   CONFIG_PACKAGE_e2fsprogs

@@ -207,6 +207,32 @@ refresh_parts() {
 	sleep 1
 }
 
+gpt_needs_fix() {
+	local disk="$1"
+	parted -s "$disk" print 2>&1 | grep -qiE 'backup GPT|not all of the space'
+}
+
+fix_gpt_table() {
+	local disk="$1" err
+
+	gpt_needs_fix "$disk" || return 0
+	log "repairing GPT on $disk"
+	if command -v sgdisk >/dev/null 2>&1; then
+		if sgdisk -e "$disk" >>"$LOG" 2>&1; then
+			refresh_parts "$disk"
+			return 0
+		fi
+		log "sgdisk -e failed on $disk"
+	fi
+	err=$(printf 'Fix\n' | parted ---pretend-input-tty -s "$disk" print 2>&1) || {
+		log "parted GPT fix failed on $disk: ${err:-unknown}"
+		return 1
+	}
+	[ -n "$err" ] && log "$err"
+	refresh_parts "$disk"
+	return 0
+}
+
 # --- already good ---
 if data_mounted; then
 	ensure_dirs
@@ -227,6 +253,11 @@ if ! command -v parted >/dev/null 2>&1; then
 	log "parted missing, skip"
 	exit 0
 fi
+
+fix_gpt_table "$DISK" || {
+	log "cannot repair GPT on $DISK, skip"
+	exit 0
+}
 
 EXIST=$(find_label_part "$DISK" || true)
 if [ -n "$EXIST" ]; then
@@ -263,13 +294,13 @@ TABLE=$(parted -m -s "$DISK" print 2>/dev/null | awk -F: 'NR==2{print $6}')
 log "creating $LABEL on $DISK from ${FREE_START}MiB table=$TABLE free=${FREE_SIZE}MiB"
 
 if [ "$TABLE" = "gpt" ]; then
-	parted -s "$DISK" -- mkpart "$LABEL" ext4 "${FREE_START}MiB" 100% || {
-		log "parted mkpart failed"
+	ERR=$(parted -s "$DISK" -- mkpart "$LABEL" ext4 "${FREE_START}MiB" 100% 2>&1) || {
+		log "parted mkpart failed: ${ERR:-unknown}"
 		exit 1
 	}
 else
-	parted -s "$DISK" -- mkpart primary ext4 "${FREE_START}MiB" 100% || {
-		log "parted mkpart failed"
+	ERR=$(parted -s "$DISK" -- mkpart primary ext4 "${FREE_START}MiB" 100% 2>&1) || {
+		log "parted mkpart failed: ${ERR:-unknown}"
 		exit 1
 	}
 fi

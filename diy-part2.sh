@@ -834,6 +834,7 @@ assert_grep 'enable_data_mount_service' "$_LEDE_FILES/usr/libexec/lede-data-setu
 assert_grep '$5=="/"' "$_LEDE_FILES/usr/libexec/lede-data-setup"
 assert_grep '/sys/dev/block/' "$_LEDE_FILES/usr/libexec/lede-data-setup"
 assert_grep 'find_label_part "$DISK"' "$_LEDE_FILES/usr/libexec/lede-data-setup"
+assert_grep 'fix_gpt_table "$DISK"' "$_LEDE_FILES/usr/libexec/lede-data-setup"
 assert_absent 'FREE_START=${FREE_START%.*}' "$_LEDE_FILES/usr/libexec/lede-data-setup"
 assert_grep 'chmod +x /usr/libexec/lede-data-setup' "$_LEDE_FILES/etc/uci-defaults/10-lede-data-enable"
 assert_grep 'lede_fixup_script_modes' "$_LEDE_FILES/etc/uci-defaults/99-custom"
