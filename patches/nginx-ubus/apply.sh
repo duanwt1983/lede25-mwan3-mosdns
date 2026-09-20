@@ -17,39 +17,54 @@ if grep -q 'PKG_MOD_PATCHED' "$MK"; then
 	mkdir -p "$PKG/patches/nginx-mod-ubus"
 	cp "$SELF/100-request-body-null-guard.patch" \
 		"$PKG/patches/nginx-mod-ubus/100-request-body-null-guard.patch"
-	echo "nginx ubus request-body guard installed"
+	echo "nginx ubus request-body guard installed (nginx-mod-ubus)"
 	exit 0
 fi
 
-# Compatibility with the older nginx package layout used by earlier LEDE
-# snapshots, where module patch directories were not auto-discovered.
+# Compatibility with the older nginx package layout used by LEDE snapshots.
 mkdir -p "$PKG/patches/ubus-nginx"
 cp "$SELF/100-request-body-null-guard.patch" \
 	"$PKG/patches/ubus-nginx/100-request-body-null-guard.patch"
 
 python3 - "$MK" <<'PY'
 from pathlib import Path
+import re
 import sys
 
 path = Path(sys.argv[1])
 text = path.read_text()
-needle = """ifeq ($(CONFIG_NGINX_UBUS),y)
- $(eval $(call Download,nginx-ubus-module))
- $(Prepare/nginx-ubus-module)
-endif
-"""
-replacement = """ifeq ($(CONFIG_NGINX_UBUS),y)
- $(eval $(call Download,nginx-ubus-module))
- $(Prepare/nginx-ubus-module)
- $(call PatchDir,$(PKG_BUILD_DIR),$(PATCH_DIR)/ubus-nginx,nginx-ubus-module/)
-endif
-"""
+hook = '\t$(call PatchDir,$(PKG_BUILD_DIR),$(PATCH_DIR)/ubus-nginx,nginx-ubus-module/)\n'
 
-if replacement not in text:
-    if needle not in text:
-        raise SystemExit("ERROR: nginx ubus prepare block not found")
-    text = text.replace(needle, replacement, 1)
-    path.write_text(text)
+if 'PATCH_DIR)/ubus-nginx,nginx-ubus-module/' in text:
+    print('nginx ubus patch hook already present')
+    sys.exit(0)
+
+block = (
+	'ifneq "$(or $(CONFIG_NGINX_UBUS),$(QUILT))" ""\n'
+	'\t$(call PatchDir,$(PKG_BUILD_DIR),$(PATCH_DIR)/ubus-nginx,nginx-ubus-module/)\n'
+	'endif\n'
+)
+anchor = re.search(
+	r'\t\$\(if \$\(QUILT\),touch \$\(PKG_BUILD_DIR\)/\.quilt_used\)\nendef',
+	text,
+)
+if anchor:
+	text = text[:anchor.start()] + block + text[anchor.start():]
+	path.write_text(text)
+	sys.exit(0)
+
+pattern = re.compile(
+	r'ifeq \(\$\(CONFIG_NGINX_UBUS\),y\)\n'
+	r'[\t ]+\$\(eval \$\(call Download,nginx-ubus-module\)\)\n'
+	r'[\t ]+\$\(Prepare/nginx-ubus-module\)\n'
+	r'endif\n'
+)
+new, n = pattern.subn(lambda m: m.group(0) + hook, text, count=1)
+if n:
+	path.write_text(new)
+	sys.exit(0)
+
+raise SystemExit('ERROR: nginx ubus patch hook not found')
 PY
 
 grep -q 'PATCH_DIR)/ubus-nginx,nginx-ubus-module/' "$MK"
