@@ -22,7 +22,8 @@ ctx.load(CONF);
 ctx.load('mwan3');
 ctx.load('dhcp');
 ctx.load('network');
-	try { ctx.load('mosdns'); } catch (e) {}
+try { ctx.load('mosdns'); } catch (e) {}
+try { ctx.load('lede-remote'); } catch (e) {}
 
 function cfg(key, def) {
 	let v = ctx.get(CONF, 'main', key);
@@ -914,7 +915,12 @@ function handle(event, iface) {
 				try { check_metrics(); } catch (e) {}
 				try { ctx.unload(CONF); } catch (e) {}
 				ctx.load(CONF);
-				try { ctx.load('mwan3'); ctx.load('dhcp'); ctx.load('network'); } catch (e) {}
+				try {
+					ctx.load('mwan3');
+					ctx.load('dhcp');
+					ctx.load('network');
+					ctx.load('lede-remote');
+				} catch (e) {}
 			}
 			system('sleep 2');
 		}

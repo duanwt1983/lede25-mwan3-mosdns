@@ -74,6 +74,54 @@ return view.extend({
 		o.default = '10443';
 		o.rmempty = false;
 
+		o = s.option(form.Flag, 'scan_enabled', _('记录并聚合扫描行为'),
+			_('记录 WAN 管理端口的访问；同一来源在时间窗口内反复访问不存在的路径或异常请求时，只生成一条聚合报警。'));
+		o.default = o.enabled;
+		o.rmempty = false;
+
+		o = s.option(form.Flag, 'auto_ban', _('达到阈值后临时封禁'),
+			_('按来源 IP 临时封禁，不要求固定 IP；到期自动解封。局域网管理不受影响。'));
+		o.default = o.enabled;
+		o.rmempty = false;
+		o.depends('scan_enabled', '1');
+
+		o = s.option(form.Value, 'scan_window_min', _('扫描统计窗口（分钟）'));
+		o.datatype = 'range(1,60)';
+		o.default = '5';
+		o.rmempty = false;
+		o.depends('scan_enabled', '1');
+
+		o = s.option(form.Value, 'scan_alert_n', _('扫描报警阈值'));
+		o.datatype = 'range(3,1000)';
+		o.default = '10';
+		o.rmempty = false;
+		o.depends('scan_enabled', '1');
+
+		o = s.option(form.Value, 'scan_ban_n', _('扫描封禁阈值'));
+		o.datatype = 'range(5,5000)';
+		o.default = '30';
+		o.rmempty = false;
+		o.depends('auto_ban', '1');
+
+		o = s.option(form.Value, 'login_window_min', _('登录尝试统计窗口（分钟）'));
+		o.datatype = 'range(1,60)';
+		o.default = '10';
+		o.rmempty = false;
+		o.depends('scan_enabled', '1');
+
+		o = s.option(form.Value, 'login_ban_n', _('登录尝试封禁阈值'),
+			_('无法记录密码内容；仅统计短时间内重复提交登录请求。'));
+		o.datatype = 'range(3,100)';
+		o.default = '8';
+		o.rmempty = false;
+		o.depends('auto_ban', '1');
+
+		o = s.option(form.Value, 'ban_minutes', _('临时封禁时长（分钟）'));
+		o.datatype = 'range(1,1440)';
+		o.default = '30';
+		o.rmempty = false;
+		o.depends('auto_ban', '1');
+
 		this.map = m;
 		return m.render().then(function(node) {
 			node.classList.add('remote-mosdns-page');
@@ -93,12 +141,13 @@ return view.extend({
 	},
 
 	handleSave: function() {
+		var en, p;
 		return this.map.save().then(function() {
-			return uci.save();
-		}).then(function() {
-			var en = uci.get('lede-remote', 'main', 'enabled');
-			var p = uci.get('lede-remote', 'main', 'port') || '10443';
+			en = uci.get('lede-remote', 'main', 'enabled');
+			p = uci.get('lede-remote', 'main', 'port') || '10443';
 			en = (en === '1' || en === 1 || en === true) ? '1' : '0';
+			return uci.apply();
+		}).then(function() {
 			return fs.exec('/usr/libexec/lede-wan-https', [en, String(p)]);
 		}).then(function() {
 			if (ui.changes && typeof ui.changes.displayChangeIndicator === 'function')

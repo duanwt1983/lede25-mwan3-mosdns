@@ -1,7 +1,18 @@
 #!/bin/sh
-# Ensure nginx ubus body-buffer workaround is active after upgrade.
+# Keep every body accepted by nginx-ubus-module (maximum 64 KiB) in memory.
+# Larger bodies are rejected by nginx before the module can dereference the
+# NULL position of a temporary-file buffer.
 [ -f /etc/nginx/conf.d/00-lede-http.conf ] || exit 0
+loc=/etc/nginx/conf.d/luci.locations
+if [ -f "$loc" ] && ! grep -q 'lede-ubus-body-guard' "$loc"; then
+	sed -i '/^[[:space:]]*location \/ubus[[:space:]]*{/a\
+        # lede-ubus-body-guard\
+        client_max_body_size 64k;\
+        client_body_buffer_size 128k;' "$loc"
+fi
 if [ -x /etc/init.d/nginx ]; then
-	/etc/init.d/nginx restart >/dev/null 2>&1 || /etc/init.d/nginx reload >/dev/null 2>&1 || true
+	nginx -t -c /etc/nginx/uci.conf >/dev/null 2>&1 &&
+		(/etc/init.d/nginx restart >/dev/null 2>&1 ||
+		 /etc/init.d/nginx reload >/dev/null 2>&1 || true)
 fi
 exit 0

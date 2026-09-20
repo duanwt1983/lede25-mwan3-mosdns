@@ -3,7 +3,6 @@
 import { readfile, writefile, popen, unlink } from 'fs';
 import * as ubus from 'ubus';
 import { trim, as_bool, load_rate_hist, save_rate_hist, save_rate_windows } from '/usr/share/ucode/lede-metrics.uc';
-import { logread_cmd } from '/usr/share/ucode/lede-log.uc';
 import {
 	bandix_load, bandix_build_maps, bandix_iface_rates, bandix_resolve_iface_rates,
 	bandix_clients_list
@@ -605,13 +604,118 @@ function check_mosdns_upstreams(ctx, st, out) {
 	});
 }
 
-function scan_logread(st, out) {
-	let p = popen(logread_cmd('-l 80'), 'r');
-	if (!p)
+function recent_log_rows(limit) {
+	let u = ubus_open();
+	if (!u)
+		return [];
+	let res = null;
+	try {
+		res = u.call('log', 'read', {
+			lines: limit,
+			stream: false,
+			oneshot: true
+		});
+	} catch (e) {}
+	ubus_close(u);
+	return res && type(res.log) == 'array' ? res.log : [];
+}
+
+function keep_recent_times(v, since) {
+	let out = [];
+	if (type(v) != 'array')
+		return out;
+	for (let t in v) {
+		if (+t >= since)
+			push(out, +t);
+	}
+	return out;
+}
+
+function remote_num(ctx, key, def, lo, hi) {
+	let n = +(ctx.get('lede-remote', 'main', key) || def);
+	if (!(n >= lo) || n > hi)
+		n = def;
+	return n;
+}
+
+function remote_ban(ip, seconds) {
+	if (!match(ip, /^([0-9]{1,3}[.]){3}[0-9]{1,3}$/))
+		return false;
+	let path = '/tmp/lede-remote-ban.nft';
+	writefile(path, sprintf(
+		'add element inet lede_remote_guard ban4 { %s timeout %ds }\n',
+		ip, seconds));
+	return system("nft -f /tmp/lede-remote-ban.nft >/dev/null 2>&1") == 0;
+}
+
+function scan_remote_access(ctx, st, out, line, now) {
+	if ((ctx.get('lede-remote', 'main', 'scan_enabled') || '1') == '0')
 		return;
-	let text = p.read('all') || '';
-	p.close();
-	let prev = st.logcur || '';
+	let m = match(line, /wanhttps:\s+([0-9.]+)\|([A-Z]+)\|([^|]*)\|([0-9]+)\|([01])/);
+	if (!m)
+		return;
+	let ip = m[1];
+	let method = m[2];
+	let uri = m[3];
+	let status = +m[4];
+	let login = m[5] == '1';
+	let scan_window = remote_num(ctx, 'scan_window_min', 5, 1, 60) * 60;
+	let login_window = remote_num(ctx, 'login_window_min', 10, 1, 60) * 60;
+	let scan_alert_n = remote_num(ctx, 'scan_alert_n', 10, 3, 1000);
+	let scan_ban_n = remote_num(ctx, 'scan_ban_n', 30, 5, 5000);
+	let login_ban_n = remote_num(ctx, 'login_ban_n', 8, 3, 100);
+	let ban_sec = remote_num(ctx, 'ban_minutes', 30, 1, 1440) * 60;
+	let auto_ban = (ctx.get('lede-remote', 'main', 'auto_ban') || '1') != '0';
+	let suspicious = status >= 400 || !match(method, /^(GET|POST|HEAD)$/) ||
+		match(uri, /\/(\.env|wp-|phpmyadmin|cgi-bin|actuator|vendor|boaform|HNAP1)/i);
+
+	if (type(st.remote_guard) != 'object')
+		st.remote_guard = {};
+	let hit = st.remote_guard[ip];
+	if (type(hit) != 'object')
+		hit = { scan: [], login: [], scan_notice: 0, login_notice: 0, ban_until: 0 };
+	hit.scan = keep_recent_times(hit.scan, now - scan_window);
+	hit.login = keep_recent_times(hit.login, now - login_window);
+	hit.last = now;
+	hit.uri = uri;
+	if (suspicious)
+		push(hit.scan, now);
+	if (login)
+		push(hit.login, now);
+
+	if (length(hit.scan) >= scan_alert_n && now >= +(hit.scan_notice || 0)) {
+		ev(out, '中等', '安全', '远程管理端口遭扫描',
+			sprintf('来源 %s 在 %d 分钟内触发 %d 次异常访问，最近路径 %s。',
+				ip, int(scan_window / 60), length(hit.scan), uri),
+			'remote-scan-' + ip, 'alert_remote_scan');
+		hit.scan_notice = now + scan_window;
+	}
+	if (length(hit.login) >= login_ban_n && now >= +(hit.login_notice || 0)) {
+		ev(out, '中等', '安全', '远程登录尝试过多',
+			sprintf('来源 %s 在 %d 分钟内提交 %d 次登录请求。',
+				ip, int(login_window / 60), length(hit.login)),
+			'remote-login-' + ip, 'alert_remote_scan');
+		hit.login_notice = now + login_window;
+	}
+
+	let should_ban = length(hit.scan) >= scan_ban_n || length(hit.login) >= login_ban_n;
+	if (auto_ban && should_ban && now >= +(hit.ban_until || 0)) {
+		if (remote_ban(ip, ban_sec)) {
+			hit.ban_until = now + ban_sec;
+			ev(out, '中等', '安全', '已临时封禁远程来源',
+				sprintf('来源 %s 已封禁 %d 分钟；扫描 %d 次，登录请求 %d 次。到期自动解封。',
+					ip, int(ban_sec / 60), length(hit.scan), length(hit.login)),
+				'remote-ban-' + ip, 'alert_remote_scan');
+		}
+	}
+	st.remote_guard[ip] = hit;
+}
+
+function scan_logread(ctx, st, out) {
+	let rows = recent_log_rows(80);
+	if (length(rows) == 0)
+		return;
+	let prev = +(st.logid || 0);
 	let newest = prev;
 	let fails = st.login_fails;
 	if (type(fails) != 'array')
@@ -623,27 +727,25 @@ function scan_logread(st, out) {
 			push(fresh, +t);
 	}
 	fails = fresh;
-	if (prev == '') {
-		for (let line in split(text, '\n')) {
-			line = replace(line, /\n$/, '');
-			if (line != '')
-				newest = line;
-		}
-		st.logcur = newest;
+	for (let row in rows) {
+		let id = +(row.id || 0);
+		if (id > newest)
+			newest = id;
+	}
+	/* logd restart resets ids; begin at its current tail without replaying. */
+	if (!(prev > 0) || newest < prev) {
+		st.logid = newest;
 		st.login_fails = fails;
 		return;
 	}
-	let started = false;
-	for (let line in split(text, '\n')) {
-		line = replace(line, /\n$/, '');
+	for (let row in rows) {
+		let id = +(row.id || 0);
+		if (!(id > prev))
+			continue;
+		let line = trim(row.msg || '');
 		if (line == '')
 			continue;
-		newest = line;
-		if (!started) {
-			if (line == prev)
-				started = true;
-			continue;
-		}
+		scan_remote_access(ctx, st, out, line, now);
 		if (match(line, /Bad password|Login attempt|auth(entication)? fail/i) && match(line, /dropbear|sshd|lede-login/i))
 			push(fails, now);
 		if (match(line, /CHAP authentication failed|PAP authentication failed|Unable to authenticate/i))
@@ -653,8 +755,15 @@ function scan_logread(st, out) {
 		if (match(line, /lost tracking on interface|tracking is down/i))
 			ev(out, '中等', '网络', '线路探测失败', line, 'track-log', 'alert_track');
 	}
-	st.logcur = newest;
+	st.logid = newest;
 	st.login_fails = fails;
+	if (type(st.remote_guard) == 'object') {
+		for (let ip in st.remote_guard) {
+			let h = st.remote_guard[ip];
+			if (type(h) != 'object' || now - +(h.last || 0) > 172800)
+				delete st.remote_guard[ip];
+		}
+	}
 	let nlim = +st._login_n || 5;
 	if (length(fails) >= nlim)
 		ev(out, '中等', '安全', '登录失败次数过多',
@@ -768,7 +877,7 @@ export function collect_tick(ctx) {
 	let now = time();
 	if (!(LAST_LOG_T > 0) || now - LAST_LOG_T >= 10) {
 		LAST_LOG_T = now;
-		try { scan_logread(st, out); } catch (e) {}
+		try { scan_logread(ctx, st, out); } catch (e) {}
 	}
 
 	let lan_ip = ctx.get('network', 'lan', 'ipaddr') || '';

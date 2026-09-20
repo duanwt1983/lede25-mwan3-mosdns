@@ -136,6 +136,11 @@ lede_bump_ubus_nofile() {
 }
 lede_bump_ubus_nofile
 
+_NGINX_UBUS_PATCH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/patches/nginx-ubus/apply.sh"
+if [ -f "$_NGINX_UBUS_PATCH" ]; then
+  sh "$_NGINX_UBUS_PATCH" .
+fi
+
 _DNSMASQ_PATCH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/patches/dnsmasq/apply.sh"
 if [ -f "$_DNSMASQ_PATCH" ]; then
   sh "$_DNSMASQ_PATCH" .

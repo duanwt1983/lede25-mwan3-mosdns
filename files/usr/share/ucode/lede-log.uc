@@ -402,6 +402,56 @@ function persist_new_lines(cmd, dest, cursor_path) {
 	return wrote;
 }
 
+function kmsg_stamp(line) {
+	let m = match(line, /^\[\s*([0-9]+[.][0-9]+)\]/);
+	return m ? +m[1] : -1;
+}
+
+function persist_new_kmsg(dest, cursor_path) {
+	dest = ensure_log_file(dest, 'kernel.log');
+	if (dest == '')
+		return;
+	let p = popen('dmesg 2>/dev/null', 'r');
+	if (!p)
+		return;
+	let text = replace(p.read('all') || '', /\r/g, '');
+	p.close();
+	if (text == '')
+		return;
+	let lines = split(text, '\n');
+	let saved = trim(readfile(cursor_path) || '');
+	let last = +saved;
+	if (!(last >= 0))
+		last = kmsg_stamp(saved);
+	let newest = -1;
+	for (let line in lines) {
+		let ts = kmsg_stamp(line);
+		if (ts > newest)
+			newest = ts;
+	}
+	if (newest < 0)
+		return;
+	/* A lower newest timestamp means a reboot, not a ring-buffer wrap. */
+	let reset = last > newest;
+	let fh = open(dest, 'a');
+	if (!fh)
+		return;
+	let wrote = 0;
+	for (let line in lines) {
+		let s = replace(line, /\n$/, '');
+		let ts = kmsg_stamp(s);
+		if (ts < 0 || (!reset && last >= 0 && ts <= last))
+			continue;
+		if (match(s, /\]:[ \t]+USER \S+ pid [0-9]+ cmd /))
+			continue;
+		fh.write(s + '\n');
+		wrote++;
+	}
+	fh.close();
+	writefile(cursor_path, sprintf('%.6f\n', newest));
+	return wrote;
+}
+
 export function persist_system_logs() {
 	try { capture_local_events(); } catch (e) {}
 	let ctx = log_uci();
@@ -425,7 +475,7 @@ export function persist_system_logs() {
 			kp = ensure_log_file(kp, 'kernel.log');
 			let curp = sidecar_path('kernel', '.cursor-kmsg');
 			if (curp != '')
-				persist_new_lines('dmesg 2>/dev/null', kp, curp);
+				persist_new_kmsg(kp, curp);
 			archive_if_needed(kp, chunk_k, false);
 			prune_old_logs(kp, pct);
 		}

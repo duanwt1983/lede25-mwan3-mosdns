@@ -3,6 +3,7 @@
 
 import { cursor } from 'uci';
 import { readfile, writefile, popen, unlink, stat } from 'fs';
+import * as ubus from 'ubus';
 import { append_event, configured_path } from '/usr/share/ucode/lede-log.uc';
 import { now_fmt } from '/usr/share/ucode/lede-metrics.uc';
 
@@ -635,26 +636,50 @@ function handle_dhcp(st, mac, ip) {
 	}
 }
 
+function recent_log_rows(limit) {
+	let u = null;
+	try { u = ubus.connect(); } catch (e) { return []; }
+	let res = null;
+	try {
+		res = u.call('log', 'read', {
+			lines: limit,
+			stream: false,
+			oneshot: true
+		});
+	} catch (e) {}
+	try { u.disconnect(); } catch (e) {}
+	return res && type(res.log) == 'array' ? res.log : [];
+}
+
 function drain_logs(st) {
 	if (!as_bool(cfg('dhcp_enabled', '1'), true))
 		return;
-	let p = popen("logread -l 80 2>/dev/null | grep -F 'lede-lansec-dhcp' || true", 'r');
-	let raw = p ? (p.read('all') || '') : '';
-	if (p)
-		p.close();
-	let last = trim(readfile(CURSOR) || '');
+	let rows = recent_log_rows(80);
+	if (length(rows) == 0)
+		return;
+	let last = +(trim(readfile(CURSOR) || '0'));
 	let newest = last;
-	for (let line in split(raw, '\n')) {
-		line = trim(line);
+	for (let row in rows) {
+		let id = +(row.id || 0);
+		if (id > newest)
+			newest = id;
+	}
+	/* The old cursor was a formatted line; logd restarts also reset ids. */
+	if (!(last > 0) || newest < last) {
+		writefile(CURSOR, sprintf('%d\n', newest));
+		return;
+	}
+	for (let row in rows) {
+		let id = +(row.id || 0);
+		if (!(id > last))
+			continue;
+		let line = trim(row.msg || '');
 		if (line == '' || !match(line, /lede-lansec-dhcp/))
 			continue;
-		if (last != '' && line <= last)
-			continue;
-		newest = line;
 		handle_dhcp(st, parse_log_mac(line), parse_log_ip(line));
 	}
 	if (newest != last)
-		writefile(CURSOR, newest);
+		writefile(CURSOR, sprintf('%d\n', newest));
 }
 
 function cfg_stamp() {

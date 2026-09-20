@@ -171,6 +171,8 @@ return baseclass.extend({
 	o.default = o.disabled;
 	o = s.option(CompactFlag, 'alert_login_fail', _('登录失败过多'));
 	o.default = o.disabled;
+	o = s.option(CompactFlag, 'alert_remote_scan', _('远程管理扫描 / 临时封禁'));
+	o.default = o.enabled;
 	o = s.option(CompactFlag, 'alert_isp', _('ISP 地址库更新失败'));
 	o.default = o.disabled;
 	o = s.option(CompactFlag, 'alert_overlay', _('Overlay 无法写入'));
