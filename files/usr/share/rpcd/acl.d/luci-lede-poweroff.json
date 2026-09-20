@@ -1,0 +1,13 @@
+{
+	"luci-lede-poweroff": {
+		"description": "Allow powering off the device",
+		"write": {
+			"file": {
+				"/usr/libexec/lede-poweroff": [ "exec" ]
+			},
+			"ubus": {
+				"file": [ "exec" ]
+			}
+		}
+	}
+}

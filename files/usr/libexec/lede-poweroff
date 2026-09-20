@@ -1,0 +1,9 @@
+#!/bin/sh
+
+# Return the LuCI RPC response before poweroff tears down nginx and rpcd.
+( sleep 1
+  sync
+  /sbin/poweroff
+) >/dev/null 2>&1 &
+
+exit 0
