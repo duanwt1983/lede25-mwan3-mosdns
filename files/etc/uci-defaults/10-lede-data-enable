@@ -1,13 +1,11 @@
 #!/bin/sh
-# First boot: partition trailing free space on root disk, ext4 /data, UUID fstab.
+# One-shot first boot: run /data initializer once (it retires itself afterward).
 # Must chmod before -x checks (overlay scripts may ship as 644).
 
+[ -f /etc/.lede-data-init.done ] && exit 0
 [ -f /usr/libexec/lede-data-setup ] || exit 0
 
 chmod +x /usr/libexec/lede-data-setup 2>/dev/null || true
-[ -f /etc/init.d/lede-data ] && chmod +x /etc/init.d/lede-data 2>/dev/null || true
-
-/etc/init.d/lede-data enable 2>/dev/null || true
 /usr/libexec/lede-data-setup || true
 
 exit 0

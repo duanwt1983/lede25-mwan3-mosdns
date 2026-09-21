@@ -1,7 +1,7 @@
 config main 'main'
 	option enabled '0'
 	option iface 'br-lan'
-	option notify_cooldown '120'
+	option notify_cooldown '3600'
 	option log_page_size '20'
 	option dhcp_enabled '1'
 	option dhcp_log '1'

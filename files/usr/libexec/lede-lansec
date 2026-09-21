@@ -342,10 +342,17 @@ function log_alert(level, cat, title, detail) {
 	try { append_event(path, 2048, level, cat, title, detail); } catch (e) {}
 }
 
-function cooled(st, key) {
-	let sec = +cfg('notify_cooldown', 120);
+function cooldown_sec() {
+	let sec = +cfg('notify_cooldown', 3600);
 	if (!(sec > 0))
-		sec = 120;
+		sec = 3600;
+	if (sec < 3600)
+		sec = 3600;
+	return sec;
+}
+
+function cooled(st, key) {
+	let sec = cooldown_sec();
 	if (type(st.cool) != 'object')
 		st.cool = {};
 	let last = +(st.cool[key] || 0);
@@ -356,15 +363,15 @@ function cooled(st, key) {
 	return false;
 }
 
-function push_alert(st, level, cat, title, detail, key, do_push) {
+function push_alert(st, level, cat, title, detail, key, do_push, do_log) {
 	if (cooled(st, key))
 		return;
+	if (do_log)
+		log_alert(level, cat, title, detail);
 	if (do_push) {
-		save_json(EVT, { level, cat, title, detail, key, push: true });
+		save_json(EVT, { level, cat, title, detail, key, push: true, log: do_log ? false : true });
 		system(sprintf("/usr/sbin/wan-alert event '%s' >/dev/null 2>&1", EVT));
-		return;
 	}
-	log_alert(level, cat, title, detail);
 }
 
 function load_pending() {
@@ -627,7 +634,8 @@ function handle_dhcp(st, mac, ip) {
 	if (as_bool(cfg('dhcp_log', '1'), true) || as_bool(cfg('dhcp_notify', '1'), true))
 		push_alert(st, '严重', '安全', '发现非法 DHCP 服务器',
 			sprintf('%s%s %s', mac, ip != '' ? (' ' + ip) : '', reason), 'dhcp-' + mac,
-			as_bool(cfg('dhcp_notify', '1'), true));
+			as_bool(cfg('dhcp_notify', '1'), true),
+			as_bool(cfg('dhcp_log', '1'), true));
 	if (as_bool(cfg('dhcp_ban', '1'), true) && persist_dhcp_ban(mac, '自动发现')) {
 		apply();
 		if (type(st.dhcp_hit) != 'object')

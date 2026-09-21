@@ -367,7 +367,7 @@ new_router = (
     "DEFAULT_PACKAGES.router:=\\\n"
     "\tdnsmasq-full firewall4 nftables-json ppp ppp-mod-pppoe odhcp6c odhcpd-ipv6only \\\n"
     "\tblock-mount coremark kmod-nf-nathelper kmod-nf-nathelper-extra kmod-tun \\\n"
-    "\tluci-app-diskman luci-i18n-diskman-zh-cn parted blkid \\\n"
+    "\tluci-app-diskman luci-i18n-diskman-zh-cn parted blkid gdisk e2fsprogs \\\n"
     "\tkmod-fs-ext4 kmod-fs-ntfs3 kmod-fs-exfat kmod-usb-storage kmod-usb-storage-uas kmod-ixgbe \\\n"
     "\tip-full default-settings luci-nginx luci-proto-ipv6 curl ca-certificates\n"
 )
@@ -598,7 +598,7 @@ PY
   luci-app-samba4 samba4-server samba4 \
   luci-nginx nginx nginx-mod-luci \
   uwsgi uwsgi-luci-support \
-  parted blkid \
+  parted blkid gdisk e2fsprogs \
   || true
 
 assert_pkg() {
@@ -621,6 +621,9 @@ assert_pkg librespeed-go
 assert_pkg bandix-plus
 assert_pkg luci-app-bandix-plus
 assert_pkg luci-app-diskman
+assert_pkg gdisk
+assert_pkg parted
+assert_pkg e2fsprogs
 assert_pkg mwan3
 assert_pkg luci-app-mwan3
 assert_pkg luci-app-passwall
@@ -841,7 +844,12 @@ assert_grep '/sys/dev/block/' "$_LEDE_FILES/usr/libexec/lede-data-setup"
 assert_grep 'find_label_part "$disk"' "$_LEDE_FILES/usr/libexec/lede-data-setup"
 assert_grep 'fix_gpt_table "$DISK"' "$_LEDE_FILES/usr/libexec/lede-data-setup"
 assert_grep 'grow_label_part' "$_LEDE_FILES/usr/libexec/lede-data-setup"
+assert_grep 'retire_data_init' "$_LEDE_FILES/usr/libexec/lede-data-setup"
+assert_grep 'lede-data-init.done' "$_LEDE_FILES/usr/libexec/lede-data-setup"
 assert_grep 'mount_existing_label_part' "$_LEDE_FILES/usr/libexec/lede-data-setup"
+assert_absent '/etc/init.d/lede-data enable' "$_LEDE_FILES/etc/uci-defaults/99-custom"
+assert_grep 'cooldown_sec' "$_LEDE_FILES/usr/libexec/lede-lansec"
+assert_grep 'lansec_cooled' "$_LEDE_FILES/usr/libexec/wan-alert"
 assert_absent 'FREE_START=${FREE_START%.*}' "$_LEDE_FILES/usr/libexec/lede-data-setup"
 assert_grep 'chmod +x /usr/libexec/lede-data-setup' "$_LEDE_FILES/etc/uci-defaults/10-lede-data-enable"
 assert_grep 'lede_fixup_script_modes' "$_LEDE_FILES/etc/uci-defaults/99-custom"

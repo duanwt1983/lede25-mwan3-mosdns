@@ -1,13 +1,15 @@
 #!/bin/sh
-# First-boot: mount prebuilt LEDEDATA partition from the x86 image, grow it to
-# the physical disk end, format if needed, then mount /data by UUID.
+# One-shot first-boot initializer: grow prebuilt LEDEDATA to disk end, format
+# if needed, write fstab, mount /data. Runs once, then retires itself.
 # Legacy images without LEDEDATA still fall back to creating a trailing partition.
 # Never touches disks other than the one hosting the running root filesystem.
 
 MARKER=/data/.lede-data
+INIT_DONE=/etc/.lede-data-init.done
 MIN_MIB=1024
 LABEL=LEDEDATA
 LOG=/tmp/lede-data-setup.log
+RETIRED=0
 
 log() {
 	echo "$(date '+%F %T') $*" >> "$LOG"
@@ -19,8 +21,18 @@ data_mounted() {
 }
 
 enable_data_automount() {
-	[ -x /etc/init.d/lede-data ] && /etc/init.d/lede-data enable
 	[ -x /etc/init.d/fstab ] && /etc/init.d/fstab enable
+}
+
+retire_data_init() {
+	[ "$RETIRED" = 1 ] && return 0
+	RETIRED=1
+	log "retiring one-time /data initializer"
+	touch "$INIT_DONE" 2>/dev/null || true
+	/etc/init.d/lede-data disable 2>/dev/null || true
+	rm -f /etc/rc.d/S??lede-data /etc/rc.d/K??lede-data 2>/dev/null || true
+	rm -f /etc/init.d/lede-data 2>/dev/null || true
+	rm -f /usr/libexec/lede-data-setup 2>/dev/null || true
 }
 
 seed_and_bind() {
@@ -146,13 +158,24 @@ find_label_part() {
 }
 
 label_part_num() {
-	local disk="$1"
-	sgdisk -p "$disk" 2>/dev/null | awk -v l="$LABEL" '
-		/^ *[0-9]+ / {
-			n=$1
-			name=$NF
-			if (name == l) { print n; exit }
-		}'
+	local disk="$1" n name
+
+	if command -v sgdisk >/dev/null 2>&1; then
+		n=$(sgdisk -p "$disk" 2>/dev/null | awk -v l="$LABEL" '
+			/^ *[0-9]+ / {
+				num=$1
+				pname=$NF
+				if (pname == l) { print num; exit }
+			}')
+		[ -n "$n" ] && echo "$n" && return 0
+	fi
+	for n in $(parted -m -s "$disk" print 2>/dev/null | awk -F: '$1 ~ /^[0-9]+$/ { print $1 }'); do
+		name=$(parted -m -s "$disk" unit MiB print 2>/dev/null | awk -F: -v num="$n" '$1 == num { print $6 }')
+		[ "$name" = "$LABEL" ] || continue
+		echo "$n"
+		return 0
+	done
+	return 1
 }
 
 fstab_has_data() {
@@ -218,18 +241,13 @@ gpt_needs_fix() {
 fix_gpt_table() {
 	local disk="$1" err table
 
-	table=$(parted -m -s "$disk" print 2>/dev/null | awk -F: 'NR==2{print $6}')
-	if [ "$table" = "gpt" ] && command -v sgdisk >/dev/null 2>&1; then
-		sgdisk -e "$disk" >>"$LOG" 2>&1 || true
-		refresh_parts "$disk"
-	fi
-
 	gpt_needs_fix "$disk" || return 0
+	table=$(parted -m -s "$disk" print 2>/dev/null | awk -F: 'NR==2{print $6}')
 	log "repairing GPT on $disk"
 	if command -v sgdisk >/dev/null 2>&1; then
 		if sgdisk -e "$disk" >>"$LOG" 2>&1; then
 			refresh_parts "$disk"
-			return 0
+			gpt_needs_fix "$disk" || return 0
 		fi
 		log "sgdisk -e failed on $disk"
 	fi
@@ -239,21 +257,86 @@ fix_gpt_table() {
 	}
 	[ -n "$err" ] && log "$err"
 	refresh_parts "$disk"
+	if [ "$table" = "gpt" ] && command -v sgdisk >/dev/null 2>&1; then
+		sgdisk -e "$disk" >>"$LOG" 2>&1 || true
+		refresh_parts "$disk"
+	fi
+	if gpt_needs_fix "$disk"; then
+		log "GPT still broken on $disk (install gdisk and run sgdisk -e)"
+		return 1
+	fi
 	return 0
 }
 
-grow_label_part() {
-	local disk="$1" num start last disk_last uuid part fstype
+parted_mkpart() {
+	local disk="$1" start="$2" table="$3" err
 
-	command -v sgdisk >/dev/null 2>&1 || return 0
+	fix_gpt_table "$disk" || return 1
+	if [ "$table" = "gpt" ]; then
+		err=$(printf 'Fix\n' | parted ---pretend-input-tty -s "$disk" -- \
+			mkpart "$LABEL" ext4 "${start}MiB" 100% 2>&1) || {
+			log "parted mkpart failed: ${err:-unknown}"
+			return 1
+		}
+	else
+		err=$(printf 'Fix\n' | parted ---pretend-input-tty -s "$disk" -- \
+			mkpart primary ext4 "${start}MiB" 100% 2>&1) || {
+			log "parted mkpart failed: ${err:-unknown}"
+			return 1
+		}
+	fi
+	[ -n "$err" ] && log "$err"
+	return 0
+}
+
+part_last_sector() {
+	local disk="$1" num="$2" end
+
+	if command -v sgdisk >/dev/null 2>&1; then
+		end=$(sgdisk -i "$num" "$disk" 2>/dev/null | awk '/Last sector:/{print $3}')
+		[ -n "$end" ] && echo "$end" && return 0
+	fi
+	end=$(parted -m -s "$disk" unit s print 2>/dev/null | awk -F: -v n="$num" '$1 == n { print $3 }')
+	[ -n "$end" ] && echo "$end"
+}
+
+disk_last_sector() {
+	local disk="$1" end
+
+	if command -v sgdisk >/dev/null 2>&1; then
+		end=$(sgdisk -p "$disk" 2>/dev/null | awk '/^Disk .* sectors:/{print $(NF-1)}' | tr -d ',')
+		[ -n "$end" ] && echo "$end" && return 0
+	fi
+	if command -v blockdev >/dev/null 2>&1; then
+		end=$(blockdev --getsz "$disk" 2>/dev/null)
+		[ -n "$end" ] && echo "$end" && return 0
+	fi
+	end=$(parted -s "$disk" unit s print 2>/dev/null | awk '/^Disk \/dev\//{print $3}')
+	[ -n "$end" ] && echo "${end%s}"
+}
+
+resize_data_fs() {
+	local part="$1"
+	[ -b "$part" ] || return 0
+	command -v resize2fs >/dev/null 2>&1 || return 0
+	resize2fs "$part" >>"$LOG" 2>&1 || log "resize2fs failed on $part"
+}
+
+grow_label_part() {
+	local disk="$1" num start last disk_last uuid part fstype grew
+
 	fix_gpt_table "$disk" || return 1
 
 	num=$(label_part_num "$disk") || return 0
 	[ -n "$num" ] || return 0
 
-	start=$(sgdisk -i "$num" "$disk" 2>/dev/null | awk '/First sector:/{print $3}')
-	last=$(sgdisk -i "$num" "$disk" 2>/dev/null | awk '/Last sector:/{print $3}')
-	disk_last=$(sgdisk -p "$disk" 2>/dev/null | awk '/^Disk .* sectors:/{print $(NF-1)}' | tr -d ',')
+	if command -v sgdisk >/dev/null 2>&1; then
+		start=$(sgdisk -i "$num" "$disk" 2>/dev/null | awk '/First sector:/{print $3}')
+	else
+		start=$(parted -m -s "$disk" unit s print 2>/dev/null | awk -F: -v n="$num" '$1 == n { print $2 }')
+	fi
+	last=$(part_last_sector "$disk" "$num")
+	disk_last=$(disk_last_sector "$disk")
 	[ -n "$start" ] && [ -n "$last" ] && [ -n "$disk_last" ] || return 0
 	[ "$((disk_last - last))" -le 2048 ] && return 0
 
@@ -262,14 +345,31 @@ grow_label_part() {
 	fstype=$(blkid -o value -s TYPE "$part" 2>/dev/null || true)
 
 	log "growing $LABEL partition $num on $disk (sectors $start-$last -> end)"
-	sgdisk -d "$num" "$disk" >>"$LOG" 2>&1
-	sgdisk -n "$num:${start}:0" -c "$num:$LABEL" -t "$num:8300" "$disk" >>"$LOG" 2>&1
-	[ -n "$uuid" ] && sgdisk -u "$num:$uuid" "$disk" >>"$LOG" 2>&1 || true
+	grew=0
+	if command -v sgdisk >/dev/null 2>&1; then
+		if sgdisk -d "$num" "$disk" >>"$LOG" 2>&1 && \
+		   sgdisk -n "$num:${start}:0" -c "$num:$LABEL" -t "$num:8300" "$disk" >>"$LOG" 2>&1; then
+			grew=1
+			[ -n "$uuid" ] && sgdisk -u "$num:$uuid" "$disk" >>"$LOG" 2>&1 || true
+		else
+			log "sgdisk grow failed on $disk part $num"
+		fi
+	fi
+	if [ "$grew" = 0 ] && command -v parted >/dev/null 2>&1; then
+		if parted -s "$disk" unit s resizepart "$num" "$disk_last" >>"$LOG" 2>&1; then
+			grew=1
+		else
+			log "parted resizepart failed on $disk part $num"
+			return 1
+		fi
+	fi
+	[ "$grew" = 1 ] || return 1
+	fix_gpt_table "$disk" || true
 	refresh_parts "$disk"
 
 	part=$(part_path "$disk" "$num")
-	if [ -n "$fstype" ] && command -v resize2fs >/dev/null 2>&1; then
-		resize2fs "$part" >>"$LOG" 2>&1 || log "resize2fs failed on $part"
+	if [ -n "$fstype" ]; then
+		resize_data_fs "$part"
 	fi
 }
 
@@ -307,8 +407,20 @@ mount_existing_label_part() {
 	return 1
 }
 
-# --- already good ---
+if [ -f "$INIT_DONE" ]; then
+	exit 0
+fi
+trap retire_data_init EXIT
+
 if data_mounted; then
+	ROOT_PART=$(resolve_dev "$(root_src)") || {
+		ensure_dirs
+		exit 0
+	}
+	DISK=$(disk_of_part "$ROOT_PART")
+	if [ -b "$DISK" ] && find_label_part "$DISK" >/dev/null 2>&1; then
+		grow_label_part "$DISK" || true
+	fi
 	ensure_dirs
 	exit 0
 fi
@@ -326,6 +438,10 @@ fi
 if ! command -v parted >/dev/null 2>&1; then
 	log "parted missing, skip"
 	exit 0
+fi
+if ! command -v sgdisk >/dev/null 2>&1; then
+	log "sgdisk missing; GPT repair needs gdisk package"
+	exit 1
 fi
 
 fix_gpt_table "$DISK" || {
@@ -358,17 +474,7 @@ fi
 TABLE=$(parted -m -s "$DISK" print 2>/dev/null | awk -F: 'NR==2{print $6}')
 log "legacy create $LABEL on $DISK from ${FREE_START}MiB table=$TABLE free=${FREE_SIZE}MiB"
 
-if [ "$TABLE" = "gpt" ]; then
-	ERR=$(parted -s "$DISK" -- mkpart "$LABEL" ext4 "${FREE_START}MiB" 100% 2>&1) || {
-		log "parted mkpart failed: ${ERR:-unknown}"
-		exit 1
-	}
-else
-	ERR=$(parted -s "$DISK" -- mkpart primary ext4 "${FREE_START}MiB" 100% 2>&1) || {
-		log "parted mkpart failed: ${ERR:-unknown}"
-		exit 1
-	}
-fi
+parted_mkpart "$DISK" "$FREE_START" "$TABLE" || exit 1
 
 refresh_parts "$DISK"
 

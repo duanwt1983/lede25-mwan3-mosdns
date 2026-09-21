@@ -24,6 +24,7 @@ ctx.load('dhcp');
 ctx.load('network');
 try { ctx.load('mosdns'); } catch (e) {}
 try { ctx.load('lede-remote'); } catch (e) {}
+try { ctx.load('lede-lansec'); } catch (e) {}
 
 function cfg(key, def) {
 	let v = ctx.get(CONF, 'main', key);
@@ -493,6 +494,38 @@ function spawn_autofix(key) {
 	system(sprintf("/bin/sh -c \"/usr/libexec/lede-autofix '%s' >>/tmp/lede-autofix.log 2>&1 &\"", replace(key, /'/g, '')));
 }
 
+function is_lansec_alert_key(key) {
+	return match('' + (key || ''), /^(dhcp|arp|nat|share)-/) ? true : false;
+}
+
+function lansec_cooldown_sec() {
+	let sec = +ctx.get('lede-lansec', 'main', 'notify_cooldown');
+	if (!(sec > 0))
+		sec = 3600;
+	if (sec < 3600)
+		sec = 3600;
+	return sec;
+}
+
+function lansec_cooled(key) {
+	if (!is_lansec_alert_key(key))
+		return false;
+	let sk = 'lsec-' + key;
+	let st = load_state();
+	let last = +st[sk];
+	if (!(last > 0))
+		return false;
+	return (time() - last) < lansec_cooldown_sec();
+}
+
+function lansec_stamp(key) {
+	if (!is_lansec_alert_key(key))
+		return;
+	let st = load_state();
+	st['lsec-' + key] = time();
+	save_state(st);
+}
+
 function cooled(key) {
 	let cdn = +cfg('cooldown', 120);
 	let st = load_state();
@@ -532,16 +565,21 @@ function held_long_enough(key, active, minutes) {
 	return now - +st[sk] >= mins * 60;
 }
 
-function notify(level, cat, title, detail, key, push) {
+function notify(level, cat, title, detail, key, push, skip_log) {
 	if (level == '信息')
 		return true;
-	log_event(level, cat, title, detail);
+	if (key == null || key == '')
+		key = 'misc';
+	if (lansec_cooled(key))
+		return true;
+	if (!skip_log)
+		log_event(level, cat, title, detail);
+	if (is_lansec_alert_key(key))
+		lansec_stamp(key);
 	if (up_suppressed_by_autofix(key))
 		return true;
 	if (!down_alert_should_ding(key, push))
 		return true;
-	if (key == null || key == '')
-		key = 'misc';
 	if (!alert_lock())
 		return true;
 	if (cooled(key)) {
@@ -885,7 +923,8 @@ function handle(event, iface) {
 		let e = {};
 		try { e = json(readfile(path) || '{}') || {}; } catch (e2) { e = {}; }
 		if (e.title && e.title != '')
-			notify(e.level || '一般', e.cat || '安全', e.title, e.detail || '', e.key || 'lansec', e.push != false && e.push != '0');
+			notify(e.level || '一般', e.cat || '安全', e.title, e.detail || '', e.key || 'lansec',
+				e.push != false && e.push != '0', e.log == false);
 		break;
 	}
 	case 'watch':

@@ -5,7 +5,7 @@
 set lede-lansec.main=main
 set lede-lansec.main.enabled=0
 set lede-lansec.main.iface=br-lan
-set lede-lansec.main.notify_cooldown=120
+set lede-lansec.main.notify_cooldown=3600
 set lede-lansec.main.log_page_size=20
 set lede-lansec.main.dhcp_enabled=1
 set lede-lansec.main.dhcp_log=1
@@ -32,7 +32,12 @@ seed() {
 uci -q get lede-lansec.main >/dev/null 2>&1 || uci set lede-lansec.main=main
 seed enabled 0
 seed iface br-lan
-seed notify_cooldown 120
+seed notify_cooldown 3600
+case "$(uci -q get lede-lansec.main.notify_cooldown)" in
+	''|120|60|30)
+		uci set lede-lansec.main.notify_cooldown=3600
+		;;
+esac
 seed log_page_size 20
 seed dhcp_enabled 1
 seed dhcp_log 1

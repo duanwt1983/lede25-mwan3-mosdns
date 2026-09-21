@@ -516,10 +516,10 @@ return view.extend({
 		o.default = 'br-lan';
 		o.rmempty = false;
 
-		o = s.option(form.Value, 'notify_cooldown', _('同一事件推送冷却（秒）'),
-			_('同类事件两次推送的最短间隔，避免重复刷屏。消息发到已启用的钉钉或 PushPlus。'));
-		o.datatype = 'uinteger';
-		o.default = '120';
+		o = s.option(form.Value, 'notify_cooldown', _('同一事件报警冷却（秒）'),
+			_('同类事件两次写入报警日志或推送的最短间隔，默认 3600 秒（60 分钟），最小 3600。'));
+		o.datatype = 'min(3600)';
+		o.default = '3600';
 
 		s = mPolicy.section(form.NamedSection, 'main', 'main', _('非法 DHCP 服务器'));
 		s.addremove = false;

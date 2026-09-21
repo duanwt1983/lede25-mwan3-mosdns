@@ -49,8 +49,6 @@ lede_fixup_script_modes() {
 	done
 }
 lede_fixup_script_modes
-chmod +x /usr/libexec/lede-data-setup /etc/init.d/lede-data 2>/dev/null || true
-/etc/init.d/lede-data enable 2>/dev/null || true
 if uci -q show fstab 2>/dev/null | grep -q "target='/data'"; then
 	[ -x /etc/init.d/fstab ] && /etc/init.d/fstab enable
 fi
