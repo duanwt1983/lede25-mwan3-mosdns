@@ -48,7 +48,8 @@ apply_data_binds() {
 		/data/metrics \
 		/data/share
 	[ -d /usr/share/v2ray ] && seed_and_bind /usr/share/v2ray /data/geodata
-	if [ -d /usr/share/xray ] && ! awk '$2 == "/usr/share/xray" { found=1; exit } END { exit !found }' /proc/mounts 2>/dev/null; then
+	mkdir -p /usr/share/xray
+	if ! awk '$2 == "/usr/share/xray" { found=1; exit } END { exit !found }' /proc/mounts 2>/dev/null; then
 		mount --bind /data/geodata /usr/share/xray 2>/dev/null || true
 	fi
 	[ -d /usr/share/passwall/rules ] && seed_and_bind /usr/share/passwall/rules /data/passwall/rules

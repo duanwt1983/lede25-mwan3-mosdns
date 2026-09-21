@@ -77,7 +77,8 @@ ensure_dirs() {
 		/data/metrics \
 		/data/share
 	[ -d /usr/share/v2ray ] && seed_and_bind /usr/share/v2ray /data/geodata
-	if [ -d /usr/share/xray ] && ! grep -q ' /usr/share/xray ' /proc/mounts; then
+	mkdir -p /usr/share/xray
+	if ! grep -q ' /usr/share/xray ' /proc/mounts; then
 		mount --bind /data/geodata /usr/share/xray 2>/dev/null || true
 	fi
 	[ -d /usr/share/passwall/rules ] && seed_and_bind /usr/share/passwall/rules /data/passwall/rules
