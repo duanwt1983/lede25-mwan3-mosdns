@@ -367,7 +367,7 @@ new_router = (
     "DEFAULT_PACKAGES.router:=\\\n"
     "\tdnsmasq-full firewall4 nftables-json ppp ppp-mod-pppoe odhcp6c odhcpd-ipv6only \\\n"
     "\tblock-mount coremark kmod-nf-nathelper kmod-nf-nathelper-extra kmod-tun \\\n"
-    "\tluci-app-diskman luci-i18n-diskman-zh-cn parted blkid gdisk e2fsprogs \\\n"
+    "\tluci-app-diskman luci-i18n-diskman-zh-cn parted blkid sgdisk e2fsprogs \\\n"
     "\tkmod-fs-ext4 kmod-fs-ntfs3 kmod-fs-exfat kmod-usb-storage kmod-usb-storage-uas kmod-ixgbe \\\n"
     "\tip-full default-settings luci-nginx luci-proto-ipv6 curl ca-certificates\n"
 )
@@ -598,7 +598,7 @@ PY
   luci-app-samba4 samba4-server samba4 \
   luci-nginx nginx nginx-mod-luci \
   uwsgi uwsgi-luci-support \
-  parted blkid gdisk e2fsprogs \
+  parted blkid sgdisk e2fsprogs \
   || true
 
 assert_pkg() {
@@ -621,7 +621,7 @@ assert_pkg librespeed-go
 assert_pkg bandix-plus
 assert_pkg luci-app-bandix-plus
 assert_pkg luci-app-diskman
-assert_pkg gdisk
+assert_pkg gptfdisk
 assert_pkg parted
 assert_pkg e2fsprogs
 assert_pkg mwan3

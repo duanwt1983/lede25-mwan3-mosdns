@@ -85,7 +85,7 @@ select_wanted() {
   enable_pkg ip-full
   enable_pkg libnetfilter-conntrack
   enable_pkg parted
-  enable_pkg gdisk
+  enable_pkg sgdisk
   enable_pkg blkid
   enable_pkg block-mount
   enable_pkg e2fsprogs

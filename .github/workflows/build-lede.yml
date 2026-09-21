@@ -92,7 +92,7 @@ jobs:
           echo "after-defconfig $(date -Is)"
           $GITHUB_WORKSPACE/scripts/after-defconfig.sh
           $GITHUB_WORKSPACE/scripts/audit-config.sh
-          grep -E 'CONFIG_PACKAGE_(luci-nginx|uhttpd|samba4|luci-app-samba4|luci-app-passwall|luci-app-mosdns|librespeed-go|luci-app-istorex|luci-app-quickstart|luci-app-fastnet|luci-app-diskman|luci-i18n-diskman|luci-app-filemanager|luci-app-mwan3|mwan3|parted|gdisk|blkid|block-mount|e2fsprogs|kmod-ixgbe|smartmontools|mdadm|iptables|firewall4|nftables-json)|CONFIG_(VMDK_IMAGES|CCACHE)' .config || true
+          grep -E 'CONFIG_PACKAGE_(luci-nginx|uhttpd|samba4|luci-app-samba4|luci-app-passwall|luci-app-mosdns|librespeed-go|luci-app-istorex|luci-app-quickstart|luci-app-fastnet|luci-app-diskman|luci-i18n-diskman|luci-app-filemanager|luci-app-mwan3|mwan3|parted|sgdisk|blkid|block-mount|e2fsprogs|kmod-ixgbe|smartmontools|mdadm|iptables|firewall4|nftables-json)|CONFIG_(VMDK_IMAGES|CCACHE)' .config || true
           rm -rf dl/go-mod-cache tmp/go-build
           echo "make download $(date -Is)"
           timeout 25m make download -j8 || timeout 10m make download -j1
@@ -180,8 +180,8 @@ jobs:
             exit 1
           fi
           echo "==== image manifest (diskman / ixgbe / data partition tools) ===="
-          grep -E 'luci-app-diskman|luci-i18n-diskman|parted|gdisk|blkid|block-mount|e2fsprogs|kmod-ixgbe' "$mf" || true
-          for need in luci-app-diskman parted gdisk blkid block-mount e2fsprogs kmod-ixgbe smartmontools; do
+          grep -E 'luci-app-diskman|luci-i18n-diskman|parted|sgdisk|blkid|block-mount|e2fsprogs|kmod-ixgbe' "$mf" || true
+          for need in luci-app-diskman parted sgdisk blkid block-mount e2fsprogs kmod-ixgbe smartmontools; do
             if ! grep -E "^${need}([[:space:]]|-)" "$mf"; then
               echo "IMAGE FAIL: ${need} not in $mf"
               cat "$mf"
