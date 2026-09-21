@@ -81,7 +81,7 @@ function urlencode(s) {
 	return out;
 }
 
-function compose_text(content) {
+function dingtalk_compose_text(content) {
 	let extra = trim(cfg('extra_text', ''));
 	let kw = trim(cfg('keyword', '线路'));
 	let lines = [];
@@ -147,7 +147,7 @@ function send_dingtalk(text, force) {
 		print('未填写钉钉 Webhook，请填写后保存再测试\n');
 		return false;
 	}
-	text = compose_text(text);
+	text = dingtalk_compose_text(text);
 	let mobiles = as_list(ctx.get(CONF, 'main', 'at_mobile'));
 	let payload = { msgtype: 'text', text: { content: text } };
 	if (length(mobiles) > 0)
@@ -186,6 +186,34 @@ function pushplus_channel() {
 	return 'wechat';
 }
 
+function pushplus_prefix() {
+	return trim(cfg('pushplus_prefix', ''));
+}
+
+function pushplus_title(title) {
+	let t = title != '' ? title : '系统报警';
+	let p = pushplus_prefix();
+	if (p == '')
+		return t;
+	return sprintf('[%s] %s', p, t);
+}
+
+function pushplus_content(detail) {
+	let lines = [];
+	let p = pushplus_prefix();
+	if (p != '')
+		push(lines, sprintf('[%s]', p));
+	push(lines, now_fmt());
+	push(lines, detail);
+	let out = '';
+	for (let i = 0; i < length(lines); i++) {
+		if (i > 0)
+			out += '\n';
+		out += lines[i];
+	}
+	return out;
+}
+
 function http_post_json(bodyfile, url, outfile) {
 	try { unlink(outfile); } catch (e) {}
 	if (system('command -v curl >/dev/null') == 0)
@@ -212,8 +240,8 @@ function send_pushplus(title, detail, force) {
 	let url = multi ? 'https://www.pushplus.plus/batchSend' : 'https://www.pushplus.plus/send';
 	let payload = {
 		token: token,
-		title: title != '' ? title : '系统报警',
-		content: compose_text(detail),
+		title: pushplus_title(title),
+		content: pushplus_content(detail),
 		template: 'txt',
 		channel: ch
 	};

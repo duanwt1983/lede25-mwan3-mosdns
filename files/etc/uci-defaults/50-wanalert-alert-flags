@@ -10,6 +10,7 @@ seed wan_down_hold 5
 	seed wan_up_hold 3
 	seed autofix_hold_min 5
 	seed pushplus_enabled 0
+	seed pushplus_prefix ''
 	seed pushplus_wechat 1
 	seed pushplus_app 1
 

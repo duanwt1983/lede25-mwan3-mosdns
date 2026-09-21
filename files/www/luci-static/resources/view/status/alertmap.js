@@ -44,55 +44,7 @@ return baseclass.extend({
 		}
 	});
 
-	let s = m.section(form.NamedSection, 'main', 'wanalert', _('钉钉机器人'));
-	s.addremove = false;
-
-	let o = s.option(form.Flag, 'enabled', _('启用钉钉推送'));
-	o.default = o.disabled;
-	o.rmempty = false;
-
-	o = s.option(form.Value, 'dingtalk_webhook', _('Webhook'),
-		_('群设置 → 智能群助手 → 自定义机器人。形如 https://oapi.dingtalk.com/robot/send?access_token=…'));
-	o.placeholder = 'https://oapi.dingtalk.com/robot/send?access_token=';
-	o.rmempty = false;
-
-	o = s.option(form.ListValue, 'security', _('安全设置（与钉钉机器人一致）'));
-	o.value('keyword', _('自定义关键词'));
-	o.value('sign', _('加签'));
-	o.default = 'keyword';
-	o.rmempty = false;
-
-	o = s.option(form.Value, 'keyword', _('自定义关键词'),
-		_('消息正文必须包含此词，否则钉钉会拒绝。默认「线路」。'));
-	o.default = '线路';
-	o.rmempty = false;
-	o.depends('security', 'keyword');
-
-	o = s.option(form.Value, 'dingtalk_secret', _('加签密钥'),
-		_('机器人安全设置里 SEC 开头的字符串。'));
-	o.password = true;
-	o.rmempty = false;
-	o.depends('security', 'sign');
-
-	o = s.option(form.Value, 'at_mobile', _('提醒手机号'),
-		_('群内成员的钉钉绑定手机号，多个用空格分隔。可留空。'));
-	o.optional = true;
-	o.rmempty = false;
-
-	o = s.option(form.Value, 'extra_text', _('附加说明'),
-		_('推送正文第一行：自定义关键词 --- 附加说明。后面仍是时间、报警内容。可留空，此时第一行只有关键词。钉钉关键词校验仍用上面的词。'));
-	o.optional = true;
-	o.rmempty = false;
-
-	o = s.option(form.Value, 'cooldown', _('同一事件冷却（秒）'),
-		_('只限制对外推送，不限制写入日志。钉钉每机器人每分钟最多约 20 条；PushPlus 微信通道免费约 200 条/天。'));
-	o.datatype = 'uinteger';
-	o.default = '120';
-
-	o = s.option(form.Button, '_test', _('发送测试消息'));
-	o.inputtitle = _('发送测试');
-	o.inputstyle = 'apply';
-	o.onclick = function() {
+	function sendAlertTest() {
 		return m.save().then(function() {
 			return uci.save();
 		}).then(function() {
@@ -100,34 +52,100 @@ return baseclass.extend({
 		}).then(function(res) {
 			const out = ((res && (res.stdout || res.stderr)) || '').trim();
 			if (res && res.code)
-				ui.addNotification(null, E('p', _('发送失败') + (out ? ': ' + out : _('。请填写钉钉 Webhook 或 PushPlus Token 后保存，再测一次。'))), 'error');
+				ui.addNotification(null, E('p', _('发送失败') + (out ? ': ' + out : _('。请至少启用并填写一个推送通道后保存，再测一次。'))), 'error');
 			else
 				ui.addNotification(null, E('p', _('已请求发送。请到已启用的钉钉群、微信公众号或 PushPlus App 确认。') + (out ? ' ' + out : '')), 'info');
 		}).catch(e => {
 			ui.addNotification(null, E('p', _('发送失败: %s').format(e.message)), 'error');
 		});
-	};
+	}
+
+	let s = m.section(form.NamedSection, 'main', 'wanalert', _('推送测试'));
+	s.addremove = false;
+
+	let o = s.option(form.Button, '_test', _('测试已启用的推送通道'));
+	o.inputtitle = _('发送测试');
+	o.inputstyle = 'apply';
+	o.onclick = sendAlertTest;
+
+	s = m.section(form.NamedSection, 'main', 'wanalert', _('钉钉机器人'));
+	s.addremove = false;
+
+	o = s.option(form.Flag, 'enabled', _('启用钉钉推送'));
+	o.default = o.disabled;
+	o.rmempty = false;
+
+	o = s.option(form.Value, 'dingtalk_webhook', _('Webhook'),
+		_('群设置 → 智能群助手 → 自定义机器人。形如 https://oapi.dingtalk.com/robot/send?access_token=…。未启用钉钉时可留空。'));
+	o.placeholder = 'https://oapi.dingtalk.com/robot/send?access_token=';
+	o.optional = true;
+	o.rmempty = true;
+	o.depends('enabled', '1');
+
+	o = s.option(form.ListValue, 'security', _('安全设置（与钉钉机器人一致）'));
+	o.value('keyword', _('自定义关键词'));
+	o.value('sign', _('加签'));
+	o.default = 'keyword';
+	o.rmempty = false;
+	o.depends('enabled', '1');
+
+	o = s.option(form.Value, 'keyword', _('自定义关键词'),
+		_('消息正文必须包含此词，否则钉钉会拒绝。默认「线路」。'));
+	o.default = '线路';
+	o.rmempty = false;
+	o.depends({ enabled: '1', security: 'keyword' });
+
+	o = s.option(form.Value, 'dingtalk_secret', _('加签密钥'),
+		_('机器人安全设置里 SEC 开头的字符串。'));
+	o.password = true;
+	o.optional = true;
+	o.rmempty = true;
+	o.depends({ enabled: '1', security: 'sign' });
+
+	o = s.option(form.Value, 'at_mobile', _('提醒手机号'),
+		_('群内成员的钉钉绑定手机号，多个用空格分隔。可留空。'));
+	o.optional = true;
+	o.rmempty = true;
+	o.depends('enabled', '1');
+
+	o = s.option(form.Value, 'extra_text', _('附加说明'),
+		_('仅钉钉推送：正文第一行为「自定义关键词 --- 附加说明」，其后为时间与报警内容。PushPlus 不使用此项，请用下方「地区前缀」。'));
+	o.optional = true;
+	o.rmempty = true;
+	o.depends('enabled', '1');
+
+	o = s.option(form.Value, 'cooldown', _('同一事件冷却（秒）'));
+	o.datatype = 'uinteger';
+	o.default = '120';
 
 	s = m.section(form.NamedSection, 'main', 'wanalert', _('PushPlus 微信 / App'));
 	s.addremove = false;
-	s.description = _('发给绑定此 Token 的个人微信（「pushplus 推送加」公众号会话），以及 PushPlus App。默认同一条同时发两端，不用建微信群。');
 
 	o = s.option(form.Flag, 'pushplus_enabled', _('启用 PushPlus 推送'));
 	o.default = o.disabled;
 	o.rmempty = false;
 
-	o = s.option(form.Value, 'pushplus_token', _('Token'),
-		_('PushPlus 控制台复制。只填本机，不要写进公开仓库。'));
+	o = s.option(form.Value, 'pushplus_token', _('Token'));
 	o.password = true;
-	o.rmempty = false;
+	o.optional = true;
+	o.rmempty = true;
+	o.depends('pushplus_enabled', '1');
+
+	o = s.option(form.Value, 'pushplus_prefix', _('地区前缀'));
+	o.placeholder = _('例如：6.1 网点');
+	o.optional = true;
+	o.rmempty = true;
+	o.depends('pushplus_enabled', '1');
 
 	o = s.option(form.Flag, 'pushplus_wechat', _('同时发到微信'));
 	o.default = o.enabled;
 	o.rmempty = false;
+	o.depends('pushplus_enabled', '1');
 
 	o = s.option(form.Flag, 'pushplus_app', _('同时发到 App'));
 	o.default = o.enabled;
 	o.rmempty = false;
+	o.depends('pushplus_enabled', '1');
 
 	s = m.section(form.NamedSection, 'main', 'wanalert', _('推送这些事件'));
 	s.addremove = false;

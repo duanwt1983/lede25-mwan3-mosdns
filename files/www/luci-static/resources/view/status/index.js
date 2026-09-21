@@ -450,7 +450,26 @@ function lastHist(snap, name, field) {
 
 const COL_RX = '#22c55e';
 const COL_TX = '#2563eb';
-const COL_LINK_IDLE = '#cbd5e1';
+const COL_LINK_IDLE = '#64748b';
+const COL_LINK_IDLE_GLOW = '#94a3b8';
+/* Below this bps treat link as idle: still draw the pipe (WAN live threshold is 200). */
+const LINK_IDLE_BPS = 200;
+const LINK_IDLE_FLOW_PX = 36;
+
+function linkTrafficIdle(rx, tx, limit) {
+	const lim = limit != null ? limit : LINK_IDLE_BPS;
+	return Math.max(0, Number(rx) || 0) <= lim && Math.max(0, Number(tx) || 0) <= lim;
+}
+
+function flowShouldIdle(flow) {
+	if (!flow)
+		return false;
+	if (flow.linkUp === false)
+		return false;
+	if (flow.idleLink)
+		return true;
+	return (Number(flow.bps) || 0) <= LINK_IDLE_BPS;
+}
 
 function utilPct(bps, capMbps) {
 	const cap = Math.max(0, Number(capMbps) || 0) * 1e6;
@@ -1629,19 +1648,22 @@ return view.extend({
 		return out;
 	},
 
-	addFlow(pts, bps, color, id, capMbps, dir, idleLink) {
+	addFlow(pts, bps, color, id, capMbps, dir, idleLink, linkUp) {
 		const flowDir = dir || flowDirFromId(id);
-		const st = flowSpeedStyle(bps, capMbps, flowDir);
-		const idle = !!idleLink && !(Number(bps) > 0);
+		const raw = Math.max(0, Number(bps) || 0);
+		const st = flowSpeedStyle(raw, capMbps, flowDir);
+		const up = linkUp !== false;
+		const idle = up && (!!idleLink || raw <= LINK_IDLE_BPS);
 		this.flows.push({
 			pts: pts,
-			bps: bps,
+			bps: raw,
 			color: st.px > 0 ? st.color : (color || COL_LINK_IDLE),
-			px: idle ? 28 : st.px,
+			px: idle && raw <= LINK_IDLE_BPS ? LINK_IDLE_FLOW_PX : st.px,
 			id: id || '',
 			cap: capMbps || 0,
 			dir: flowDir,
-			idleLink: idle
+			idleLink: idle,
+			linkUp: up
 		});
 	},
 
@@ -1682,16 +1704,29 @@ return view.extend({
 
 	drawPoly(layer, pts, idleLink) {
 		const attr = polyPoints(pts);
+		const idle = !!idleLink;
+		if (idle) {
+			layer.appendChild(svgEl('polyline', {
+				points: attr,
+				fill: 'none',
+				stroke: COL_LINK_IDLE_GLOW,
+				'stroke-width': '6',
+				'stroke-linecap': 'round',
+				'stroke-linejoin': 'round',
+				opacity: '0.22',
+				class: 'topo-link-idle-glow'
+			}));
+		}
 		layer.appendChild(svgEl('polyline', {
 			points: attr,
 			fill: 'none',
 			stroke: COL_LINK_IDLE,
-			'stroke-width': idleLink ? '2' : '1.5',
+			'stroke-width': idle ? '3' : '1.8',
 			'stroke-linecap': 'round',
 			'stroke-linejoin': 'round',
-			'stroke-dasharray': idleLink ? '6 5' : '3 7',
-			opacity: idleLink ? '0.45' : '0.12',
-			class: 'topo-link-track' + (idleLink ? ' topo-link-idle' : '')
+			'stroke-dasharray': idle ? '8 5' : '4 6',
+			opacity: idle ? '0.88' : '0.34',
+			class: 'topo-link-track' + (idle ? ' topo-link-idle' : '')
 		}));
 	},
 
@@ -2017,14 +2052,16 @@ return view.extend({
 		}
 		const pts = linkRoute(e.x1, e.y1, e.x2, e.y2);
 		const flowBps = Math.max(0, Number(bps) || 0);
-		this.drawPoly(layer, pts);
+		const linkUp = opt.linkUp !== false;
+		const idleLink = linkUp && linkTrafficIdle(flowBps, 0);
+		this.drawPoly(layer, pts, idleLink);
 		if (snap)
 			this.bindLineClick(layer, e.x1, e.y1, e.x2, e.y2, key, kind);
 		else {
 			this.bindLineMove(layer, e.x1, e.y1, e.x2, e.y2, key, kind);
 			this.lineEndHandles(e.x1, e.y1, e.x2, e.y2, key, kind);
 		}
-		this.addFlow(pts, flowBps, color, key, opt.cap);
+		this.addFlow(pts, flowBps, color, key, opt.cap, null, idleLink, linkUp);
 		return polyMid(pts);
 	},
 
@@ -2035,16 +2072,17 @@ return view.extend({
 		const mx = opt.midX != null ? opt.midX : (e.x1 + e.x2) / 2;
 		const rails = railsHVH(e.x1, e.y1, e.x2, e.y2, mx, gap);
 		const down = rails.a;
-		const up = reversePts(rails.b);
+		const upRail = reversePts(rails.b);
 		const rxBps = Math.max(0, Number(rx) || 0);
 		const txBps = Math.max(0, Number(tx) || 0);
-		const idleLink = opt.linkUp !== false && rxBps <= 0 && txBps <= 0;
+		const linkUp = opt.linkUp !== false;
+		const idleLink = linkUp && linkTrafficIdle(rxBps, txBps);
 		this.drawPoly(layer, down, idleLink);
-		this.drawPoly(layer, up, idleLink);
+		this.drawPoly(layer, upRail, idleLink);
 		this.bindLineMove(layer, e.x1, e.y1, e.x2, e.y2, key, kind);
 		this.lineEndHandles(e.x1, e.y1, e.x2, e.y2, key, kind);
-		this.addFlow(down, rxBps, null, key + ':rx', opt.capRx, 'rx', idleLink);
-		this.addFlow(up, txBps, null, key + ':tx', opt.capTx, 'tx', idleLink);
+		this.addFlow(down, rxBps, null, key + ':rx', opt.capRx, 'rx', idleLink, linkUp);
+		this.addFlow(upRail, txBps, null, key + ':tx', opt.capTx, 'tx', idleLink, linkUp);
 		return polyMid(down);
 	},
 
@@ -3016,8 +3054,8 @@ return view.extend({
 			const st = flowSpeedStyle(f.bps, f.cap, f.dir || flowDirFromId(f.id));
 			let px = st.px;
 			let color = st.color;
-			if (!px && f.idleLink) {
-				px = 28;
+			if (!px && flowShouldIdle(f)) {
+				px = LINK_IDLE_FLOW_PX;
 				color = COL_LINK_IDLE;
 			}
 			if (!px)
@@ -3751,8 +3789,10 @@ return view.extend({
 		const yRail0 = sw.y - span / 2;
 		if (stackN > 1) {
 			const railPts = [{ x: edgeX, y: yRail0 }, { x: edgeX, y: yRail0 + span }];
-			this.drawPoly(pipes, railPts);
-			this.addFlow(railPts, Math.max(0, m.lanDown + m.lanUp), null, 'link:sw:rail', lanCap);
+			const railBps = Math.max(0, m.lanDown + m.lanUp);
+			const railIdle = !(m.lan && m.lan.up === false) && linkTrafficIdle(m.lanDown, m.lanUp);
+			this.drawPoly(pipes, railPts, railIdle);
+			this.addFlow(railPts, railBps, null, 'link:sw:rail', lanCap, null, railIdle, !(m.lan && m.lan.up === false));
 		}
 		const cliLayout = this.clientLayout(shown);
 		shown.forEach((c, i) => {
@@ -3763,7 +3803,10 @@ return view.extend({
 			const clk = 'link:cli:' + (c.mac || c.ip || i);
 			const cliBps = Math.max(Number(c.rx) || 0, Number(c.tx) || 0);
 			const cmid = this.drawPipe(pipes, edgeX, ay, x0, cy,
-				null, cliBps, live && c.online !== false, clk, 'link_sw_cli');
+				null, cliBps, live && c.online !== false, clk, 'link_sw_cli', false, null, {
+					linkUp: c.online !== false,
+					idleLink: c.online !== false && linkTrafficIdle(c.rx, c.tx, 80)
+				});
 			this.decorateLink(labels, cmid, clk, 'link_sw_cli', {
 				/* Link captions only use the Bandix terminal name. */
 				name: clientHostname(c),
@@ -3838,27 +3881,51 @@ return view.extend({
 		const lanLive = (m.lanDown + m.lanUp) > 200;
 		(m.wans || []).forEach(row => {
 			const k = 'link:inet:' + row.w.name;
-			const live = row.health === 'ok' && (row.rx + row.tx) > 200;
+			const live = row.health === 'ok' && (row.rx + row.tx) > LINK_IDLE_BPS;
 			const capDn = Number(row.w.bw_down) || 0;
 			const capUp = Number(row.w.bw_up) || 0;
-			const idleLink = row.w.up !== false && (Number(row.rx) || 0) <= 0 && (Number(row.tx) || 0) <= 0;
+			const linkUp = row.w.up !== false;
+			const idleLink = linkUp && linkTrafficIdle(row.rx, row.tx);
 			[ k + ':rx', k + ':tx' ].forEach(function(id, idx) {
 				const f = byId[id];
 				if (!f)
 					return;
+				f.linkUp = linkUp;
 				applyFlowStyle(f, idx ? row.tx : row.rx, idx ? capUp : capDn, live);
-				if (idleLink && !(Number(f.bps) > 0)) {
+				if (idleLink && (Number(f.bps) || 0) <= LINK_IDLE_BPS) {
 					f.idleLink = true;
-					f.px = 28;
+					f.px = LINK_IDLE_FLOW_PX;
 					f.color = COL_LINK_IDLE;
 				} else {
 					f.idleLink = false;
 				}
 			});
 		});
-		applyFlowStyle(byId['link:lan:rx'], m.lanDown, lanCap, lanLive);
-		applyFlowStyle(byId['link:lan:tx'], m.lanUp, lanCap, lanLive);
-		applyFlowStyle(byId['link:sw:rail'], m.lanDown + m.lanUp, lanCap, lanLive);
+		const lanUp = !(m.lan && m.lan.up === false);
+		const lanIdle = lanUp && linkTrafficIdle(m.lanDown, m.lanUp);
+		[ 'link:lan:rx', 'link:lan:tx' ].forEach(function(id, idx) {
+			const f = byId[id];
+			if (!f)
+				return;
+			f.linkUp = lanUp;
+			applyFlowStyle(f, idx ? m.lanUp : m.lanDown, lanCap, lanLive);
+			if (lanIdle && (Number(f.bps) || 0) <= LINK_IDLE_BPS) {
+				f.idleLink = true;
+				f.px = LINK_IDLE_FLOW_PX;
+				f.color = COL_LINK_IDLE;
+			} else {
+				f.idleLink = false;
+			}
+		});
+		if (byId['link:sw:rail']) {
+			byId['link:sw:rail'].linkUp = lanUp;
+			applyFlowStyle(byId['link:sw:rail'], m.lanDown + m.lanUp, lanCap, lanLive);
+			if (lanIdle && (Number(byId['link:sw:rail'].bps) || 0) <= LINK_IDLE_BPS) {
+				byId['link:sw:rail'].idleLink = true;
+				byId['link:sw:rail'].px = LINK_IDLE_FLOW_PX;
+				byId['link:sw:rail'].color = COL_LINK_IDLE;
+			}
+		}
 		(m.clients || []).forEach(c => {
 			const base = 'link:cli:' + (c.mac || c.ip);
 			const rx = Number(c.rx) || 0;
@@ -3874,8 +3941,20 @@ return view.extend({
 				});
 				return;
 			}
-			applyFlowStyle(byId[base + ':rx'], rx, 0, live);
-			applyFlowStyle(byId[base + ':tx'], tx, 0, live);
+			[ base + ':rx', base + ':tx' ].forEach(function(k, idx) {
+				const f = byId[k];
+				if (!f)
+					return;
+				f.linkUp = true;
+				applyFlowStyle(f, idx ? tx : rx, 0, live);
+				if (linkTrafficIdle(rx, tx, 80) && (Number(f.bps) || 0) <= 80) {
+					f.idleLink = true;
+					f.px = LINK_IDLE_FLOW_PX;
+					f.color = COL_LINK_IDLE;
+				} else {
+					f.idleLink = false;
+				}
+			});
 		});
 		const svg = document.getElementById('topo-svg');
 		if (!svg)
