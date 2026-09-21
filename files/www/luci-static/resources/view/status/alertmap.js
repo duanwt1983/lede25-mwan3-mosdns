@@ -3,7 +3,6 @@
 'require form';
 'require fs';
 'require ui';
-'require uci';
 return baseclass.extend({
 	wanNames: [],
 
@@ -45,16 +44,13 @@ return baseclass.extend({
 	});
 
 	function sendAlertTest() {
-		return m.save().then(function() {
-			return uci.save();
-		}).then(function() {
-			return fs.exec('/usr/sbin/wan-alert', ['test', 'manual']);
-		}).then(function(res) {
+		/* Do not call map.save()/uci.save(): that marks ui.changes and can re-render the form, breaking layout. */
+		return fs.exec('/usr/sbin/wan-alert', ['test', 'manual']).then(function(res) {
 			const out = ((res && (res.stdout || res.stderr)) || '').trim();
 			if (res && res.code)
-				ui.addNotification(null, E('p', _('发送失败') + (out ? ': ' + out : _('。请至少启用并填写一个推送通道后保存，再测一次。'))), 'error');
+				ui.addNotification(null, E('p', _('发送失败') + (out ? ': ' + out : _('。请先保存并应用配置，并填写已启用的推送通道。'))), 'error');
 			else
-				ui.addNotification(null, E('p', _('已请求发送。请到已启用的钉钉群、微信公众号或 PushPlus App 确认。') + (out ? ' ' + out : '')), 'info');
+				ui.addNotification(null, E('p', _('已请求发送（按当前已保存配置）。若刚改过 Token / Webhook，请先点「保存并应用」。') + (out ? ' ' + out : '')), 'info');
 		}).catch(e => {
 			ui.addNotification(null, E('p', _('发送失败: %s').format(e.message)), 'error');
 		});

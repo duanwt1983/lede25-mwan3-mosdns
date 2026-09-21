@@ -11,9 +11,6 @@ set lede-lansec.main.dhcp_enabled=1
 set lede-lansec.main.dhcp_log=1
 set lede-lansec.main.dhcp_notify=1
 set lede-lansec.main.dhcp_ban=1
-set lede-lansec.main.nat_enabled=1
-set lede-lansec.main.nat_log=1
-set lede-lansec.main.nat_notify=0
 set lede-lansec.main.arp_enabled=1
 set lede-lansec.main.arp_log=1
 set lede-lansec.main.arp_notify=1
@@ -43,9 +40,6 @@ seed dhcp_enabled 1
 seed dhcp_log 1
 seed dhcp_notify 1
 seed dhcp_ban 1
-seed nat_enabled 1
-seed nat_log 1
-seed nat_notify 0
 seed arp_enabled 1
 seed arp_log 1
 seed arp_notify 1

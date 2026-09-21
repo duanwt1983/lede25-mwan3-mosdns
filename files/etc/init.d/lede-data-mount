@@ -1,0 +1,13 @@
+#!/bin/sh /etc/rc.common
+
+START=82
+STOP=90
+
+start() {
+	[ -x /usr/libexec/lede-data-mount ] || return 0
+	/usr/libexec/lede-data-mount mount
+}
+
+stop() {
+	return 0
+}

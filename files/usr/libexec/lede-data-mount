@@ -1,0 +1,186 @@
+#!/bin/sh
+# Ensure /data block mount from fstab succeeds even when overlay left files on /data.
+export PATH="/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
+
+MARKER=/data/.lede-data
+STASH=/tmp/.lede-data-overlay-stash
+TMPMNT=/mnt/.lede-data-part
+LOG=/tmp/lede-data-mount.log
+
+log() {
+	echo "$(date '+%F %T') $*" >> "$LOG"
+}
+
+data_mounted() {
+	awk '$2 == "/data" { found=1; exit } END { exit !found }' /proc/mounts 2>/dev/null
+}
+
+fstab_data_sid() {
+	uci -q show fstab 2>/dev/null | awk -F'[.=]' "/target='\\/data'/{print \$2; exit}"
+}
+
+seed_and_bind() {
+	local ov="$1" dt="$2" f bn
+	[ -n "$ov" ] && [ -n "$dt" ] || return 0
+	mkdir -p "$dt" "$ov"
+	for f in "$ov"/* "$ov"/.[!.]*; do
+		[ -e "$f" ] || continue
+		bn=$(basename "$f")
+		[ -e "$dt/$bn" ] || cp -a "$f" "$dt/$bn" 2>/dev/null || true
+	done
+	if ! awk -v p="$ov" '$2 == p { found=1; exit } END { exit !found }' /proc/mounts 2>/dev/null; then
+		mount --bind "$dt" "$ov" 2>/dev/null || true
+	fi
+}
+
+apply_data_binds() {
+	data_mounted || return 0
+	mkdir -p \
+		/data/logs/alert \
+		/data/logs/syslog \
+		/data/logs/kernel \
+		/data/logs/mosdns \
+		/data/mosdns/cache \
+		/data/mosdns/adlist \
+		/data/geodata \
+		/data/passwall/rules \
+		/data/pcap \
+		/data/metrics \
+		/data/share
+	[ -d /usr/share/v2ray ] && seed_and_bind /usr/share/v2ray /data/geodata
+	if [ -d /usr/share/xray ] && ! awk '$2 == "/usr/share/xray" { found=1; exit } END { exit !found }' /proc/mounts 2>/dev/null; then
+		mount --bind /data/geodata /usr/share/xray 2>/dev/null || true
+	fi
+	[ -d /usr/share/passwall/rules ] && seed_and_bind /usr/share/passwall/rules /data/passwall/rules
+	mkdir -p /etc/mosdns/rule/adlist
+	seed_and_bind /etc/mosdns/rule/adlist /data/mosdns/adlist
+	touch "$MARKER" 2>/dev/null || true
+}
+
+prepare_mountpoint() {
+	if data_mounted; then
+		return 0
+	fi
+	rm -rf "$STASH"
+	if [ -d /data ] && [ -n "$(ls -A /data 2>/dev/null)" ]; then
+		log "stashing overlay /data contents"
+		mkdir -p "$STASH"
+		cp -a /data/. "$STASH/" 2>/dev/null || true
+	fi
+	mkdir -p /data
+}
+
+merge_stash() {
+	local target="$1"
+	[ -n "$target" ] && [ -d "$target" ] || return 0
+	[ -d "$STASH" ] && [ -n "$(ls -A "$STASH" 2>/dev/null)" ] || return 0
+	log "merging overlay stash into $target"
+	cp -an "$STASH/." "$target/" 2>/dev/null || true
+	rm -rf "$STASH"
+}
+
+prepare_partition() {
+	local uuid="$1" part disk
+
+	part=$(blkid -U "$uuid" 2>/dev/null | head -n 1)
+	[ -b "$part" ] || return 1
+	disk=$(echo "$part" | sed 's/p[0-9]*$//;s/[0-9]*$//')
+	partprobe "$disk" >/dev/null 2>&1 || true
+	blockdev --rereadpt "$disk" >/dev/null 2>&1 || true
+	partx -u "$disk" >/dev/null 2>&1 || true
+	block detect >/dev/null 2>&1 || true
+	sleep 2
+	if command -v e2fsck >/dev/null 2>&1; then
+		e2fsck -f -p "$part" >>"$LOG" 2>&1 || e2fsck -f -y "$part" >>"$LOG" 2>&1 || true
+	fi
+	return 0
+}
+
+try_mount() {
+	local target="$1" uuid="$2" fstype="$3" opts="$4" part err
+
+	mkdir -p "$target"
+	part=$(blkid -U "$uuid" 2>/dev/null | head -n 1)
+	prepare_partition "$uuid" || true
+	if [ -n "$opts" ]; then
+		if mount -t "$fstype" -o "$opts" "UUID=$uuid" "$target" 2>>"$LOG"; then
+			return 0
+		fi
+		err=$(mount -t "$fstype" -o "$opts" "UUID=$uuid" "$target" 2>&1) || true
+	else
+		if mount -t "$fstype" "UUID=$uuid" "$target" 2>>"$LOG"; then
+			return 0
+		fi
+		err=$(mount -t "$fstype" "UUID=$uuid" "$target" 2>&1) || true
+	fi
+	log "mount UUID failed on $target: ${err:-unknown}"
+	if [ -b "$part" ]; then
+		if [ -n "$opts" ]; then
+			mount -t "$fstype" -o "$opts" "$part" "$target" 2>>"$LOG" && return 0
+			err=$(mount -t "$fstype" -o "$opts" "$part" "$target" 2>&1) || true
+		else
+			mount -t "$fstype" "$part" "$target" 2>>"$LOG" && return 0
+			err=$(mount -t "$fstype" "$part" "$target" 2>&1) || true
+		fi
+	fi
+	log "mount $part failed on $target: ${err:-unknown}"
+	return 1
+}
+
+mount_from_fstab() {
+	local sid uuid fstype opts
+
+	data_mounted && return 0
+	sid=$(fstab_data_sid) || return 0
+	[ -n "$sid" ] || return 0
+	[ "$(uci -q get "fstab.$sid.enabled")" = "1" ] || return 0
+	uuid=$(uci -q get "fstab.$sid.uuid")
+	[ -n "$uuid" ] || return 1
+	fstype=$(uci -q get "fstab.$sid.fstype")
+	opts=$(uci -q get "fstab.$sid.options" 2>/dev/null || true)
+	[ -n "$fstype" ] || fstype=ext4
+
+	prepare_mountpoint
+	if try_mount /data "$uuid" "$fstype" "$opts"; then
+		merge_stash /data
+		apply_data_binds
+		log "mounted /data directly"
+		return 0
+	fi
+
+	log "direct /data mount failed, trying mount --move via $TMPMNT"
+	mkdir -p "$TMPMNT"
+	if ! try_mount "$TMPMNT" "$uuid" "$fstype" "$opts"; then
+		block mount >>"$LOG" 2>&1 || true
+		if ! awk -v p="$TMPMNT" '$2 == p { found=1; exit } END { exit !found }' /proc/mounts 2>/dev/null; then
+			log "temporary mount failed"
+			umount "$TMPMNT" 2>/dev/null || true
+			return 1
+		fi
+	fi
+
+	merge_stash "$TMPMNT"
+	find /data -mindepth 1 -delete 2>/dev/null || true
+	if mount --move "$TMPMNT" /data 2>>"$LOG"; then
+		apply_data_binds
+		log "mounted /data via mount --move"
+		return 0
+	fi
+
+	err=$(mount --move "$TMPMNT" /data 2>&1) || true
+	log "mount --move failed: ${err:-unknown}"
+	umount "$TMPMNT" 2>/dev/null || true
+	return 1
+}
+
+case "$1" in
+	mount)
+		mount_from_fstab
+		;;
+	bind)
+		apply_data_binds
+		;;
+	*)
+		mount_from_fstab
+		;;
+esac

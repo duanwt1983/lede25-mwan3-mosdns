@@ -23,9 +23,6 @@ function fmtMac(s) {
 
 const RULE_MOVE = {
 	dhcp_allow: 'dhcp_allow',
-	nat_allow: 'nat_allow',
-	ignore: 'nat_allow',
-	nat_block: 'nat_block',
 	dhcp_ban: 'dhcp_ban'
 };
 
@@ -45,9 +42,6 @@ function migrateLegacyRules() {
 		if (!type)
 			return;
 		copyHost(s, type);
-	});
-	uci.sections('lede-lansec', 'ignore').forEach(function(s) {
-		copyHost(s, 'nat_allow');
 	});
 }
 
@@ -83,8 +77,6 @@ function buildAllowMap() {
 	m.title = null;
 	addHostTable(m, 'dhcp_allow', _('非法 DHCP · 服务器白名单'),
 		_('允许在本网分配地址的 DHCP 服务器。本机网关无需填写。同一 MAC 不能同时出现在禁止列表。'));
-	addHostTable(m, 'nat_allow', _('二级路由 / 热点 / 共享 · 白名单'),
-		_('允许存在的旁路、AP、小路由、手机热点或系统共享，不按威胁处理。同一 MAC 不能同时出现在禁止列表。'));
 	return m;
 }
 
@@ -93,8 +85,6 @@ function buildDenyMap() {
 	m.title = null;
 	addHostTable(m, 'dhcp_ban', _('非法DHCP服务器'),
 		_('封禁这些 MAC：不能再发地址，也不能经本机上网或访问本机。同一 MAC 不能同时出现在白名单。'));
-	addHostTable(m, 'nat_block', _('二级路由'),
-		_('禁止这些设备为后面的终端代理上网。同一 MAC 不能同时出现在白名单。'));
 	return m;
 }
 
@@ -156,23 +146,19 @@ function pendingSettled(it) {
 	if (!it || !it.mac)
 		return false;
 	if (it.kind === 'nat' || it.kind === 'share')
-		return listedMac(['nat_allow', 'nat_block'], it.mac);
+		return true;
 	return listedMac(['dhcp_allow', 'dhcp_ban'], it.mac);
 }
 
 function visiblePending(items) {
 	return (items || []).filter(function(it) {
-		return it && !pendingSettled(it);
+		return it && it.kind !== 'nat' && it.kind !== 'share' && !pendingSettled(it);
 	});
 }
 
 function kindLabel(kind) {
 	if (kind === 'dhcp')
 		return _('非法 DHCP');
-	if (kind === 'nat')
-		return _('二级路由');
-	if (kind === 'share')
-		return _('热点/共享');
 	return kind || '—';
 }
 
@@ -208,7 +194,7 @@ function clampPageSize(v) {
 
 function isLansecRow(r) {
 	const blob = [r.cat, r.title, r.detail].join(' ');
-	return /ARP|DHCP|网关|二级|小路由|非法|欺骗|地址冲突|发地址|NAT|共享|热点|冒充/.test(blob);
+	return /ARP|DHCP|网关|非法|欺骗|地址冲突|发地址|冒充/.test(blob);
 }
 
 function levelLook(lv) {
@@ -382,10 +368,9 @@ function runPendingAction(view, action) {
 
 function renderPendingBar(view) {
 	const it = selectedPending(view);
-	const nat = it && (it.kind === 'nat' || it.kind === 'share');
-	const allowAct = nat ? 'nat_allow' : 'dhcp_allow';
-	const denyAct = nat ? 'nat_block' : 'dhcp_ban';
-	const denyLabel = nat ? _('禁止转发') : _('封禁该 MAC');
+	const allowAct = 'dhcp_allow';
+	const denyAct = 'dhcp_ban';
+	const denyLabel = _('封禁该 MAC');
 	const allowBtn = E('button', {
 		type: 'button',
 		'class': 'btn cbi-button cbi-button-action'
@@ -395,13 +380,13 @@ function renderPendingBar(view) {
 		'class': 'btn cbi-button cbi-button-negative'
 	}, denyLabel);
 	allowBtn.disabled = !it;
-	denyBtn.disabled = !it || it.kind === 'share';
+	denyBtn.disabled = !it;
 	allowBtn.addEventListener('click', function() {
 		if (it)
 			runPendingAction(view, allowAct);
 	});
 	denyBtn.addEventListener('click', function() {
-		if (it && it.kind !== 'share')
+		if (it)
 			runPendingAction(view, denyAct);
 	});
 	return E('div', { 'style': 'display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:.4rem 0 .8rem' }, [
@@ -543,23 +528,6 @@ return view.extend({
 		o.depends('dhcp_enabled', '1');
 		o.description = _('写入禁止列表后切断该 MAC：不能再发地址，也不能经本机上网或访问本机。白名单除外。交换机上两台终端互访拦不住。');
 
-		s = mPolicy.section(form.NamedSection, 'main', 'main', _('二级路由 / 私接小路由'));
-		s.addremove = false;
-		s.description = _('用来处理把其它设备藏在自己后面上网的情况。默认只记录，是否禁止由其名单决定。');
-
-		o = s.option(form.Flag, 'nat_enabled', _('启用二级路由名单'));
-		o.default = o.enabled;
-		o.rmempty = false;
-		o.description = _('白名单不处理，禁止名单切断其代理上网。自动发现只认它是否在本网发地址，不按名称或生存时间猜测。');
-		o = s.option(form.Flag, 'nat_log', _('写入报警日志'));
-		o.default = o.enabled;
-		o.rmempty = false;
-		o.depends('nat_enabled', '1');
-		o = s.option(form.Flag, 'nat_notify', _('发送报警消息'));
-		o.default = o.disabled;
-		o.rmempty = false;
-		o.depends('nat_enabled', '1');
-
 		s = mPolicy.section(form.NamedSection, 'main', 'main', _('ARP 欺骗'));
 		s.addremove = false;
 		s.description = _('防止有人冒充网关或抢占他人 IP，避免流量被劫持。');
@@ -637,7 +605,7 @@ return view.extend({
 				pendingBox,
 				E('h3', { 'style': 'margin-top:1.2rem' }, _('相关日志')),
 				E('p', { 'class': 'cbi-section-descr' },
-					_('非法 DHCP、二级路由和 ARP 欺骗相关的事件记录。最新的在最上面，有新记录会自动出现。')),
+					_('非法 DHCP 和 ARP 欺骗相关的事件记录。最新的在最上面，有新记录会自动出现。')),
 				pagerBar,
 				tableBox
 			]));
@@ -654,7 +622,7 @@ return view.extend({
 
 			host.appendChild(E('h2', {}, _('局域网安全')));
 			host.appendChild(E('p', { 'class': 'cbi-map-descr' },
-				_('用来防止局域网里的非法 DHCP、私接小路由和 ARP 欺骗，让终端拿到正确的地址并走正确的网关。')));
+				_('用来防止局域网里的非法 DHCP 和 ARP 欺骗，让终端拿到正确的地址并走正确的网关。')));
 			host.appendChild(view._tabBar);
 			['policy', 'allow', 'deny', 'log'].forEach(function(id) {
 				const pane = view._panes[id];

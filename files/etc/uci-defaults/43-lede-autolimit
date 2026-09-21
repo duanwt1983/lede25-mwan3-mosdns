@@ -10,7 +10,9 @@ chmod +x /usr/libexec/rpcd/lede-autolimit /etc/init.d/lede-autolimit 2>/dev/null
 [ -x /etc/init.d/bandix-plus ] || exit 0
 
 touch /etc/config/lede-autolimit
-mkdir -p /data/metrics 2>/dev/null || true
+if grep -q ' /data ' /proc/mounts 2>/dev/null || [ -f /data/.lede-data ]; then
+	mkdir -p /data/metrics 2>/dev/null || true
+fi
 
 # Defaults (only set if missing).
 def() {

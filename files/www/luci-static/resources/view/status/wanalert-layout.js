@@ -71,6 +71,51 @@ function layoutThresholdPairs(root) {
 	});
 }
 
+function findMap(node) {
+	return node && node.classList && node.classList.contains('cbi-map')
+		? node : (node && node.querySelector('.cbi-map'));
+}
+
+function layoutIsBroken(map) {
+	if (!map || map.getAttribute('data-lede-wanalert-layout') !== '1')
+		return false;
+	if (map.querySelector('.wanalert-push-row .wanalert-push-cols'))
+		return false;
+	return !!optionBox(map, 'dingtalk_webhook');
+}
+
+function resetLayoutShell(map) {
+	if (!map)
+		return;
+	map.removeAttribute('data-lede-wanalert-layout');
+	const grid = map.querySelector(':scope > .wanalert-card-grid');
+	if (grid) {
+		Array.from(grid.childNodes).forEach(function(ch) {
+			map.insertBefore(ch, grid);
+		});
+		grid.remove();
+	}
+	const row = map.querySelector('.wanalert-push-row');
+	if (row) {
+		const cols = row.querySelector('.wanalert-push-cols');
+		if (cols) {
+			Array.from(cols.childNodes).forEach(function(sec) {
+				map.insertBefore(sec, row);
+			});
+		}
+		row.remove();
+	}
+	map.querySelectorAll('.cbi-section.wanalert-push-mod, .cbi-section.wanalert-card').forEach(function(sec) {
+		sec.classList.remove('wanalert-card', 'wanalert-card-wide', 'wanalert-push-mod');
+	});
+	map.querySelectorAll('.cbi-section[data-lede-fix-layout]').forEach(function(sec) {
+		sec.removeAttribute('data-lede-fix-layout');
+		const old = sec.querySelector('.lede-fix-grid');
+		if (old)
+			old.remove();
+	});
+}
+
 function isPushChannelSection(sec) {
 	return !!(optionBox(sec, 'dingtalk_webhook') ||
 		optionBox(sec, 'pushplus_token') ||
@@ -338,9 +383,15 @@ function injectStyle(node) {
 }
 
 function applyPage(node) {
-	if (!node || node.getAttribute('data-lede-wanalert-layout') === '1')
+	if (!node)
 		return node;
-	node.setAttribute('data-lede-wanalert-layout', '1');
+	const map = findMap(node);
+	if (layoutIsBroken(map))
+		resetLayoutShell(map);
+	else if (map && map.getAttribute('data-lede-wanalert-layout') === '1')
+		return node;
+	if (map)
+		map.setAttribute('data-lede-wanalert-layout', '1');
 	injectStyle(node);
 
 	node.querySelectorAll('.cbi-section').forEach(function(sec) {
@@ -354,6 +405,12 @@ function applyPage(node) {
 	return node;
 }
 
+function reapplyPage(node) {
+	resetLayoutShell(findMap(node));
+	return applyPage(node);
+}
+
 return baseclass.extend({
-	applyPage: applyPage
+	applyPage: applyPage,
+	reapplyPage: reapplyPage
 });

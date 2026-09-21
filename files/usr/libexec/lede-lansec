@@ -188,7 +188,6 @@ function write_nft(self, dhcp_on, arp_on) {
 	if (self.mac != '' && !mac_in(allow, self.mac))
 		push(allow, { mac: self.mac, note: 'self' });
 	let ban = host_rows('dhcp_ban');
-	let nblock = host_rows('nat_block');
 	let lease = lease_pairs();
 	let drop_gw = arp_on && as_bool(cfg('arp_drop_gw', '1'), true);
 	let enforce = arp_on && as_bool(cfg('arp_enforce_lease', '0'), false);
@@ -196,7 +195,6 @@ function write_nft(self, dhcp_on, arp_on) {
 	push(lines, 'table inet lede_lansec {');
 	push(lines, sprintf('\tset dhcp_allow { type ether_addr;%s }', set_elems(allow)));
 	push(lines, sprintf('\tset dhcp_ban { type ether_addr;%s }', set_elems(ban)));
-	push(lines, sprintf('\tset nat_block { type ether_addr;%s }', set_elems(nblock)));
 	push(lines, '\tchain input {');
 	push(lines, '\t\ttype filter hook input priority -5; policy accept;');
 	if (dhcp_on)
@@ -210,7 +208,6 @@ function write_nft(self, dhcp_on, arp_on) {
 		push(lines, sprintf('\t\tiifname "%s" ether saddr @dhcp_ban counter drop', self.dev));
 		push(lines, sprintf('\t\toifname "%s" ether daddr @dhcp_ban counter drop', self.dev));
 	}
-	push(lines, sprintf('\t\tiifname "%s" ether saddr @nat_block counter drop', self.dev));
 	push(lines, '\t}');
 	if (length(ban) > 0) {
 		push(lines, '\tchain output {');
@@ -291,7 +288,7 @@ function bind_gw(self) {
 
 function normalize_stored_macs() {
 	let changed = false;
-	for (let type in [ 'dhcp_allow', 'dhcp_ban', 'nat_allow', 'nat_block' ]) {
+	for (let type in [ 'dhcp_allow', 'dhcp_ban' ]) {
 		ctx.foreach(CONF, type, (s) => {
 			let m = mac_norm(s.mac);
 			if (m != '' && s.mac != m) {
@@ -309,6 +306,7 @@ function normalize_stored_macs() {
 function apply() {
 	reload_uci();
 	try { normalize_stored_macs(); } catch (e) {}
+	try { purge_legacy_nat(); } catch (e) {}
 	try { reconcile_mutex(); } catch (e) {}
 	try { drop_settled_pending(); } catch (e) {}
 	let self = lan_ident();
@@ -400,7 +398,7 @@ function pending_settled(it) {
 	if (mac == '')
 		return false;
 	if (it.kind == 'nat' || it.kind == 'share')
-		return host_has('nat_allow', mac) || host_has('nat_block', mac);
+		return true;
 	return host_has('dhcp_allow', mac) || host_has('dhcp_ban', mac);
 }
 
@@ -458,7 +456,7 @@ function drop_pending(kind, mac) {
 	let keep = [];
 	for (let it in box.items) {
 		let m = mac_norm(it.mac);
-		if (m != '' && m == mac && (kind == '' || it.kind == kind || (kind == 'nat' && it.kind == 'share')))
+		if (m != '' && m == mac && (kind == '' || it.kind == kind))
 			continue;
 		push(keep, it);
 	}
@@ -471,10 +469,6 @@ function mutex_peer(type) {
 		return 'dhcp_ban';
 	if (type == 'dhcp_ban')
 		return 'dhcp_allow';
-	if (type == 'nat_allow')
-		return 'nat_block';
-	if (type == 'nat_block')
-		return 'nat_allow';
 	return '';
 }
 
@@ -522,18 +516,45 @@ function persist_host(type, mac, note, on) {
 	return true;
 }
 
+function purge_legacy_nat() {
+	let changed = false;
+	for (let opt in [ 'nat_enabled', 'nat_ttl', 'nat_log', 'nat_notify', 'nat_min_odd', 'nat_max_even', 'nat_streak' ]) {
+		if (ctx.get(CONF, 'main', opt) != null) {
+			ctx.delete(CONF, 'main', opt);
+			changed = true;
+		}
+	}
+	for (let type in [ 'nat_allow', 'nat_block', 'ignore' ]) {
+		let ids = [];
+		ctx.foreach(CONF, type, (s) => { push(ids, s['.name']); });
+		for (let id in ids) {
+			ctx.delete(CONF, id);
+			changed = true;
+		}
+	}
+	if (changed) {
+		ctx.commit(CONF);
+		reload_uci();
+	}
+	let box = load_pending();
+	let keep = [];
+	for (let it in box.items) {
+		if (it.kind == 'nat' || it.kind == 'share')
+			continue;
+		push(keep, it);
+	}
+	if (length(keep) != length(box.items)) {
+		box.items = keep;
+		save_pending(box);
+	}
+}
+
 function reconcile_mutex() {
 	let dhcp_ok = {};
-	let nat_ok = {};
 	ctx.foreach(CONF, 'dhcp_allow', (s) => {
 		let mac = mac_norm(s.mac);
 		if (mac != '')
 			dhcp_ok[mac] = true;
-	});
-	ctx.foreach(CONF, 'nat_allow', (s) => {
-		let mac = mac_norm(s.mac);
-		if (mac != '')
-			nat_ok[mac] = true;
 	});
 	let drop = [];
 	ctx.foreach(CONF, 'dhcp_ban', (s) => {
@@ -541,16 +562,9 @@ function reconcile_mutex() {
 		if (mac != '' && dhcp_ok[mac])
 			push(drop, s['.name']);
 	});
-	ctx.foreach(CONF, 'nat_block', (s) => {
-		let mac = mac_norm(s.mac);
-		if (mac != '' && nat_ok[mac])
-			push(drop, s['.name']);
-	});
 	let seen = {};
 	ctx.foreach(CONF, 'dhcp_allow', (s) => { mark_dup(seen, 'a', s, drop); });
 	ctx.foreach(CONF, 'dhcp_ban', (s) => { mark_dup(seen, 'b', s, drop); });
-	ctx.foreach(CONF, 'nat_allow', (s) => { mark_dup(seen, 'na', s, drop); });
-	ctx.foreach(CONF, 'nat_block', (s) => { mark_dup(seen, 'nb', s, drop); });
 	if (length(drop) == 0)
 		return;
 	for (let id in drop)
@@ -590,18 +604,6 @@ function decide(action, kind, mac) {
 	if (action == 'dhcp_ban') {
 		persist_host('dhcp_ban', mac, '待确认禁止', true);
 		drop_pending('dhcp', mac);
-		apply();
-		return true;
-	}
-	if (action == 'nat_allow') {
-		persist_host('nat_allow', mac, '待确认留用', true);
-		drop_pending(kind != '' ? kind : 'nat', mac);
-		apply();
-		return true;
-	}
-	if (action == 'nat_block') {
-		persist_host('nat_block', mac, '待确认禁止', true);
-		drop_pending('nat', mac);
 		apply();
 		return true;
 	}
@@ -698,7 +700,8 @@ function drain_logs(st) {
 
 function cfg_stamp() {
 	let st = stat('/etc/config/lede-lansec');
-	return sprintf('%s-%s-%s', (st && st.mtime) || 0, cfg('enabled', '0'), cfg('iface', 'br-lan'));
+	return sprintf('%s-%s-%s-%s-%s', (st && st.mtime) || 0, cfg('enabled', '0'), cfg('iface', 'br-lan'),
+		cfg('dhcp_enabled', '0'), cfg('arp_enabled', '0'));
 }
 
 function watch() {
@@ -722,8 +725,9 @@ function watch() {
 		let now = time();
 		if (now - last_scan >= 60) {
 			last_scan = now;
+			let self = lan_ident();
 			if (as_bool(cfg('arp_enabled', '1'), true) && as_bool(cfg('arp_bind_gw', '1'), true))
-				try { bind_gw(lan_ident()); } catch (e) {}
+				try { bind_gw(self); } catch (e) {}
 		}
 		save_json(STATE, st);
 		system('sleep 5');

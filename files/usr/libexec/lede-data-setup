@@ -1,5 +1,6 @@
 #!/bin/sh
 # One-shot first-boot initializer: grow prebuilt LEDEDATA to disk end, format
+export PATH="/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
 # if needed, write fstab, mount /data. Runs once, then retires itself.
 # Legacy images without LEDEDATA still fall back to creating a trailing partition.
 # Never touches disks other than the one hosting the running root filesystem.
@@ -10,6 +11,7 @@ MIN_MIB=1024
 LABEL=LEDEDATA
 LOG=/tmp/lede-data-setup.log
 RETIRED=0
+RETIRE_OK=0
 
 log() {
 	echo "$(date '+%F %T') $*" >> "$LOG"
@@ -25,6 +27,7 @@ enable_data_automount() {
 }
 
 retire_data_init() {
+	[ "$RETIRE_OK" = 1 ] || return 0
 	[ "$RETIRED" = 1 ] && return 0
 	RETIRED=1
 	log "retiring one-time /data initializer"
@@ -50,7 +53,17 @@ seed_and_bind() {
 }
 
 ensure_dirs() {
+	data_mounted || return 1
 	enable_data_mount_service
+	for f in /etc/mosdns/cache.dump /etc/mosdns/cache_wan*.dump /etc/mosdns/stats.dump; do
+		[ -f "$f" ] || continue
+		bn=$(basename "$f")
+		[ -f "/data/mosdns/cache/$bn" ] || mv "$f" "/data/mosdns/cache/$bn" 2>/dev/null || true
+	done
+	if [ -x /usr/libexec/lede-data-mount ]; then
+		/usr/libexec/lede-data-mount bind
+		return 0
+	fi
 	mkdir -p \
 		/data/logs/alert \
 		/data/logs/syslog \
@@ -63,11 +76,6 @@ ensure_dirs() {
 		/data/pcap \
 		/data/metrics \
 		/data/share
-	for f in /etc/mosdns/cache.dump /etc/mosdns/cache_wan*.dump /etc/mosdns/stats.dump; do
-		[ -f "$f" ] || continue
-		bn=$(basename "$f")
-		[ -f "/data/mosdns/cache/$bn" ] || mv "$f" "/data/mosdns/cache/$bn" 2>/dev/null || true
-	done
 	[ -d /usr/share/v2ray ] && seed_and_bind /usr/share/v2ray /data/geodata
 	if [ -d /usr/share/xray ] && ! grep -q ' /usr/share/xray ' /proc/mounts; then
 		mount --bind /data/geodata /usr/share/xray 2>/dev/null || true
@@ -197,7 +205,7 @@ write_fstab() {
 			uci -q set "fstab.$sid.uuid=$uuid"
 			uci -q set "fstab.$sid.target=/data"
 			uci -q set "fstab.$sid.fstype=ext4"
-			uci -q set "fstab.$sid.options=rw,noatime,nofail"
+			uci -q delete "fstab.$sid.options" 2>/dev/null || true
 			uci -q set "fstab.$sid.enabled=1"
 			uci -q commit fstab
 			enable_data_mount_service
@@ -208,21 +216,66 @@ write_fstab() {
 	uci -q set "fstab.@mount[-1].uuid=$uuid"
 	uci -q set "fstab.@mount[-1].target=/data"
 	uci -q set "fstab.@mount[-1].fstype=ext4"
-	uci -q set "fstab.@mount[-1].options=rw,noatime,nofail"
 	uci -q set "fstab.@mount[-1].enabled=1"
 	uci -q commit fstab
 	enable_data_mount_service
 }
 
-mount_uuid() {
-	local uuid="$1"
+prepare_data_mountpoint() {
+	if mountpoint -q /data 2>/dev/null; then
+		return 0
+	fi
+	if [ -d /data ] && [ -n "$(ls -A /data 2>/dev/null)" ]; then
+		log "clearing non-empty /data mount point before mount"
+		find /data -mindepth 1 -delete 2>/dev/null || true
+	fi
 	mkdir -p /data
+}
+
+check_ext4() {
+	local part="$1"
+
+	[ -b "$part" ] || return 0
+	command -v e2fsck >/dev/null 2>&1 || return 0
+	e2fsck -f -p "$part" >>"$LOG" 2>&1 || \
+		e2fsck -f -y "$part" >>"$LOG" 2>&1 || \
+		log "e2fsck reported issues on $part"
+}
+
+mount_uuid() {
+	local uuid="$1" part="$2" err i dev
+
+	prepare_data_mountpoint
 	if data_mounted; then
 		return 0
 	fi
-	mount -t ext4 -o rw,noatime "UUID=$uuid" /data 2>/dev/null || \
-		mount -t ext4 -o rw,noatime "/dev/disk/by-uuid/$uuid" /data 2>/dev/null || \
-		return 1
+	[ -n "$part" ] && wait_for_part "$part"
+	wait_for_uuid "$uuid" || true
+	for i in 1 2 3 4 5; do
+		block detect >/dev/null 2>&1 || true
+		dev=$(blkid -U "$uuid" 2>/dev/null || true)
+		[ -n "$dev" ] || dev="/dev/disk/by-uuid/$uuid"
+		if [ -b "$part" ] && mount -t ext4 "$part" /data 2>>"$LOG"; then
+			return 0
+		fi
+		if [ -b "$dev" ] && mount -t ext4 "$dev" /data 2>>"$LOG"; then
+			return 0
+		fi
+		if mount -t ext4 "UUID=$uuid" /data 2>>"$LOG"; then
+			return 0
+		fi
+		err=$(mount -t ext4 "UUID=$uuid" /data 2>&1) || true
+		log "mount attempt $i failed: ${err:-unknown}"
+		refresh_parts "$(disk_of_part "${part:-$dev}")"
+		sleep 2
+	done
+	return 1
+}
+
+finish_ok() {
+	RETIRE_OK=1
+	retire_data_init
+	exit 0
 }
 
 refresh_parts() {
@@ -230,7 +283,49 @@ refresh_parts() {
 	partx -u "$disk" >/dev/null 2>&1 || true
 	partprobe "$disk" >/dev/null 2>&1 || true
 	block detect >/dev/null 2>&1 || true
-	sleep 1
+	sleep 2
+}
+
+force_reread_partition() {
+	local disk="$1" part="$2"
+
+	[ -b "$disk" ] || return 0
+	partprobe "$disk" >/dev/null 2>&1 || true
+	blockdev --rereadpt "$disk" >/dev/null 2>&1 || true
+	partx -u "$disk" >/dev/null 2>&1 || true
+	if [ -n "$part" ] && [ -b "$part" ]; then
+		if ! awk -v p="$part" '$1 == p { found=1; exit } END { exit !found }' /proc/mounts 2>/dev/null; then
+			partx -d "$part" >/dev/null 2>&1 || true
+		fi
+	fi
+	partx -a -i "$disk" >/dev/null 2>&1 || true
+	block detect >/dev/null 2>&1 || true
+	sleep 3
+}
+
+wait_for_part() {
+	local part="$1" i
+
+	[ -n "$part" ] || return 1
+	for i in 1 2 3 4 5 6 7 8 9 10; do
+		[ -b "$part" ] && return 0
+		refresh_parts "$(disk_of_part "$part")"
+		sleep 1
+	done
+	return 1
+}
+
+wait_for_uuid() {
+	local uuid="$1" i
+
+	[ -n "$uuid" ] || return 1
+	for i in 1 2 3 4 5 6 7 8 9 10; do
+		blkid -U "$uuid" >/dev/null 2>&1 && return 0
+		[ -e "/dev/disk/by-uuid/$uuid" ] && return 0
+		block detect >/dev/null 2>&1 || true
+		sleep 1
+	done
+	return 1
 }
 
 gpt_needs_fix() {
@@ -268,19 +363,38 @@ fix_gpt_table() {
 	return 0
 }
 
-parted_mkpart() {
-	local disk="$1" start="$2" table="$3" err
+legacy_create_label_part() {
+	local disk="$1" table="$2" start_mib="$3" err start_s
 
 	fix_gpt_table "$disk" || return 1
+
+	if command -v sgdisk >/dev/null 2>&1 && [ "$table" = "gpt" ]; then
+		log "legacy create $LABEL on $disk via sgdisk"
+		if sgdisk -n 0:0 -c 0:"$LABEL" -t 0:8300 "$disk" >>"$LOG" 2>&1; then
+			refresh_parts "$disk"
+			return 0
+		fi
+		log "sgdisk legacy create failed on $disk"
+	fi
+
+	start_s=$(parted -m -s "$disk" unit s print free 2>/dev/null | awk -F: '
+		$0 ~ /:free;$/ { last=$2 }
+		END { gsub(/s$/, "", last); print last }
+	')
+	if [ -z "$start_s" ] && [ -n "$start_mib" ]; then
+		start_s=$((start_mib * 2048))
+	fi
+	[ -n "$start_s" ] || return 1
+
 	if [ "$table" = "gpt" ]; then
 		err=$(printf 'Fix\n' | parted ---pretend-input-tty -s "$disk" -- \
-			mkpart "$LABEL" ext4 "${start}MiB" 100% 2>&1) || {
+			mkpart "$LABEL" ext4 "${start_s}s" 100% 2>&1) || {
 			log "parted mkpart failed: ${err:-unknown}"
 			return 1
 		}
 	else
 		err=$(printf 'Fix\n' | parted ---pretend-input-tty -s "$disk" -- \
-			mkpart primary ext4 "${start}MiB" 100% 2>&1) || {
+			mkpart primary ext4 "${start_s}s" 100% 2>&1) || {
 			log "parted mkpart failed: ${err:-unknown}"
 			return 1
 		}
@@ -315,11 +429,64 @@ disk_last_sector() {
 	[ -n "$end" ] && echo "${end%s}"
 }
 
+part_block_sectors() {
+	local part="$1" base disk
+
+	if command -v blockdev >/dev/null 2>&1; then
+		blockdev --getsz "$part" 2>/dev/null
+		return
+	fi
+	base=$(basename "$(readlink -f "$part" 2>/dev/null || echo "$part")")
+	disk=$(basename "$(disk_of_part "$part")")
+	[ -r "/sys/block/$disk/$base/size" ] && cat "/sys/block/$disk/$base/size"
+}
+
+wait_for_part_grow() {
+	local part="$1" disk num start last expect cur i
+
+	disk=$(disk_of_part "$part")
+	num=$(label_part_num "$disk" 2>/dev/null || true)
+	[ -n "$num" ] || num=$(basename "$(readlink -f "$part" 2>/dev/null || echo "$part")" | sed -n 's/^.*p\([0-9][0-9]*\)$/\1/p;s/^.*\([0-9][0-9]*\)$/\1/p')
+	start=$(sgdisk -i "$num" "$disk" 2>/dev/null | awk '/First sector:/{print $3}')
+	last=$(part_last_sector "$disk" "$num")
+	[ -n "$start" ] && [ -n "$last" ] || return 0
+	expect=$((last - start + 1))
+	for i in 1 2 3 4 5 6 7 8 9 10; do
+		cur=$(part_block_sectors "$part")
+		[ -n "$cur" ] && [ "$cur" -ge "$((expect - 2048))" ] && return 0
+		force_reread_partition "$disk" "$part"
+	done
+	log "partition $part still ${cur:-0} sectors, expected ~$expect"
+	return 1
+}
+
 resize_data_fs() {
-	local part="$1"
+	local part="$1" disk i tool
+
 	[ -b "$part" ] || return 0
-	command -v resize2fs >/dev/null 2>&1 || return 0
-	resize2fs "$part" >>"$LOG" 2>&1 || log "resize2fs failed on $part"
+	tool=$(command -v resize2fs 2>/dev/null || true)
+	disk=$(disk_of_part "$part")
+	wait_for_part_grow "$part" || true
+	if [ -z "$tool" ]; then
+		log "resize2fs missing, reformatting expanded $part"
+		mkfs.ext4 -F -L "$LABEL" -m 0 "$part" >>"$LOG" 2>&1 || {
+			log "mkfs.ext4 failed on $part after grow"
+			return 1
+		}
+		return 0
+	fi
+	for i in 1 2 3; do
+		if "$tool" "$part" >>"$LOG" 2>&1; then
+			return 0
+		fi
+		log "resize2fs attempt $i failed on $part"
+		force_reread_partition "$disk" "$part"
+	done
+	log "resize2fs failed on $part, reformatting $part"
+	mkfs.ext4 -F -L "$LABEL" -m 0 "$part" >>"$LOG" 2>&1 || {
+		log "mkfs.ext4 failed on $part after resize2fs"
+		return 1
+	}
 }
 
 grow_label_part() {
@@ -346,7 +513,14 @@ grow_label_part() {
 
 	log "growing $LABEL partition $num on $disk (sectors $start-$last -> end)"
 	grew=0
-	if command -v sgdisk >/dev/null 2>&1; then
+	if command -v parted >/dev/null 2>&1; then
+		if parted -s "$disk" resizepart "$num" 100% >>"$LOG" 2>&1; then
+			grew=1
+		else
+			log "parted resizepart failed on $disk part $num"
+		fi
+	fi
+	if [ "$grew" = 0 ] && command -v sgdisk >/dev/null 2>&1; then
 		if sgdisk -d "$num" "$disk" >>"$LOG" 2>&1 && \
 		   sgdisk -n "$num:${start}:0" -c "$num:$LABEL" -t "$num:8300" "$disk" >>"$LOG" 2>&1; then
 			grew=1
@@ -355,21 +529,17 @@ grow_label_part() {
 			log "sgdisk grow failed on $disk part $num"
 		fi
 	fi
-	if [ "$grew" = 0 ] && command -v parted >/dev/null 2>&1; then
-		if parted -s "$disk" unit s resizepart "$num" "$disk_last" >>"$LOG" 2>&1; then
-			grew=1
-		else
-			log "parted resizepart failed on $disk part $num"
-			return 1
-		fi
-	fi
 	[ "$grew" = 1 ] || return 1
 	fix_gpt_table "$disk" || true
+	part=$(part_path "$disk" "$num")
+	force_reread_partition "$disk" "$part"
 	refresh_parts "$disk"
 
 	part=$(part_path "$disk" "$num")
 	if [ -n "$fstype" ]; then
+		check_ext4 "$part"
 		resize_data_fs "$part"
+		check_ext4 "$part"
 	fi
 }
 
@@ -381,8 +551,15 @@ mount_existing_label_part() {
 
 	grow_label_part "$disk"
 	part=$(find_label_part "$disk" || echo "$part")
+	force_reread_partition "$disk" "$part"
+	refresh_parts "$disk"
+	part=$(find_label_part "$disk" || echo "$part")
 
 	fstype=$(blkid -o value -s TYPE "$part" 2>/dev/null || true)
+	if [ "$fstype" = "ext4" ]; then
+		check_ext4 "$part"
+		resize_data_fs "$part"
+	fi
 	if [ -z "$fstype" ]; then
 		if ! command -v mkfs.ext4 >/dev/null 2>&1; then
 			log "mkfs.ext4 missing"
@@ -395,10 +572,14 @@ mount_existing_label_part() {
 		log "formatted prebuilt $LABEL $part"
 	fi
 
+	check_ext4 "$part"
+	block detect >/dev/null 2>&1 || true
+	sleep 1
+
 	uuid=$(blkid -o value -s UUID "$part" 2>/dev/null || true)
 	[ -n "$uuid" ] || return 1
 	write_fstab "$uuid"
-	if mount_uuid "$uuid"; then
+	if mount_uuid "$uuid" "$part"; then
 		ensure_dirs
 		log "mounted $LABEL $part uuid=$uuid"
 		return 0
@@ -410,19 +591,18 @@ mount_existing_label_part() {
 if [ -f "$INIT_DONE" ]; then
 	exit 0
 fi
-trap retire_data_init EXIT
 
 if data_mounted; then
 	ROOT_PART=$(resolve_dev "$(root_src)") || {
 		ensure_dirs
-		exit 0
+		finish_ok
 	}
 	DISK=$(disk_of_part "$ROOT_PART")
 	if [ -b "$DISK" ] && find_label_part "$DISK" >/dev/null 2>&1; then
 		grow_label_part "$DISK" || true
 	fi
 	ensure_dirs
-	exit 0
+	finish_ok
 fi
 
 ROOT_PART=$(resolve_dev "$(root_src)") || {
@@ -450,7 +630,7 @@ fix_gpt_table "$DISK" || {
 }
 
 if mount_existing_label_part "$DISK"; then
-	exit 0
+	finish_ok
 fi
 
 # Legacy fallback: images without a prebuilt LEDEDATA partition.
@@ -474,11 +654,11 @@ fi
 TABLE=$(parted -m -s "$DISK" print 2>/dev/null | awk -F: 'NR==2{print $6}')
 log "legacy create $LABEL on $DISK from ${FREE_START}MiB table=$TABLE free=${FREE_SIZE}MiB"
 
-parted_mkpart "$DISK" "$FREE_START" "$TABLE" || exit 1
+legacy_create_label_part "$DISK" "$TABLE" "$FREE_START" || exit 1
 
 refresh_parts "$DISK"
 
-NEW_N=$(parted -m -s "$DISK" print 2>/dev/null | awk -F: '
+NEW_N=$(label_part_num "$DISK" || parted -m -s "$DISK" print 2>/dev/null | awk -F: '
 	$1 ~ /^[0-9]+$/ { n=$1 }
 	END { print n }
 ')
@@ -489,23 +669,24 @@ while [ ! -b "$NEW_PART" ] && [ "$i" -lt 10 ]; do
 	refresh_parts "$DISK"
 	i=$((i + 1))
 done
-if [ ! -b "$NEW_PART" ]; then
+if ! wait_for_part "$NEW_PART"; then
 	log "new partition $NEW_PART did not appear"
 	exit 1
 fi
 
-FSTYPE=$(blkid -o value -s TYPE "$NEW_PART" 2>/dev/null || true)
-if [ -z "$FSTYPE" ]; then
-	if ! command -v mkfs.ext4 >/dev/null 2>&1; then
-		log "mkfs.ext4 missing"
-		exit 1
-	fi
-	mkfs.ext4 -F -L "$LABEL" -m 0 "$NEW_PART" || {
-		log "mkfs.ext4 failed on $NEW_PART"
-		exit 1
-	}
-	log "formatted $NEW_PART ext4 label=$LABEL"
+if ! command -v mkfs.ext4 >/dev/null 2>&1; then
+	log "mkfs.ext4 missing"
+	exit 1
 fi
+mkfs.ext4 -F -L "$LABEL" -m 0 "$NEW_PART" || {
+	log "mkfs.ext4 failed on $NEW_PART"
+	exit 1
+}
+log "formatted $NEW_PART ext4 label=$LABEL"
+
+check_ext4 "$NEW_PART"
+block detect >/dev/null 2>&1 || true
+sleep 1
 
 UUID=$(blkid -o value -s UUID "$NEW_PART" 2>/dev/null || true)
 if [ -z "$UUID" ]; then
@@ -513,10 +694,10 @@ if [ -z "$UUID" ]; then
 	exit 1
 fi
 write_fstab "$UUID"
-if mount_uuid "$UUID"; then
+if mount_uuid "$UUID" "$NEW_PART"; then
 	ensure_dirs
 	log "mounted /data uuid=$UUID part=$NEW_PART"
-	exit 0
+	finish_ok
 fi
 log "mount failed uuid=$UUID part=$NEW_PART"
 exit 1

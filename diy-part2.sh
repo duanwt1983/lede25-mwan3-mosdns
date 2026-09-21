@@ -716,7 +716,9 @@ for _rel in \
   usr/share/ucode/lede-autolimit.uc \
   www/luci-static/resources/view/status/autolimit.js \
   usr/libexec/lede-data-setup \
+  usr/libexec/lede-data-mount \
   etc/init.d/lede-data \
+  etc/init.d/lede-data-mount \
   etc/uci-defaults/10-lede-data-enable \
   etc/uci-defaults/11-lede-fstab-data \
   usr/libexec/lede-autofix \
@@ -813,8 +815,8 @@ assert_grep 'ether saddr @dhcp_ban counter drop' "$_LEDE_FILES/usr/libexec/lede-
 assert_grep 'ether daddr @dhcp_ban counter drop' "$_LEDE_FILES/usr/libexec/lede-lansec"
 assert_grep "cmd == 'decide'" "$_LEDE_FILES/usr/libexec/lede-lansec"
 assert_grep "cmd == 'prune'" "$_LEDE_FILES/usr/libexec/lede-lansec"
-assert_grep 'nat_block' "$_LEDE_FILES/usr/libexec/lede-lansec"
 assert_grep 'mac_norm' "$_LEDE_FILES/usr/libexec/lede-lansec"
+assert_grep 'purge_legacy_nat' "$_LEDE_FILES/usr/libexec/lede-lansec"
 assert_grep 'drop_settled_pending' "$_LEDE_FILES/usr/libexec/lede-lansec"
 assert_grep '/etc/lede-lansec-pending.json' "$_LEDE_FILES/usr/libexec/lede-lansec"
 assert_grep 'fmtMac' "$_LEDE_FILES/www/luci-static/resources/view/network/lansec.js"
@@ -826,7 +828,9 @@ assert_grep 'mac_norm' "$_LEDE_FILES/usr/share/ucode/lede-watch.uc"
 assert_grep '网关地址被冒充' "$_LEDE_FILES/usr/share/ucode/lede-watch.uc"
 assert_absent 'lede-lansec-nat' "$_LEDE_FILES/usr/libexec/lede-lansec"
 assert_absent 'RE_ROUTER' "$_LEDE_FILES/usr/libexec/lede-lansec"
-assert_absent "ip ttl" "$_LEDE_FILES/usr/libexec/lede-lansec"
+assert_absent 'chain nat_ttl' "$_LEDE_FILES/usr/libexec/lede-lansec"
+assert_absent 'wan_l3_devices' "$_LEDE_FILES/usr/libexec/lede-lansec"
+assert_absent 'nat_block' "$_LEDE_FILES/www/luci-static/resources/view/network/lansec.js"
 assert_grep 'batchSend' "$_LEDE_FILES/usr/libexec/wan-alert"
 assert_grep 'pushplus_token' "$_LEDE_FILES/www/luci-static/resources/view/status/alertmap.js"
 assert_grep 'pushplus_prefix' "$_LEDE_FILES/usr/libexec/wan-alert"
@@ -855,9 +859,23 @@ assert_grep '/sys/dev/block/' "$_LEDE_FILES/usr/libexec/lede-data-setup"
 assert_grep 'find_label_part "$disk"' "$_LEDE_FILES/usr/libexec/lede-data-setup"
 assert_grep 'fix_gpt_table "$DISK"' "$_LEDE_FILES/usr/libexec/lede-data-setup"
 assert_grep 'grow_label_part' "$_LEDE_FILES/usr/libexec/lede-data-setup"
+assert_grep 'RETIRE_OK=1' "$_LEDE_FILES/usr/libexec/lede-data-setup"
+assert_grep 'prepare_data_mountpoint' "$_LEDE_FILES/usr/libexec/lede-data-setup"
+assert_grep 'check_ext4' "$_LEDE_FILES/usr/libexec/lede-data-setup"
 assert_grep 'retire_data_init' "$_LEDE_FILES/usr/libexec/lede-data-setup"
 assert_grep 'lede-data-init.done' "$_LEDE_FILES/usr/libexec/lede-data-setup"
 assert_grep 'mount_existing_label_part' "$_LEDE_FILES/usr/libexec/lede-data-setup"
+assert_grep 'legacy_create_label_part' "$_LEDE_FILES/usr/libexec/lede-data-setup"
+assert_grep 'sgdisk -n 0:0' "$_LEDE_FILES/usr/libexec/lede-data-setup"
+assert_grep 'wait_for_part' "$_LEDE_FILES/usr/libexec/lede-data-setup"
+assert_grep 'wait_for_uuid' "$_LEDE_FILES/usr/libexec/lede-data-setup"
+assert_grep 'force_reread_partition' "$_LEDE_FILES/usr/libexec/lede-data-setup"
+assert_grep 'export PATH="/usr/sbin:/usr/bin:/sbin:/bin:$PATH"' "$_LEDE_FILES/usr/libexec/lede-data-setup"
+assert_grep 'resize2fs missing, reformatting expanded' "$_LEDE_FILES/usr/libexec/lede-data-setup"
+assert_grep 'data_mounted || return 1' "$_LEDE_FILES/usr/libexec/lede-data-setup"
+assert_grep 'mount_from_fstab' "$_LEDE_FILES/usr/libexec/lede-data-mount"
+assert_grep 'START=82' "$_LEDE_FILES/etc/init.d/lede-data-mount"
+assert_grep 'lede-data-mount enable' "$_LEDE_FILES/etc/uci-defaults/99-custom"
 assert_absent '/etc/init.d/lede-data enable' "$_LEDE_FILES/etc/uci-defaults/99-custom"
 assert_grep 'cooldown_sec' "$_LEDE_FILES/usr/libexec/lede-lansec"
 assert_grep 'lansec_cooled' "$_LEDE_FILES/usr/libexec/wan-alert"
