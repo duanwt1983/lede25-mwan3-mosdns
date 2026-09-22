@@ -145,6 +145,8 @@ $r = Invoke-Exec $token $prep
 Write-Output $r.stdout
 if ($r.stderr) { Write-Output $r.stderr }
 
+$token = (Invoke-UbusRaw ('{"jsonrpc":"2.0","id":1,"method":"call","params":["00000000000000000000000000000000","session","login",{"username":"root","password":"' + ($Password -replace '\\','\\' -replace '"','\"') + '","timeout":600}]}'))[1].ubus_rpc_session
+
 Write-Host "`n=== verify ===" -ForegroundColor Cyan
 $v = Invoke-Exec $token @'
 export PATH=/usr/sbin:/sbin:/usr/bin:/bin
