@@ -1,0 +1,20 @@
+#!/bin/sh
+# Enable latency/packet-loss tracking on LEDE-managed mwan3 WAN interfaces.
+
+[ -f /etc/config/mwan3 ] || exit 0
+
+for sid in $(uci -q show mwan3 2>/dev/null | sed -n "s/^mwan3\\.\\([^=]*\\)=interface$/\\1/p"); do
+	[ "$(uci -q get "mwan3.$sid.lede_auto")" = "1" ] || continue
+	[ "$(uci -q get "mwan3.$sid.enabled")" = "0" ] && continue
+	case "$(uci -q get "mwan3.$sid.check_quality" 2>/dev/null)" in
+		1|yes|on|true) continue ;;
+	esac
+	uci -q set "mwan3.$sid.check_quality=1"
+	uci -q set "mwan3.$sid.failure_latency=2000"
+	uci -q set "mwan3.$sid.failure_loss=40"
+	uci -q set "mwan3.$sid.recovery_latency=1000"
+	uci -q set "mwan3.$sid.recovery_loss=10"
+done
+
+uci -q commit mwan3
+exit 0

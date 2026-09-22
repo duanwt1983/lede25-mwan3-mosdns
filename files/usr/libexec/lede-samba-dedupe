@@ -1,0 +1,29 @@
+#!/bin/sh
+# Samba4 / block-mount autoshare may add a new /data sambashare every boot.
+# Keep one share for path /data; drop duplicates. Does not remove non-/data shares.
+export PATH="/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
+
+[ -f /etc/config/samba4 ] || exit 0
+
+keep=""
+changed=0
+for sid in $(uci -q show samba4 2>/dev/null | sed -n "s/^samba4\\.\\([^=]*\\)=sambashare$/\\1/p"); do
+	path=$(uci -q get "samba4.$sid.path" 2>/dev/null || true)
+	case "$path" in
+		/data|/data/)
+			if [ -z "$keep" ]; then
+				keep="$sid"
+				[ "$path" = "/data" ] || {
+					uci -q set "samba4.$sid.path=/data"
+					changed=1
+				}
+			else
+				uci -q delete "samba4.$sid"
+				changed=1
+			fi
+			;;
+	esac
+done
+
+[ "$changed" = 1 ] && uci -q commit samba4
+exit 0

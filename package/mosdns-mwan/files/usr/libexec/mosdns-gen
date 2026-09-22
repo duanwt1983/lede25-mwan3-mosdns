@@ -43,6 +43,20 @@ function mos_cache() {
 	return '/etc/mosdns';
 }
 
+function geosite_dat_path() {
+	let paths = [
+		'/usr/share/v2ray/geosite.dat',
+		'/usr/share/xray/geosite.dat',
+		'/data/geodata/geosite.dat',
+	];
+	for (let i = 0; i < length(paths); i++) {
+		let st = stat(paths[i]);
+		if (st && st.size > 0)
+			return paths[i];
+	}
+	return null;
+}
+
 function l3_of(u, net) {
 	try {
 		let st = u.call(`network.interface.${net}`, 'status');
@@ -162,8 +176,11 @@ function ad_list_files(ctx) {
 	let src = as_list(cfg_get(ctx, 'ad_source'));
 	for (let url in src) {
 		if (url == 'geosite.dat') {
+			let gf = geosite_dat_path();
+			if (!gf)
+				continue;
 			system('mkdir -p /var/mosdns');
-			system("geo2txt geosite -f /usr/share/v2ray/geosite.dat -e category-ads-all -o /var/mosdns >/dev/null 2>&1");
+			system(sprintf("geo2txt geosite -f %s -e category-ads-all -o /var/mosdns >/dev/null 2>&1", gf));
 			let p = '/var/mosdns/geosite_category-ads-all.txt';
 			let st = stat(p);
 			if (st && st.size > 0)

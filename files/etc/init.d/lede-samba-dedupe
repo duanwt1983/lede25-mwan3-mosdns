@@ -1,0 +1,9 @@
+#!/bin/sh /etc/rc.common
+
+START=19
+STOP=89
+
+start() {
+	[ -x /usr/libexec/lede-samba-dedupe ] || return 0
+	/usr/libexec/lede-samba-dedupe
+}

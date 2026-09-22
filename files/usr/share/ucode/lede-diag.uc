@@ -40,6 +40,11 @@ function is_boot_noise(line) {
 		return true;
 	if (match(line, /Known but unused|PCI: Using CONFIG|ENERGY_PERF_BIAS/))
 		return true;
+	/* GPT bios_grub (sda128): block/fs probe tries F2FS/exFAT/NTFS — not disk failure. */
+	if (match(line, /\(sda128\)|bios_grub|partition 128/i))
+		return true;
+	if (match(line, /F2FS-fs.*Magic Mismatch|exFAT-fs.*invalid boot record|exFAT-fs.*failed to read boot sector|exFAT-fs.*failed to recognize|ntfs3\(sda/))
+		return true;
 	return false;
 }
 
@@ -133,6 +138,14 @@ export function format_kmsg(line) {
 			level: '一般',
 			cat: '内核',
 			detail: 'block 挂载时尝试识别文件系统产生的提示；/data 已是 ext4 时可忽略，不是磁盘损坏。',
+			raw
+		};
+	if (match(body, /\(sda128\)|bios_grub/i))
+		return {
+			title: 'BIOS 引导分区探测',
+			level: '一般',
+			cat: '内核',
+			detail: 'sda128 是 GPT 的 BIOS 引导区（约 239KB），不是数据盘。系统自动尝试识别文件系统时会报 F2FS/exFAT/NTFS 失败，可忽略，不是磁盘损坏。',
 			raw
 		};
 	if (match(body, /exFAT-fs|ntfs3\(|failed to recognize|Primary boot signature is not NTFS|try to read out of volume/))

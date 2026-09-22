@@ -1,0 +1,21 @@
+#!/bin/sh
+# Regenerate MosDNS runtime YAML from LuCI UCI (adblock/ad_source/etc.) and reload.
+# Called after geo/adlist updates and on service start — never overrides UCI choices.
+export PATH="/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
+
+CFG="$(uci -q get mosdns.config.configfile 2>/dev/null || true)"
+[ "$CFG" = "/var/etc/mosdns.json" ] && CFG=/var/etc/mosdns.yaml
+[ -n "$CFG" ] || CFG=/var/etc/mosdns.yaml
+
+case "$CFG" in
+	/var/etc/mosdns.yaml|/var/etc/mosdns.json)
+		[ -x /usr/share/mosdns/gen-config-custom ] && /usr/share/mosdns/gen-config-custom
+		[ -x /usr/sbin/wan-src-hash ] && /usr/sbin/wan-src-hash
+		;;
+esac
+
+if uci -q get mosdns.config.enabled 2>/dev/null | grep -qx 1; then
+	/etc/init.d/mosdns reload >/dev/null 2>&1 || /etc/init.d/mosdns restart >/dev/null 2>&1
+fi
+
+exit 0

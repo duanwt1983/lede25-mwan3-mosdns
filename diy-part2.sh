@@ -700,6 +700,10 @@ for _rel in \
   usr/share/luci/menu.d/luci-mwan3-isp.json \
   usr/share/rpcd/acl.d/luci-mwan3-isp.json \
   usr/share/rpcd/ucode/luci.isp-ip.uc \
+  usr/share/rpcd/ucode/mwan3.uc \
+  usr/libexec/lede-samba-dedupe \
+  etc/init.d/lede-samba-dedupe \
+  etc/uci-defaults/44-lede-mwan3-quality \
   usr/libexec/isp-ip-update \
   etc/init.d/isp-ip-update \
   etc/config/isp-ip \

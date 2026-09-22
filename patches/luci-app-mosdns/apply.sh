@@ -341,3 +341,53 @@ else:
 p.write_text(t, encoding="utf-8")
 PY
 fi
+
+MOSDNS_UC="$(find "$APP" -path '*/usr/share/mosdns/mosdns.uc' -type f | head -n 1)"
+if [ -n "$MOSDNS_UC" ]; then
+	python3 - "$MOSDNS_UC" <<'PY'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1])
+t = p.read_text(encoding="utf-8")
+apply_fn = '''
+function apply_luci_config() {
+	let r = exec_sys('/usr/libexec/mosdns-apply-luci');
+	if (r.code != 0)
+		print('apply_luci_config: ' + r.stdout + '\\n');
+	stdout.flush();
+}
+
+'''
+if 'function apply_luci_config(' not in t:
+	t = t.replace('let action = ARGV[0];', apply_fn + 'let action = ARGV[0];', 1)
+	old = '\t\tupdate_geodat();\n\t\tupdate_adlist();\n\t\tv2dat_dump();\n\t\tprint("UPDATE_FINISHED\\n");'
+	new = '\t\tupdate_geodat();\n\t\tupdate_adlist();\n\t\tv2dat_dump();\n\t\tapply_luci_config();\n\t\tprint("UPDATE_FINISHED\\n");'
+	if old in t:
+		t = t.replace(old, new, 1)
+		print("mosdns.uc: hook apply_luci_config after update")
+	else:
+		print("mosdns.uc: update block not found (already patched?)")
+old_else = (
+	"\t} else {\n"
+	"\t\texec_sys(`geo2txt geoip -f ${v2dat_dir}/geoip.dat -e cn -o /var/mosdns`);\n"
+	"\t\texec_sys(`geo2txt geosite -f ${v2dat_dir}/geosite.dat -e cn -e 'geolocation-!cn' -o /var/mosdns`);\n"
+	"\n"
+	"\t\tlet geoip_tags"
+)
+new_else = (
+	"\t} else {\n"
+	"\t\texec_sys(`geo2txt geoip -f ${v2dat_dir}/geoip.dat -e cn -o /var/mosdns`);\n"
+	"\t\texec_sys(`geo2txt geosite -f ${v2dat_dir}/geosite.dat -e cn -e 'geolocation-!cn' -o /var/mosdns`);\n"
+	"\t\tif (adblock === '1' && index(ad_source, 'geosite.dat') !== -1) {\n"
+	"\t\t\texec_sys(`geo2txt geosite -f ${v2dat_dir}/geosite.dat -e category-ads-all -o /var/mosdns`);\n"
+	"\t\t}\n"
+	"\n"
+	"\t\tlet geoip_tags"
+)
+if old_else in t:
+	t = t.replace(old_else, new_else, 1)
+	print("mosdns.uc: yaml v2dat_dump includes geosite ads when adblock enabled")
+p.write_text(t, encoding="utf-8")
+print("patched", p)
+PY
+fi

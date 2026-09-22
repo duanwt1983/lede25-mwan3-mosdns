@@ -25,6 +25,7 @@ define Package/mosdns-mwan/install
 	$(INSTALL_DIR) $(1)/usr/libexec $(1)/usr/sbin $(1)/usr/share/mosdns
 	$(INSTALL_DIR) $(1)/etc/hotplug.d/iface
 	$(INSTALL_BIN) ./files/usr/libexec/mosdns-gen $(1)/usr/libexec/mosdns-gen
+	$(INSTALL_BIN) ./files/usr/libexec/mosdns-apply-luci $(1)/usr/libexec/mosdns-apply-luci
 	$(INSTALL_BIN) ./files/usr/libexec/wan-src-hash $(1)/usr/libexec/wan-src-hash
 	$(INSTALL_BIN) ./files/usr/share/mosdns/gen-config-custom $(1)/usr/share/mosdns/gen-config-custom
 	$(INSTALL_BIN) ./files/usr/sbin/wan-src-hash $(1)/usr/sbin/wan-src-hash

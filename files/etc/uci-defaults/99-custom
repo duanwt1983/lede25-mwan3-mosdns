@@ -54,6 +54,8 @@ if uci -q show fstab 2>/dev/null | grep -q "target='/data'"; then
 	chmod +x /usr/libexec/lede-data-mount /etc/init.d/lede-data-mount 2>/dev/null || true
 	[ -x /etc/init.d/lede-data-mount ] && /etc/init.d/lede-data-mount enable
 fi
+chmod +x /usr/libexec/lede-samba-dedupe /etc/init.d/lede-samba-dedupe 2>/dev/null || true
+[ -x /etc/init.d/lede-samba-dedupe ] && /etc/init.d/lede-samba-dedupe enable
 chmod +x /usr/sbin/wan-src-hash 2>/dev/null || true
 if [ -x /etc/init.d/wanalert ]; then
   /etc/init.d/wanalert enable
