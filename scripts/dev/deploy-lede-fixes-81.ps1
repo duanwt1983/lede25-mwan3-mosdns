@@ -65,7 +65,11 @@ $fileMap = [ordered]@{
     'etc/init.d/lede-samba-dedupe' = '/etc/init.d/lede-samba-dedupe'
 }
 foreach ($rel in $fileMap.Keys) {
-    Upload-File $token (Join-Path $filesRoot $rel) $fileMap[$rel]
+    $remote = $fileMap[$rel]
+    Upload-File $token (Join-Path $filesRoot $rel) $remote
+    if ($remote -match '^/(usr/libexec|etc/init\.d)/') {
+        Invoke-Exec $token "chmod 755 '$remote'" | Out-Null
+    }
 }
 
 $pkgMap = @{
