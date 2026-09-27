@@ -51,7 +51,7 @@ archive=lede-component-samba4-network-shares-v1.0.1.tar.gz
 | `hwinfo` | `lede-component-hwinfo-refresh-v1.0.1.tar.gz` |
 | `samba4` | `lede-component-samba4-network-shares-v1.0.1.tar.gz` |
 | `topo-hud` | `lede-component-topo-hud-kpi-v1.0.2.tar.gz` |
-| `firmware-upgrade` | `lede-component-firmware-upgrade-v1.0.3.tar.gz` |
+| `firmware-upgrade` | `lede-component-firmware-upgrade-v1.0.5.tar.gz` |
 
 ---
 
