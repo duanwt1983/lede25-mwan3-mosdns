@@ -25,12 +25,22 @@ GitHub Actions 每次运行都在 **全新的 `ubuntu-24.04` 虚拟机** 上：
 | `scripts/setup-ubuntu24-build-host.sh` | 编译机一次性装依赖（需 sudo） |
 | `scripts/build-incremental.sh` | **增量**：更新 `files/`、`.config`、`diy-part2.sh` 后 `make` |
 | `scripts/build-offline.sh` | **全量**：删树重 clone（仅首编或大改 toolchain 时用） |
-| `scripts/deploy-remote-build.sh` | 从开发机 rsync overlay 到远程 |
+| `scripts/deploy-remote-build.sh` | 从开发机 rsync overlay 到远程（全量，前台跟日志） |
+| `scripts/trigger-remote-incremental.sh` | rsync overlay 后在远程 **后台** 跑增量编译（不跟日志） |
 
 ```bash
 export LEDE_WORK=/openwrt-build
 export OVERLAY=$LEDE_WORK/overlay
 bash "$OVERLAY/scripts/build-incremental.sh"
+```
+
+在 Mac 上推源码并 **后台** 开编（不占用终端跟日志）：
+
+```bash
+export SSHPASS='编译机密码'
+chmod +x scripts/trigger-remote-incremental.sh
+./scripts/trigger-remote-incremental.sh root@192.168.6.80
+# 编译机上查看：tail -f /openwrt-build/incremental-*.log
 ```
 
 产物：`$LEDE_WORK/openwrt/bin/targets/x86/64/`。
