@@ -83,7 +83,7 @@ for rel in "${paths[@]}"; do
 	cp -f "$src" "$dest"
 	mode=644
 	case "$rel" in
-		usr/libexec/*|etc/init.d/*|etc/hotplug.d/*|etc/uci-defaults/*)
+		usr/libexec/*|etc/init.d/*|etc/hotplug.d/*|etc/uci-defaults/*|lib/upgrade/do_stage2)
 			mode=755
 			;;
 	esac

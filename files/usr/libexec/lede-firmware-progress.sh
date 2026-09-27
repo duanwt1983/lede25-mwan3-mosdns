@@ -5,7 +5,7 @@ set -eu
 LOG=/tmp/lede-fw-flash.log
 if [ -r "$LOG" ]; then
 	echo '--- lede-fw-flash.log (tail) ---'
-	tail -20 "$LOG" 2>/dev/null || true
+	tail -40 "$LOG" 2>/dev/null || true
 fi
 
 if [ -r /tmp/sysupgrade.log ]; then

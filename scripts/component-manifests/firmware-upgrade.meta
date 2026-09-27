@@ -1,4 +1,4 @@
 pack_id=lede-component-firmware-upgrade
-version=1.0.4
-description=固件升级：mark-flash 去掉整盘 sha256 避免 LuCI 超时导致刷写失败
-archive=lede-component-firmware-upgrade-v1.0.4.tar.gz
+version=1.0.5
+description=固件升级：dd 写盘日志、刷写完成后延迟 3 秒再 reboot
+archive=lede-component-firmware-upgrade-v1.0.5.tar.gz

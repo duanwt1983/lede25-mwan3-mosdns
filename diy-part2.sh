@@ -730,6 +730,9 @@ for _rel in \
   etc/uci-defaults/46-lede-firmware-cleanup \
   etc/nginx/conf.d/luci.locations \
   etc/uwsgi/vassals/luci-cgi_io.ini \
+  lib/upgrade/lede-flash-dd.sh \
+  lib/upgrade/do_stage2 \
+  usr/libexec/lede-firmware-run-sysupgrade.sh \
   etc/config/lede-component \
   usr/libexec/lede-samba-policy \
   usr/libexec/lede-samba-sync \

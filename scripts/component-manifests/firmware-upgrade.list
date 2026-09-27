@@ -15,3 +15,6 @@ etc/uci-defaults/45-nginx-firmware-upload
 etc/uci-defaults/46-lede-firmware-cleanup
 etc/nginx/conf.d/luci.locations
 etc/uwsgi/vassals/luci-cgi_io.ini
+lib/upgrade/lede-flash-dd.sh
+lib/upgrade/do_stage2
+usr/libexec/lede-firmware-run-sysupgrade.sh

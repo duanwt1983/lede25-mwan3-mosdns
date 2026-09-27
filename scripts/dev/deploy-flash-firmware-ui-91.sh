@@ -36,6 +36,12 @@ router_put "$ROOT/files/etc/nginx/conf.d/luci.locations" \
 	'/etc/nginx/conf.d/luci.locations'
 router_put "$ROOT/files/etc/uwsgi/vassals/luci-cgi_io.ini" \
 	'/etc/uwsgi/vassals/luci-cgi_io.ini'
+router_put "$ROOT/files/lib/upgrade/lede-flash-dd.sh" \
+	'/lib/upgrade/lede-flash-dd.sh'
+router_put "$ROOT/files/lib/upgrade/do_stage2" \
+	'/lib/upgrade/do_stage2' 755
+router_put "$ROOT/files/usr/libexec/lede-firmware-run-sysupgrade.sh" \
+	'/usr/libexec/lede-firmware-run-sysupgrade.sh' 755
 
 router_sh "$(cat <<'END_REMOTE'
 /usr/libexec/lede-firmware-upload-env.sh

@@ -1,0 +1,30 @@
+#!/bin/sh
+
+. /lib/functions.sh
+
+include /lib/upgrade
+
+v "Performing system upgrade..."
+if type 'platform_do_upgrade' >/dev/null 2>/dev/null; then
+	platform_do_upgrade "$IMAGE"
+else
+	default_do_upgrade "$IMAGE"
+fi
+
+if [ -n "$UPGRADE_BACKUP" ] && type 'platform_copy_config' >/dev/null 2>/dev/null; then
+	platform_copy_config
+fi
+
+v "Upgrade completed"
+logger -t lede-fw "Upgrade completed"
+sleep 1
+
+v "Rebooting system..."
+logger -t lede-fw "Reboot scheduled in 3 seconds (LEDE flash UI)"
+v "LEDE: 刷写流程已完成，3 秒后执行 reboot -f"
+sleep 3
+
+umount -a
+reboot -f
+sleep 5
+echo b 2>/dev/null >/proc/sysrq-trigger
