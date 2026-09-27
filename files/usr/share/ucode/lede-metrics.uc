@@ -1,5 +1,6 @@
 'use strict';
 
+import { cursor } from 'uci';
 import { readfile, writefile, lsdir, popen, stat } from 'fs';
 
 export function trim(s) {
@@ -166,6 +167,61 @@ export function ncpu() {
 	if (n < 1)
 		n = 1;
 	return n;
+}
+
+function wa_cfg(ctx, key, def) {
+	let v = ctx.get('wanalert', 'main', key);
+	if (v == null || v == '')
+		return def;
+	return v;
+}
+
+function wa_alert_on(ctx, flag) {
+	return as_bool(wa_cfg(ctx, flag, '1'), true);
+}
+
+function wa_hold_fired(st, key, active, minutes) {
+	if (!active)
+		return false;
+	let mins = +minutes;
+	if (!(mins >= 0))
+		mins = 0;
+	if (mins == 0)
+		return true;
+	let start = +st['hold-' + key];
+	if (!(start > 0))
+		return false;
+	return time() - start >= mins * 60;
+}
+
+/* Match wan-alert notify timing (wanalert UCI + /tmp/wan-alert.state hold-*). */
+export function wanalert_hud_flags(cpu, load15v, temp) {
+	let out = { cpu: false, load: false, temp: false };
+	let ctx = cursor();
+	try {
+		ctx.load('wanalert');
+	} catch (e) {
+		return out;
+	}
+	let st = {};
+	try {
+		st = json(readfile('/tmp/wan-alert.state') || '{}') || {};
+	} catch (e) {
+		st = {};
+	}
+	cpu = +cpu;
+	load15v = +load15v;
+	temp = +temp;
+	if (wa_alert_on(ctx, 'alert_cpu'))
+		out.cpu = wa_hold_fired(st, 'cpu', cpu >= +wa_cfg(ctx, 'cpu_percent', 90),
+			+wa_cfg(ctx, 'cpu_hold_min', 5));
+	if (wa_alert_on(ctx, 'alert_load'))
+		out.load = wa_hold_fired(st, 'load', load15v >= +wa_cfg(ctx, 'load_warn', '2.00'),
+			+wa_cfg(ctx, 'load_hold_min', 5));
+	if (wa_alert_on(ctx, 'alert_temp'))
+		out.temp = wa_hold_fired(st, 'temp', temp >= +wa_cfg(ctx, 'temp_c', 80),
+			+wa_cfg(ctx, 'temp_hold_min', 5));
+	return out;
 }
 
 function cmd_base(cmd) {
@@ -435,14 +491,68 @@ export function atomic_write_json(path, obj) {
 	system(sprintf("mv -f '%s' '%s'", tmp, path));
 }
 
+export function repair_rate_hist(h) {
+	if (type(h) != 'object')
+		return {};
+	let t = type(h.t) == 'array' ? h.t : [];
+	let n = length(t);
+	if (n < 1)
+		return h;
+	let series = type(h.series) == 'object' ? h.series : {};
+	let order = [];
+	for (let i = 0; i < n; i++)
+		push(order, i);
+	for (let a = 0; a < n - 1; a++) {
+		for (let b = a + 1; b < n; b++) {
+			if (+t[order[b]] < +t[order[a]]) {
+				let tmp = order[a];
+				order[a] = order[b];
+				order[b] = tmp;
+			}
+		}
+	}
+	let out_t = [];
+	let out_s = {};
+	let last_ts = -1;
+	for (let k = 0; k < n; k++) {
+		let i = order[k];
+		let ts = +t[i];
+		if (ts <= 0 || ts <= last_ts)
+			continue;
+		last_ts = ts;
+		push(out_t, ts);
+		for (let name in series) {
+			if (type(out_s[name]) != 'object')
+				out_s[name] = { rx: [], tx: [], lat: [], loss: [] };
+			let s = series[name];
+			if (type(s) != 'object')
+				continue;
+			let pick = function(arr) {
+				if (type(arr) != 'array' || i >= length(arr))
+					return 0;
+				return +arr[i];
+			};
+			push(out_s[name].rx, pick(s.rx));
+			push(out_s[name].tx, pick(s.tx));
+			push(out_s[name].lat, pick(s.lat));
+			push(out_s[name].loss, pick(s.loss));
+		}
+	}
+	h.t = out_t;
+	h.series = out_s;
+	return h;
+}
+
 export function load_rate_hist() {
 	let mem = rate_hist_mem_path();
 	let h = read_json_obj(mem);
 	if (hist_has_points(h))
-		return h;
+		return repair_rate_hist(h);
 	h = read_json_obj(rate_hist_disk_path());
-	if (hist_has_points(h))
+	if (hist_has_points(h)) {
+		h = repair_rate_hist(h);
 		atomic_write_json(mem, h);
+	}
 	if (type(h) != 'object')
 		h = {};
 	return h;
@@ -467,65 +577,84 @@ export function slice_rate_hist(h, win, max_pts) {
 	let n = length(t);
 	let out_t = [];
 	let out_s = {};
+	let last_ts = 0;
 	if (n > 0) {
-		let cut = t[n - 1] - win;
-		let start = 0;
-		for (let i = 0; i < n; i++) {
-			if (t[i] >= cut) {
-				start = i;
-				break;
+		let order = [];
+		for (let i = 0; i < n; i++)
+			push(order, i);
+		for (let a = 0; a < n - 1; a++) {
+			for (let b = a + 1; b < n; b++) {
+				if (+t[order[b]] < +t[order[a]]) {
+					let tmp = order[a];
+					order[a] = order[b];
+					order[b] = tmp;
+				}
 			}
 		}
-		let count = n - start;
+		last_ts = +t[order[n - 1]];
+		let cut = last_ts - win;
+		let sel = [];
+		for (let k = 0; k < n; k++) {
+			let i = order[k];
+			if (+t[i] >= cut)
+				push(sel, i);
+		}
+		let count = length(sel);
 		let step = 1;
 		if (count > max_pts)
 			step = int((count + max_pts - 1) / max_pts);
 		if (step < 1)
 			step = 1;
 		for (let name in series)
-			out_s[name] = { rx: [], tx: [], lat: [] };
-		let i = start;
-		while (i < n) {
-			let j = i + step;
-			if (j > n)
-				j = n;
-			let use = j - 1;
-			push(out_t, t[use]);
+			out_s[name] = { rx: [], tx: [], lat: [], loss: [] };
+		let p = 0;
+		while (p < count) {
+			let q = p + step;
+			if (q > count)
+				q = count;
+			let use = sel[q - 1];
+			push(out_t, +t[use]);
 			for (let name in series) {
 				let s = series[name];
-				let rx = 0, tx = 0, lat = 0;
+				let rx = 0, tx = 0, lat = 0, loss = 0;
 				if (type(s) == 'object') {
 					let ra = type(s.rx) == 'array' ? s.rx : [];
 					let ta = type(s.tx) == 'array' ? s.tx : [];
 					let la = type(s.lat) == 'array' ? s.lat : [];
-					let k = i;
-					while (k < j) {
-						let rv = k < length(ra) ? +ra[k] : 0;
-						let tv = k < length(ta) ? +ta[k] : 0;
-						let lv = k < length(la) ? +la[k] : 0;
+					let lo = type(s.loss) == 'array' ? s.loss : [];
+					let k = p;
+					while (k < q) {
+						let ix = sel[k];
+						let rv = ix < length(ra) ? +ra[ix] : 0;
+						let tv = ix < length(ta) ? +ta[ix] : 0;
+						let lv = ix < length(la) ? +la[ix] : 0;
+						let ov = ix < length(lo) ? +lo[ix] : 0;
 						if (rv > rx)
 							rx = rv;
 						if (tv > tx)
 							tx = tv;
 						if (lv > lat)
 							lat = lv;
+						if (ov > loss)
+							loss = ov;
 						k++;
 					}
 				}
 				if (type(out_s[name]) != 'object')
-					out_s[name] = { rx: [], tx: [], lat: [] };
+					out_s[name] = { rx: [], tx: [], lat: [], loss: [] };
 				push(out_s[name].rx, rx);
 				push(out_s[name].tx, tx);
 				push(out_s[name].lat, lat);
+				push(out_s[name].loss, loss);
 			}
-			i = j;
+			p = q;
 		}
 	}
 	return {
 		interval: +(h.interval || 10),
 		window: win,
 		stored: n,
-		last: n ? +t[n - 1] : 0,
+		last: last_ts,
 		t: out_t,
 		series: out_s
 	};
@@ -561,7 +690,7 @@ function refresh_win_caches(h) {
 			tip: series_tip_of(h)
 		}));
 	} catch (e) {}
-	let wins = [ 300, 900, 1800 ];
+	let wins = [ 900, 1800, 3600, 14400, 43200, 86400 ];
 	for (let win in wins) {
 		try {
 			atomic_write_json(rate_hist_win_path(win), slice_rate_hist(h, win, 720));
@@ -575,13 +704,8 @@ export function load_rate_win(win) {
 		win = 300;
 	if (win > 86400)
 		win = 86400;
-	let head = read_json_obj('/tmp/lede-rate-head.json');
-	let c = read_json_obj(rate_hist_win_path(win));
-	if (type(c) == 'object' && c.window == win && type(c.t) == 'array' && length(c.t) > 0 &&
-	    (head.last == null || c.last == head.last))
-		return c;
 	let h = load_rate_hist();
-	c = slice_rate_hist(h, win, 720);
+	let c = slice_rate_hist(h, win, 360);
 	try { atomic_write_json(rate_hist_win_path(win), c); } catch (e) {}
 	return c;
 }

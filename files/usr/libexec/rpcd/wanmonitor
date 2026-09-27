@@ -6,12 +6,13 @@ import { readfile, writefile, popen, stat } from 'fs';
 import * as ubus from 'ubus';
 import {
 	trim, as_bool, as_list, now_fmt, max_temp_c, cpu_pct, mem_percent, bytes_of, disks_overview,
-	load_rate_win
+	load_rate_win, wanalert_hud_flags
 } from '/usr/share/ucode/lede-metrics.uc';
 import {
 	bandix_load, bandix_build_maps, bandix_iface_rates, bandix_resolve_iface_rates,
 	bandix_clients_list, bandix_wan_rates, bandix_rate_meta
 } from '/usr/share/ucode/lede-bandix.uc';
+import { collect_wan_names } from '/usr/share/ucode/lede-wan.uc';
 
 function ubus_close(u) {
 	if (u == null)
@@ -187,80 +188,16 @@ function link_mbps(dev) {
 	return n;
 }
 
-function skip_iface(sid) {
-	if (sid == null || sid == '')
-		return true;
-	if (sid == 'loopback' || sid == 'lan' || sid == 'wan6')
-		return true;
-	if (match(sid, /_6$/) || match(sid, /^@/))
-		return true;
-	return false;
-}
-
-function wan_like_proto(proto) {
-	return proto == 'pppoe' || proto == 'dhcp' || proto == 'pptp' || proto == 'l2tp' ||
-		proto == 'pppoa' || proto == '3g' || proto == 'ncm' || proto == 'qmi' ||
-		proto == 'modemmanager' || proto == 'mbim' || proto == 'wwan' ||
-		proto == 'ppp' || proto == 'dslite' || proto == 'vti' || proto == 'gre';
-}
-
-function add_wan(names, seen, sid) {
-	if (skip_iface(sid) || seen[sid])
-		return;
-	seen[sid] = true;
-	push(names, sid);
-}
-
-/* Always from 网络 → 接口 / 防火墙 WAN 区。不依赖 mwan3 是否启用。 */
-function collect_wan_names(ctx, u) {
-	let names = [];
-	let seen = {};
-
-	ctx.foreach('firewall', 'zone', (z) => {
-		if (z.name != 'wan')
-			return;
-		for (let n in as_list(z.network))
-			add_wan(names, seen, n);
-	});
-
-	ctx.foreach('network', 'interface', (s) => {
-		let sid = s['.name'];
-		if (skip_iface(sid))
-			return;
-		if (match(sid, /^wan/) || wan_like_proto(s.proto))
-			add_wan(names, seen, sid);
-	});
-
-	try {
-		if (u == null)
-			return names;
-		let dump = u.call('network.interface', 'dump');
-		if (dump && type(dump.interface) == 'array') {
-			for (let it in dump.interface) {
-				let n = it.interface;
-				if (skip_iface(n) || seen[n])
-					continue;
-				let routes = it.route;
-				if (type(routes) != 'array')
-					continue;
-				for (let r in routes) {
-					if (r && (r.target == '0.0.0.0' || r.target == '::')) {
-						add_wan(names, seen, n);
-						break;
-					}
-				}
-			}
-		}
-	} catch (e) {}
-
-	return names;
-}
-
 function rate_hist() {
 	let req = {};
 	try { req = json(readfile('/dev/stdin') || '{}'); } catch (e) { req = {}; }
-	let win = +(req.window || 300);
-	print(sprintf('%J\n', load_rate_win(win)));
+	let win = +(req.window != null ? req.window : (req[0] != null ? req[0] : 900));
+	if (win < 300)
+		win = 300;
+	if (win > 86400)
+		win = 86400;
+	let c = load_rate_win(win);
+	print(sprintf('%J\n', c));
 }
 
 function pulse() {
@@ -324,6 +261,9 @@ function pulse() {
 		wan_rates = bandix_wan_rates(bmaps, wans);
 	}
 	ubus_close(u);
+	let cpu_v = cpu_pct();
+	let temp_v = max_temp_c();
+	let load15_v = la[2] || '0.00';
 	print(sprintf('%J\n', {
 		ts: int(+up * 1000),
 		lan,
@@ -335,12 +275,13 @@ function pulse() {
 			clock, clock_hms, clock_day,
 			load_1: la[0] || '0.00',
 			load_5: la[1] || '0.00',
-			load_15: la[2] || '0.00',
-			temp_c: max_temp_c(),
-			cpu_pct: cpu_pct(),
+			load_15: load15_v,
+			temp_c: temp_v,
+			cpu_pct: cpu_v,
 			mem_pct: mem_percent(),
 			conn, conn_max,
-			uptime: int(up)
+			uptime: int(up),
+			alert_hud: wanalert_hud_flags(cpu_v, load15_v, temp_v)
 		}
 	}));
 }
@@ -420,6 +361,9 @@ function snapshot() {
 		clock_hms = hm[2];
 	}
 	let la = split(trim(readfile('/proc/loadavg') || '0.00 0.00 0.00'), /[ \t]+/);
+	let cpu_v = cpu_pct();
+	let temp_v = max_temp_c();
+	let load15_v = la[2] || '0.00';
 
 	print(sprintf('%J\n', {
 		ts: int(+up * 1000),
@@ -435,15 +379,16 @@ function snapshot() {
 			clock, clock_hms, clock_day,
 			load_1: la[0] || '0.00',
 			load_5: la[1] || '0.00',
-			load_15: la[2] || '0.00',
-			temp_c: max_temp_c(),
-			cpu_pct: cpu_pct(),
+			load_15: load15_v,
+			temp_c: temp_v,
+			cpu_pct: cpu_v,
 			mem_pct: mem_percent(),
 			conn, conn_max,
 			conn_tcp: 0,
 			conn_udp: 0,
 			conn_icmp: 0,
-			uptime: int(up)
+			uptime: int(up),
+			alert_hud: wanalert_hud_flags(cpu_v, load15_v, temp_v)
 		},
 		disks: [],
 		rates: bandix_rate_meta(bj, wans, lan_dev, clients),
@@ -550,21 +495,26 @@ function hwinfo_path() {
 	return '/tmp/lede-hwinfo.json';
 }
 
-function emit_hwinfo() {
+function emit_hwinfo(force_rescan) {
+	if (force_rescan)
+		system('/usr/libexec/lede-hwinfo >/dev/null 2>&1');
 	let path = hwinfo_path();
 	let raw = readfile(path) || '';
 	if (raw == '') {
 		system('/usr/libexec/lede-hwinfo >/dev/null 2>&1');
 		raw = readfile('/tmp/lede-hwinfo.json') || '{}';
 	}
-	if (!match(raw, /\n$/))
-		raw += '\n';
-	print(raw);
+	let data = {};
+	try {
+		data = json(raw);
+	} catch (e) {
+		data = {};
+	}
+	print(sprintf('%J\n', data));
 }
 
 function hwinfo_refresh() {
-	system('/usr/libexec/lede-hwinfo >/dev/null 2>&1');
-	emit_hwinfo();
+	emit_hwinfo(true);
 }
 
 let cmd = ARGV[0];

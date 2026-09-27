@@ -1,0 +1,2 @@
+config settings 'main'
+	option note 'LEDE overlay pack apply (LuCI only)'

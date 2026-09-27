@@ -1,0 +1,11 @@
+#!/bin/sh
+# After block mount / 20-smb, strip auto-created shares again.
+[ -x /usr/libexec/lede-samba-policy ] || exit 0
+/usr/libexec/lede-samba-policy
+[ -x /usr/libexec/lede-samba-sync ] && /usr/libexec/lede-samba-sync
+case "$ACTION" in
+	add|remove)
+		/etc/init.d/samba4 reload >/dev/null 2>&1 || true
+		;;
+esac
+exit 0

@@ -1,0 +1,8 @@
+# 拓扑概览页（status/index.js）
+www/luci-static/resources/view/status/index.js
+www/luci-static/resources/view/status/ratechart.js
+usr/share/ucode/lede-metrics.uc
+usr/share/ucode/lede-wan.uc
+usr/share/ucode/lede-watch.uc
+usr/libexec/rpcd/wanmonitor
+usr/libexec/lede-component-apply

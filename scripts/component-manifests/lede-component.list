@@ -1,0 +1,8 @@
+# Component updater backend + patched flash page (备份与更新 → 操作 → 组件升级)
+usr/libexec/lede-component-apply
+usr/libexec/lede-component-list-packs
+usr/libexec/rpcd/lede-component
+usr/share/rpcd/acl.d/zzz-lede-flash-acl.json
+usr/share/luci/menu.d/zzz-lede-flash-menu.json
+www/luci-static/resources/view/system/flash.js
+etc/config/lede-component

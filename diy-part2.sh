@@ -87,8 +87,8 @@ rm -rf package/mosdns-mwan
 cp -a "$_OVERLAY/package/mosdns-mwan" package/mosdns-mwan
 rm -rf package/wireshark
 cp -a "$_OVERLAY/package/wireshark" package/wireshark
-# Overlay scripts must be executable in the image. Git on Windows often stores
-# them as 100644; fix the index when possible, then chmod the working tree.
+# Overlay scripts must be executable in the image. A checkout may store them
+# as 100644; fix the index when possible, then chmod the working tree.
 [ -f scripts/fix-overlay-exec.sh ] && sh scripts/fix-overlay-exec.sh || true
 lede_chmod_overlay_exec() {
   local f
@@ -108,7 +108,7 @@ lede_chmod_overlay_exec() {
   done
 }
 lede_chmod_overlay_exec
-# Windows editors may leave CR; firmware runs on Linux.
+# Editors may leave CR; the firmware runs on Linux.
 lede_strip_overlay_cr() {
   find files \
     \( -name '*.sh' -o -name '*.uc' -o -name '*.js' -o -name '*.json' \
@@ -414,7 +414,7 @@ if [ -x "$_IFACE_DHCP_PATCH" ] || [ -f "$_IFACE_DHCP_PATCH" ]; then
 fi
 _LUCI_SYSTEM_PATCH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/patches/luci-mod-system/apply.sh"
 if [ -f "$_LUCI_SYSTEM_PATCH" ]; then
-  sh "$_LUCI_SYSTEM_PATCH" .
+  bash "$_LUCI_SYSTEM_PATCH" .
 fi
 if [ -f files/www/luci-static/resources/view/network/iface-dhcp-extra.js ]; then
   find feeds/luci package -path '*/view/network/interfaces.js' -type f 2>/dev/null | while read -r f; do
@@ -477,6 +477,11 @@ if [ -f files/www/luci-static/resources/view/status/index.js ]; then
         if [ -f files/www/luci-static/resources/view/status/ratechart.js ]; then
           cp files/www/luci-static/resources/view/status/ratechart.js "$(dirname "$f")/ratechart.js"
           echo "overview: installed $(dirname "$f")/ratechart.js"
+        fi
+        if [ -f files/www/luci-static/resources/tools/topo-wan-history.js ]; then
+          mkdir -p "$(dirname "$f")/../tools"
+          cp files/www/luci-static/resources/tools/topo-wan-history.js "$(dirname "$f")/../tools/topo-wan-history.js"
+          echo "overview: installed topo-wan-history.js"
         fi
 		if [ -f files/www/luci-static/resources/view/status/syslog.js ]; then
           cp files/www/luci-static/resources/view/status/syslog.js "$(dirname "$f")/syslog.js"
@@ -601,6 +606,11 @@ PY
   parted blkid sgdisk e2fsprogs \
   || true
 
+# Bake component-upgrade flash.js + Samba LuCI into feed packages (after feeds tree exists).
+if [ -f "$_LUCI_SYSTEM_PATCH" ]; then
+  bash "$_LUCI_SYSTEM_PATCH" "$(pwd)"
+fi
+
 assert_pkg() {
   local n="$1" mk=""
   mk=$(find package feeds -path "*/${n}/Makefile" 2>/dev/null | head -n 1 || true)
@@ -701,8 +711,23 @@ for _rel in \
   usr/share/rpcd/acl.d/luci-mwan3-isp.json \
   usr/share/rpcd/ucode/luci.isp-ip.uc \
   usr/share/rpcd/ucode/mwan3.uc \
-  usr/libexec/lede-samba-dedupe \
-  etc/init.d/lede-samba-dedupe \
+  usr/libexec/lede-component-apply \
+  usr/libexec/lede-component-list-packs \
+  usr/libexec/rpcd/lede-component \
+  usr/share/rpcd/acl.d/zzz-lede-flash-acl.json \
+  usr/share/luci/menu.d/zzz-lede-flash-menu.json \
+  www/luci-static/resources/view/system/flash.js \
+  etc/config/lede-component \
+  usr/libexec/lede-samba-policy \
+  usr/libexec/lede-samba-sync \
+  etc/init.d/lede-samba-policy \
+  etc/init.d/lede-samba-sync \
+  etc/hotplug.d/block/20-smb \
+  etc/hotplug.d/block/21-lede-samba-policy \
+  etc/init.d/samba4 \
+  etc/uci-defaults/45-lede-samba-defaults \
+  usr/share/ucitrack/luci-app-samba4.json \
+  www/luci-static/resources/view/samba4.js \
   etc/uci-defaults/44-lede-mwan3-quality \
   usr/libexec/isp-ip-update \
   etc/init.d/isp-ip-update \
@@ -728,7 +753,13 @@ for _rel in \
   usr/libexec/lede-autofix \
   usr/share/ucode/lede-bandix.uc \
   usr/share/ucode/lede-watch.uc \
+  usr/share/ucode/lede-metrics.uc \
   usr/libexec/rpcd/wanmonitor \
+  usr/share/rpcd/acl.d/luci-app-wan-monitor.json \
+  usr/libexec/lede-hwinfo \
+  etc/init.d/lede-hwinfo \
+  etc/uci-defaults/10-lede-hwinfo \
+  www/luci-static/resources/view/status/hwinfo.js \
   usr/libexec/wan-alert \
   usr/libexec/lede-lansec \
   etc/init.d/lede-lansec \
@@ -770,6 +801,14 @@ assert_pkg_file 'commitDisableToUci' \
   package/luci-app-mwan3 -path '*/view/mwan3/network/globals.js'
 assert_pkg_file 'lede-theme-page' \
   package/luci-app-mwan3 -path '*/view/mwan3/network/globals.js'
+_FLASH_PKG=$(find package feeds -path '*/luci-mod-system/*/view/system/flash.js' -type f 2>/dev/null | head -n 1 || true)
+_SAMBAJS_PKG=$(find package feeds -path '*/luci-app-samba4/*/view/samba4.js' -type f 2>/dev/null | head -n 1 || true)
+[ -n "$_FLASH_PKG" ] || { echo "ERROR: luci-mod-system flash.js not in build tree"; exit 1; }
+[ -n "$_SAMBAJS_PKG" ] || { echo "ERROR: luci-app-samba4 samba4.js not in build tree"; exit 1; }
+assert_grep 'ledeCompOpenInstallModal' "$_FLASH_PKG"
+assert_grep 'lede-samba-sync' "$_SAMBAJS_PKG"
+echo "package OK: $_FLASH_PKG"
+echo "package OK: $_SAMBAJS_PKG"
 assert_pkg_file 'lede-theme-page' \
   package/luci-mod-status feeds/luci -path '*/view/status/index.js'
 assert_pkg_file 'lede-theme-page' \
@@ -889,6 +928,21 @@ assert_grep 'lede_fixup_script_modes' "$_LEDE_FILES/etc/uci-defaults/99-custom"
 assert_grep '/sbin/poweroff' "$_LEDE_FILES/usr/libexec/lede-poweroff"
 assert_grep '/usr/libexec/lede-poweroff' "$_LEDE_FILES/usr/share/rpcd/acl.d/luci-lede-poweroff.json"
 assert_grep 'handlePoweroff' "$_LEDE_FILES/www/luci-static/resources/view/system/reboot.js"
+assert_grep 'ledeCompOpenInstallModal' "$_LEDE_FILES/www/luci-static/resources/view/system/flash.js"
+assert_grep '上传组件包' "$_LEDE_FILES/www/luci-static/resources/view/system/flash.js"
+assert_grep '备份与更新' "$_LEDE_FILES/www/luci-static/resources/view/system/flash.js"
+assert_grep 'lede-samba-sync' "$_LEDE_FILES/www/luci-static/resources/view/samba4.js"
+assert_grep 'config_foreach chk_en samba' "$_LEDE_FILES/etc/hotplug.d/block/20-smb"
+assert_grep 'list_packs' "$_LEDE_FILES/usr/libexec/rpcd/lede-component"
+assert_grep 'skip rpcd restart' "$_LEDE_FILES/usr/libexec/lede-component-apply"
+assert_grep 'callLedeCompStatus' "$_LEDE_FILES/www/luci-static/resources/view/system/flash.js"
+assert_grep 'fmtHudCpu' "$_LEDE_FILES/www/luci-static/resources/view/status/index.js"
+assert_grep 'topo-kpi-alert' "$_LEDE_FILES/www/luci-static/resources/view/status/index.js"
+assert_grep 'wanalert_hud_flags' "$_LEDE_FILES/usr/share/ucode/lede-metrics.uc"
+assert_grep 'alert_hud' "$_LEDE_FILES/usr/libexec/rpcd/wanmonitor"
+assert_grep 'hwinfo_refresh' "$_LEDE_FILES/www/luci-static/resources/view/status/hwinfo.js"
+assert_grep 'hwinfo_refresh' "$_LEDE_FILES/usr/share/rpcd/acl.d/luci-app-wan-monitor.json"
+assert_grep 'lede-hwinfo' "$_LEDE_FILES/etc/init.d/lede-hwinfo"
 assert_absent '宽带监控' "$_LEDE_FILES/usr/share/luci/menu.d/luci-app-wan-monitor.json"
 assert_grep 'xiaomi-phone' "$_LEDE_FILES/www/luci-static/resources/view/status/index.js"
 assert_overlay 'www/luci-static/resources/vendor/topo-icons/client-xiaomi-phone.svg'

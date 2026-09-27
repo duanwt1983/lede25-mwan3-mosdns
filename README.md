@@ -8,10 +8,19 @@
 - 防火墙：只保留 **firewall4 + nftables**（不要 iptables / legacy）
 - 默认 LAN：`192.168.9.1/24`，账号 `root` / `password`
 
-GitHub Actions 工作流显示名：`Build Lean 25 x86-64 PassWall samba4`。  
-改 `.config` / `diy-*.sh` / `files/` / `package/` / `patches/` / `scripts/` 或工作流文件并推到 `main` 会触发编译；只改本 README 不会。
+GitHub **仅托管源码**（Actions 每次是全新 Ubuntu，无法像编译机那样增量 `make`，故 **push 不触发在线编译**）。日常固件在自有编译机生成，见下方「编译方式」。
 
 刷入本仓库编译的镜像即带齐下面列出的功能，**不依赖热部署**。默认账号密码只适合先装机，上线后请改掉。
+
+## 编译方式
+
+| 场景 | 做法 |
+|------|------|
+| **自有编译机（推荐）** | Ubuntu 24 上 `scripts/build-incremental.sh`（如 6.80 `/openwrt-build`），见 [docs/BUILD-METHODS.md](docs/BUILD-METHODS.md) |
+| **GitHub Actions（不推荐日常用）** | 仅遗留 [全量工作流](.github/workflows/build-lede.yml)，需 **手动 Run workflow**；runner 无持久编译树，**不能增量**，详见 [docs/BUILD-METHODS.md](docs/BUILD-METHODS.md) |
+| **同步 GitHub** | `./scripts/sync-to-github.sh`（只推源码，不触发编译） |
+
+固件以 overlay 为准；**编镜像请在编译机**（如 6.80 `build-incremental.sh`），GitHub 与本地共用同一套 `files/` / `diy-part2.sh`。
 
 ## 当前固件现状（菜单）
 
@@ -82,7 +91,9 @@ GitHub Actions 工作流显示名：`Build Lean 25 x86-64 PassWall samba4`。
 | DDNS | ddns-go |
 | 网页终端 | ttyd |
 | 主题 | Argon |
-| 文件共享 | samba4 |
+| 文件共享 | samba4（默认**关闭**；LuCI 可启用；不自动共享 `/data`，目录需手工添加） |
+| 组件升级 | **系统 → 备份与更新 → 操作 → 组件升级**（`.tar.gz` 热更新；见 [docs/COMPONENT-PACK-DEVELOPMENT.md](docs/COMPONENT-PACK-DEVELOPMENT.md)） |
+| 固件升级 | **系统 → 备份与更新 → 操作 → 固件升级 → 刷写固件…**（整盘 `.img`/`.img.gz`；见 [docs/FIRMWARE-UPGRADE.md](docs/FIRMWARE-UPGRADE.md)） |
 | 磁盘管理 | luci-app-diskman + **smartmontools**（硬件信息页 SMART 健康度） |
 | 文件管理 | luci-app-filemanager |
 
@@ -90,6 +101,7 @@ GitHub Actions 工作流显示名：`Build Lean 25 x86-64 PassWall samba4`。
 
 ## 状态概览（拓扑图）
 
+- 顶部 KPI（负载 / CPU / 温度 / 内存 / WAN·LAN 速率等）：标题居中、数字贴底；CPU/温度/15 分钟负载在 **系统报警** 条件满足时数字红字跳动。
 - 多线路速率、在线设备、链路流量；单位统一 **Mbps**。
 - **终端列表图标**（只在这一页的列表上，不改 Bandix 设备页、不写「小米手机」这类文字）：
   - 橙色手机：小米 / Redmi

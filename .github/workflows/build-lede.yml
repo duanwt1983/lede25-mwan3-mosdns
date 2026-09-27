@@ -1,18 +1,12 @@
+# Legacy full firmware build on GitHub-hosted runners.
+# Each run is a FRESH ubuntu-24.04 VM: no persistent openwrt/build_dir → always full clone + make.
+# Day-to-day builds use a self-hosted host (see docs/BUILD-METHODS.md, scripts/build-incremental.sh).
+# Trigger only manually when you need a Release artifact from GitHub (not for incremental dev).
+
 name: Build Lean 25 x86-64 PassWall samba4
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main, master]
-    paths:
-      - '.config'
-      - 'diy-part1.sh'
-      - 'diy-part2.sh'
-      - 'files/**'
-      - 'package/**'
-      - 'patches/**'
-      - 'scripts/**'
-      - '.github/workflows/build-lede.yml'
 
 concurrency:
   group: build-lede-${{ github.ref }}
@@ -35,7 +29,7 @@ permissions:
 
 jobs:
   build:
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && !contains(github.event.head_commit.message, '[skip ci]'))
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     timeout-minutes: 240
     steps:

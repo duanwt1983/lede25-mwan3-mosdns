@@ -1,0 +1,29 @@
+#!/bin/sh
+# One-shot: default Samba off, no autoshare (does not overwrite user settings later).
+
+MARK=/etc/.lede-samba-defaults.done
+[ -f "$MARK" ] && exit 0
+[ -f /etc/config/samba4 ] || exit 0
+
+if ! uci -q get samba4.@samba[0].autoshare >/dev/null 2>&1; then
+	uci -q set samba4.@samba[0].autoshare='0'
+fi
+if ! uci -q get samba4.@samba[0].enabled >/dev/null 2>&1; then
+	uci -q set samba4.@samba[0].enabled='0'
+fi
+uci -q commit samba4
+
+chmod +x /usr/libexec/lede-samba-policy /etc/init.d/lede-samba-policy 2>/dev/null || true
+[ -x /etc/init.d/lede-samba-policy ] && /etc/init.d/lede-samba-policy enable
+[ -x /usr/libexec/lede-samba-policy ] && /usr/libexec/lede-samba-policy
+chmod +x /usr/libexec/lede-samba-sync /etc/init.d/lede-samba-sync 2>/dev/null || true
+[ -x /etc/init.d/lede-samba-sync ] && /etc/init.d/lede-samba-sync enable
+[ -x /usr/libexec/lede-samba-sync ] && /usr/libexec/lede-samba-sync
+
+if [ -x /etc/init.d/samba4 ]; then
+	/etc/init.d/samba4 stop >/dev/null 2>&1 || true
+	/etc/init.d/samba4 disable >/dev/null 2>&1 || true
+fi
+
+touch "$MARK"
+exit 0

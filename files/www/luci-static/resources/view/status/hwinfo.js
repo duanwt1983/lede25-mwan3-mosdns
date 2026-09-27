@@ -1,12 +1,36 @@
 'use strict';
 'require view';
 'require rpc';
+'require ui';
 
 const callHwinfo = rpc.declare({
 	object: 'wanmonitor',
 	method: 'hwinfo',
 	expect: {}
 });
+
+const callHwinfoRefresh = rpc.declare({
+	object: 'wanmonitor',
+	method: 'hwinfo_refresh',
+	expect: {}
+});
+
+function normalizeHwinfo(d) {
+	if (d == null)
+		return {};
+	if (typeof d === 'string') {
+		try {
+			return JSON.parse(d);
+		} catch (e) {
+			return {};
+		}
+	}
+	if (typeof d === 'object' && d.collected != null)
+		return d;
+	if (typeof d === 'object' && d.result != null)
+		return normalizeHwinfo(d.result);
+	return d;
+}
 
 function dash(v) {
 	if (v == null)
@@ -573,14 +597,23 @@ return view.extend({
 	handleReset: null,
 
 	load() {
-		return callHwinfo().catch(function() { return {}; });
+		return callHwinfo().then(normalizeHwinfo).catch(function() { return {}; });
 	},
 
 	render(data) {
+		const view = this;
 		const box = E('div', { 'id': 'lede-hwinfo' });
+		const metaEl = E('span', { 'class': 'hw-meta' }, '');
+
+		function setMeta(d) {
+			d = normalizeHwinfo(d);
+			const t = d.collected || '';
+			metaEl.textContent = t ? (_('采集时间：%s').format(t)) : _('尚未采集');
+		}
 
 		function fill(d) {
-			d = d || {};
+			d = normalizeHwinfo(d);
+			setMeta(d);
 			box.innerHTML = '';
 			box.appendChild(card('主板', machineCard(d.machine, d.pci)));
 			if ((d.power || []).some(psuFilled))
@@ -593,10 +626,36 @@ return view.extend({
 			box.appendChild(card('温度', sensorCard(d.sensors)));
 		}
 
+		function refreshHwinfo(btn) {
+			if (btn)
+				btn.disabled = true;
+			return callHwinfoRefresh().then(function(d) {
+				fill(d);
+				ui.addNotification(null, E('p', {}, _('硬件信息已重新采集。')), 'info');
+			}).catch(function(e) {
+				ui.addNotification(null, E('p', {}, _('刷新失败：%s').format(e.message || String(e))), 'warning');
+			}).finally(function() {
+				if (btn)
+					btn.disabled = false;
+			});
+		}
+
 		fill(data);
+
+		const refreshBtn = E('button', {
+			'class': 'btn cbi-button cbi-button-action',
+			'click': ui.createHandlerFn(view, function(ev) {
+				const btn = ev.currentTarget;
+				btn.classList.add('spinning');
+				return refreshHwinfo(btn).finally(function() {
+					btn.classList.remove('spinning');
+				});
+			})
+		}, _('刷新'));
 
 		return E('div', {}, [
 			E('style', {}, `
+				.hw-toolbar { margin:0 0 12px; display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
 				.hw-card { margin:0 0 16px; padding:14px 16px; border-radius:8px;
 					background: var(--background-color-high, #fff);
 					border:1px solid var(--border-color-medium, #ddd); }
@@ -605,6 +664,7 @@ return view.extend({
 				.hw-k { width:10em; opacity:.72; }
 				.hw-meta, .hw-empty { opacity:.78; font-size:13px; }
 			`),
+			E('div', { 'class': 'hw-toolbar' }, [ metaEl, refreshBtn ]),
 			box
 		]);
 	}

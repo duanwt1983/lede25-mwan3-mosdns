@@ -1,0 +1,5 @@
+# 组件包元数据（build-lede-component-pack.sh samba4 读取）
+pack_id=lede-component-samba4-network-shares
+version=1.0.1
+description=Samba 网络共享：UCI 保存并应用、无虚假未保存提示、去掉后台状态行
+archive=lede-component-samba4-network-shares-v1.0.1.tar.gz

@@ -1,0 +1,210 @@
+#!/bin/sh
+# Apply a LEDE component pack (.tar.gz) built by scripts/build-lede-component-pack.sh
+# Usage: lede-component-apply file /path/to/pack.tar.gz
+#        lede-component-apply url  https://host/path/pack.tar.gz
+set -eu
+
+STATE=/etc/lede-component-state.json
+VERS=/etc/lede-component-versions.json
+LOG=/tmp/lede-component-apply.log
+ALLOW_PREFIX="
+/usr/libexec/
+/etc/init.d/
+/etc/hotplug.d/
+/etc/uci-defaults/
+/www/luci-static/
+/usr/share/luci/
+/usr/share/rpcd/
+/usr/share/ucode/
+/usr/share/ucitrack/
+/etc/config/
+"
+
+log() {
+	printf '%s %s\n' "$(date '+%Y-%m-%dT%H:%M:%S')" "$*" | tee -a "$LOG"
+}
+
+json_escape() {
+	printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
+write_state() {
+	local ok=$1 err=$2 ver=$3 pid=$4 run=${5:-0}
+	local runj=false
+	[ "$run" = 1 ] || [ "$run" = true ] && runj=true
+	{
+		printf '{'
+		printf '"ok":%s,' "$ok"
+		printf '"running":%s,' "$runj"
+		printf '"error":"%s",' "$(json_escape "$err")"
+		printf '"version":"%s",' "$(json_escape "$ver")"
+		printf '"pack_id":"%s",' "$(json_escape "$pid")"
+		printf '"applied_at":"%s"' "$(date '+%Y-%m-%dT%H:%M:%S')"
+		printf '}\n'
+	} > "$STATE"
+}
+
+path_allowed() {
+	local dest=$1 p
+	case "$dest" in
+		*..*) return 1 ;;
+		/*) ;;
+		*) dest="/$dest" ;;
+	esac
+	for p in $ALLOW_PREFIX; do
+		case "$dest" in
+			${p}*) return 0 ;;
+		esac
+	done
+	return 1
+}
+
+fetch_url() {
+	local url=$1 out=$2
+	if command -v curl >/dev/null 2>&1; then
+		curl -fsSL --max-time 600 -o "$out" "$url"
+	elif command -v uclient-fetch >/dev/null 2>&1; then
+		uclient-fetch -T 600 -O "$out" "$url"
+	elif command -v wget >/dev/null 2>&1; then
+		wget -T 600 -O "$out" "$url"
+	else
+		return 1
+	fi
+}
+
+MODE=${1:-}
+SRC=${2:-}
+PACK=""
+WORKDIR=""
+
+cleanup() {
+	[ -n "$WORKDIR" ] && [ -d "$WORKDIR" ] && rm -rf "$WORKDIR"
+}
+trap cleanup EXIT
+
+case "$MODE" in
+	file)
+		[ -f "$SRC" ] || { write_state false "file not found: $SRC" "" ""; echo '{"ok":false,"error":"file not found"}'; exit 1; }
+		PACK=$SRC
+		;;
+	url)
+		[ -n "$SRC" ] || { write_state false "empty url" "" ""; echo '{"ok":false,"error":"empty url"}'; exit 1; }
+		PACK=/tmp/lede-component-dl.tar.gz
+		log "download $SRC"
+		fetch_url "$SRC" "$PACK" || {
+			write_state false "download failed" "" ""
+			echo '{"ok":false,"error":"download failed"}'
+			exit 1
+		}
+		;;
+	*)
+		echo '{"ok":false,"error":"usage: file PATH | url URL"}'
+		exit 1
+		;;
+esac
+
+write_state false "" "" "" 1
+log "begin apply mode=$MODE src=$SRC"
+
+extract_pack() {
+	case "$PACK" in
+		*.tar.gz|*.tgz) tar -xzf "$PACK" -C "$WORKDIR" 2>>"$LOG" ;;
+		*.tar) tar -xf "$PACK" -C "$WORKDIR" 2>>"$LOG" ;;
+		*)
+			if gzip -t "$PACK" 2>/dev/null; then
+				tar -xzf "$PACK" -C "$WORKDIR" 2>>"$LOG"
+			else
+				tar -xf "$PACK" -C "$WORKDIR" 2>>"$LOG"
+			fi
+			;;
+	esac
+}
+
+WORKDIR=$(mktemp -d /tmp/lede-component.XXXXXX)
+log "extract to $WORKDIR"
+if ! extract_pack; then
+	write_state false "unsupported or corrupt pack (need tar.gz/tgz/tar with manifest.json)" "" ""
+	echo '{"ok":false,"error":"unsupported or corrupt pack"}'
+	exit 1
+fi
+
+ROOT="$WORKDIR"
+[ -f "$WORKDIR/manifest.json" ] || {
+	# allow single top-level directory
+	sub=$(find "$WORKDIR" -mindepth 1 -maxdepth 1 -type d | head -1)
+	[ -f "$sub/manifest.json" ] && ROOT=$sub
+}
+[ -f "$ROOT/manifest.json" ] || {
+	write_state false "manifest.json missing" "" ""
+	echo '{"ok":false,"error":"manifest.json missing"}'
+	exit 1
+}
+
+PACK_ID=$(sed -n 's/.*"pack_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$ROOT/manifest.json" | head -1)
+PACK_VER=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$ROOT/manifest.json" | head -1)
+[ -n "$PACK_ID" ] || PACK_ID=unknown
+[ -n "$PACK_VER" ] || PACK_VER=unknown
+log "pack $PACK_ID version $PACK_VER"
+
+# Install files listed in manifest "files": [ {"path":"usr/...","mode":"755"}, ... ]
+# Fallback: install every file under ROOT except manifest.json and post-apply.sh
+install_one() {
+	local rel=$1 mode=${2:-644}
+	local src="$ROOT/$rel" dest="/$rel"
+	[ -f "$src" ] || return 0
+	path_allowed "$rel" || {
+		log "SKIP forbidden path $rel"
+		return 1
+	}
+	mkdir -p "$(dirname "$dest")"
+	cp -f "$src" "$dest"
+	chmod "$mode" "$dest" 2>/dev/null || chmod 644 "$dest"
+	log "INSTALLED $dest"
+}
+
+if grep -q '"files"' "$ROOT/manifest.json" 2>/dev/null; then
+	# paths from manifest: crude parse lines with "path":
+	grep '"path"' "$ROOT/manifest.json" | sed -n 's/.*"path"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | while read -r rel; do
+		[ -n "$rel" ] || continue
+		mode=$(grep -F "\"$rel\"" "$ROOT/manifest.json" | sed -n 's/.*"mode"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
+		[ -n "$mode" ] || mode=644
+		install_one "$rel" "$mode" || true
+	done
+else
+	find "$ROOT" -type f ! -name manifest.json ! -name post-apply.sh | while read -r f; do
+		rel=${f#"$ROOT/"}
+		install_one "$rel" 644 || true
+	done
+fi
+
+if [ -x "$ROOT/post-apply.sh" ]; then
+	log "run post-apply.sh"
+	( cd / && sh "$ROOT/post-apply.sh" ) >>"$LOG" 2>&1 || true
+fi
+
+# Merge version record
+if command -v jsonfilter >/dev/null 2>&1; then
+	[ -f "$VERS" ] || echo '{}' > "$VERS"
+	# append via uci-style simple rewrite
+	printf '{\n  "%s": {"version":"%s","applied_at":"%s"}\n}\n' \
+		"$PACK_ID" "$PACK_VER" "$(date '+%Y-%m-%dT%H:%M:%S')" > "$VERS"
+else
+	printf '%s %s %s\n' "$PACK_ID" "$PACK_VER" "$(date '+%Y-%m-%dT%H:%M:%S')" >> /etc/lede-component-versions.log
+fi
+
+# Do not restart rpcd here — it drops the active LuCI session during component install.
+# Ucode rpcd plugins are executed from disk on each call; ACL changes take effect on next login.
+RESTART_RPCD=0
+grep -qE '"restart_rpcd"[[:space:]]*:[[:space:]]*true' "$ROOT/manifest.json" 2>/dev/null && RESTART_RPCD=1
+if [ "$RESTART_RPCD" = 1 ]; then
+	log "restart rpcd (manifest restart_rpcd=true)"
+	/etc/init.d/rpcd restart >/dev/null 2>&1 || true
+else
+	log "skip rpcd restart (keep LuCI session)"
+fi
+rm -rf /tmp/luci-*cache* 2>/dev/null || true
+[ -x /sbin/luci-clear-cache ] && /sbin/luci-clear-cache 2>/dev/null || true
+
+write_state true "" "$PACK_VER" "$PACK_ID"
+log "OK $PACK_ID $PACK_VER"
+printf '{"ok":true,"pack_id":"%s","version":"%s"}\n' "$PACK_ID" "$PACK_VER"

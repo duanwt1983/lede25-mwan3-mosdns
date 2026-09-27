@@ -5,7 +5,6 @@
 'require ui';
 'require lede-theme-page as ledeTheme';
 'require tools.topo-bandix-devlist as TopoBandixDevList';
-
 const NS = 'http://www.w3.org/2000/svg';
 
 const callSnapshot = rpc.declare({
@@ -208,6 +207,22 @@ function padFig(s, w, dir) {
 
 const RATE_NUM_W = 6;
 const RATE_UNIT_W = 6;
+
+function fmtHudCpu(v) {
+	if (v == null || v === '' || !isFinite(Number(v)))
+		return padFig('—', 3, 'start') + '%';
+	return padFig(String(Math.round(Number(v))), 3, 'start') + '%';
+}
+
+function fmtHudBitrate(bps) {
+	const p = bitrateParts(bps);
+	return padFig(p.num, RATE_NUM_W, 'start') + ' ' + padFig(p.unit, RATE_UNIT_W, 'end');
+}
+
+function fmtHudPlain(v, w) {
+	const s = (v == null || v === '') ? '—' : String(v);
+	return padFig(s, w || 4, 'start');
+}
 const CLI_PITCH = 28;
 const CLI_TOPN_MAX = 30;
 const TOPO_CANVAS = { w: 1280, h: 520 };
@@ -1702,6 +1717,25 @@ return view.extend({
 		});
 	},
 
+	linkLatAnchor(key, mid, wantRate, extraCount) {
+		const L = (this.links || {})[key] || {};
+		if (isFinite(L.latX) && isFinite(L.latY))
+			return { x: L.latX, y: L.latY };
+		const n = Math.max(1, extraCount || 1);
+		const rateOff = wantRate ? 14 : 0;
+		return {
+			x: mid.x,
+			y: mid.y - 10 - rateOff - (n - 1) * 13 / 2
+		};
+	},
+
+	setLinkLatPos(key, x, y) {
+		this.patchLink(key, {
+			latX: snapVal(x, this.snapGrid),
+			latY: snapVal(y, this.snapGrid)
+		});
+	},
+
 	drawPoly(layer, pts, idleLink) {
 		const attr = polyPoints(pts);
 		const idle = !!idleLink;
@@ -1957,6 +1991,60 @@ return view.extend({
 			function move(e) {
 				const p = self.clientToSvg(svg, e.clientX, e.clientY);
 				self.setLinkRatePos(key, a0.x + p.x - p0.x, a0.y + p.y - p0.y);
+				self._didDrag = true;
+				if (!self._dragRaf) {
+					self._dragRaf = requestAnimationFrame(function() {
+						self._dragRaf = 0;
+						if (self.model)
+							self.rebuild(svg, self.model);
+					});
+				}
+			}
+			function up() {
+				window.removeEventListener('pointermove', move);
+				window.removeEventListener('pointerup', up);
+				self._dragging = false;
+				if (self._didDrag)
+					self.saveLinks();
+				self.fillDetail();
+			}
+			window.addEventListener('pointermove', move);
+			window.addEventListener('pointerup', up);
+		});
+	},
+
+	bindLinkLatDrag(hit, key, kind, anchor) {
+		const self = this;
+		hit.addEventListener('click', function(ev) {
+			ev.stopPropagation();
+			if (self._didDrag) {
+				self._didDrag = false;
+				return;
+			}
+			self.selected = key;
+			self.selectedKind = kind;
+			self.fillDetail();
+			if (self.model)
+				self.rebuild(document.getElementById('topo-svg'), self.model);
+		});
+		hit.addEventListener('pointerdown', function(ev) {
+			if (ev.button || self.layoutLock)
+				return;
+			ev.stopPropagation();
+			ev.preventDefault();
+			const svg = document.getElementById('topo-svg');
+			if (!svg)
+				return;
+			self._didDrag = false;
+			self._dragging = true;
+			self.selected = key;
+			self.selectedKind = kind;
+			const p0 = self.clientToSvg(svg, ev.clientX, ev.clientY);
+			const a0 = { x: anchor.x, y: anchor.y };
+			try { hit.setPointerCapture(ev.pointerId); } catch (e) {}
+			function move(e) {
+				const p = self.clientToSvg(svg, e.clientX, e.clientY);
+				self.setLinkLatPos(key, a0.x + p.x - p0.x, a0.y + p.y - p0.y);
 				self._didDrag = true;
 				if (!self._dragRaf) {
 					self._dragRaf = requestAnimationFrame(function() {
@@ -2475,11 +2563,35 @@ return view.extend({
 		});
 		if (wantUsage)
 			wantRate = true;
-		extras.forEach((t, i) => {
-			this.strokeLabel(layer, mid.x,
-				mid.y - 10 - (wantRate ? 14 : 0) - (extras.length - 1 - i) * 13,
-				t, 'currentColor');
-		});
+		if (extras.length) {
+			const latAnchor = this.linkLatAnchor(key, mid, wantRate, extras.length);
+			const stackH = (extras.length - 1) * 13 + 14;
+			let hitW = 48;
+			extras.forEach(t => {
+				hitW = Math.max(hitW, String(t).length * 7 + 12);
+			});
+			const g = svgEl('g', { 'class': 'topo-link-lat', 'data-link-key': key });
+			const hit = svgEl('rect', {
+				x: latAnchor.x - hitW / 2 - 4,
+				y: latAnchor.y - stackH / 2,
+				width: hitW + 8,
+				height: stackH,
+				fill: '#fff',
+				'fill-opacity': this.selected === key ? '0.22' : '0',
+				stroke: this.selected === key ? '#2563eb' : 'none',
+				'stroke-width': 1,
+				rx: 3,
+				style: this.layoutLock ? 'cursor:pointer' : 'cursor:grab',
+				'pointer-events': 'all'
+			});
+			g.appendChild(hit);
+			const topY = latAnchor.y - (extras.length - 1) * 13 / 2;
+			extras.forEach((t, i) => {
+				this.strokeLabel(g, latAnchor.x, topY + i * 13, t, 'currentColor');
+			});
+			layer.appendChild(g);
+			this.bindLinkLatDrag(hit, key, kind, latAnchor);
+		}
 		if (wantRate) {
 			const caps = wantUsage ? {
 				tx: bag.bw_up,
@@ -3360,27 +3472,46 @@ return view.extend({
 		let wanRx = 0, wanTx = 0;
 		m.wans.forEach(r => { wanRx += r.rx; wanTx += r.tx; });
 		const sys = m.sys || {};
-		el.innerHTML = '';
 		if (this._clkMs == null)
 			this.noteClock(sys);
-		[
-			['15分钟负载', sys.load_15 || '—'],
-			['CPU', (sys.cpu_pct != null ? sys.cpu_pct : '—') + '%'],
-			['温度', sys.temp_c ? sys.temp_c + '℃' : '—'],
-			['内存', (sys.mem_pct != null ? sys.mem_pct : memPct(this.info)) + '%'],
-			['连接数', String(sys.conn != null ? sys.conn : '—')],
-			['WAN↓', fmtBitrate(wanRx)],
-			['WAN↑', fmtBitrate(wanTx)],
-			['LAN↓', fmtBitrate(m.lanDown)],
-			['LAN↑', fmtBitrate(m.lanUp)],
-			['在线终端', String((m.sum && m.sum.online) || 0)],
-			['运行时长', fmtBootUptime(sys.uptime != null ? sys.uptime : ((m.snap && m.snap.ts) ? m.snap.ts / 1000 : 0))]
-		].forEach(pair => {
-			el.appendChild(E('div', { 'class': 'topo-kpi' }, [
-				E('div', { 'class': 'k' }, pair[0]),
-				E('div', { 'class': 'v' }, pair[1])
-			]));
-		});
+
+		const defs = [
+			{ id: 'load', k: '15分钟负载', v: fmtHudPlain(sys.load_15, 6) },
+			{ id: 'cpu', k: 'CPU', v: fmtHudCpu(sys.cpu_pct) },
+			{ id: 'temp', k: '温度', v: sys.temp_c ? fmtHudPlain(Math.round(Number(sys.temp_c)), 3) + '℃' : '—  ℃' },
+			{ id: 'mem', k: '内存', v: fmtHudCpu(sys.mem_pct != null ? sys.mem_pct : memPct(this.info)) },
+			{ id: 'conn', k: '连接数', v: fmtHudPlain(sys.conn != null ? sys.conn : '—', 5) },
+			{ id: 'wanrx', k: 'WAN↓', v: fmtHudBitrate(wanRx) },
+			{ id: 'wantx', k: 'WAN↑', v: fmtHudBitrate(wanTx) },
+			{ id: 'lanrx', k: 'LAN↓', v: fmtHudBitrate(m.lanDown) },
+			{ id: 'lantx', k: 'LAN↑', v: fmtHudBitrate(m.lanUp) },
+			{ id: 'online', k: '在线终端', v: fmtHudPlain((m.sum && m.sum.online) || 0, 4) },
+			{ id: 'uptime', k: '运行时长', v: fmtBootUptime(sys.uptime != null ? sys.uptime : ((m.snap && m.snap.ts) ? m.snap.ts / 1000 : 0)) }
+		];
+
+		if (!this._hudCells || !el.firstChild) {
+			el.innerHTML = '';
+			this._hudCells = {};
+			defs.forEach(function(d) {
+				const val = E('div', { 'class': 'v' }, d.v);
+				el.appendChild(E('div', { 'class': 'topo-kpi', 'data-hud-id': d.id }, [
+					E('div', { 'class': 'k' }, d.k),
+					val
+				]));
+				this._hudCells[d.id] = val;
+			}, this);
+			return;
+		}
+		const ah = (sys.alert_hud && typeof sys.alert_hud === 'object') ? sys.alert_hud : {};
+		defs.forEach(function(d) {
+			const node = this._hudCells[d.id];
+			if (!node)
+				return;
+			node.textContent = d.v;
+			const on = (d.id === 'load' && ah.load) || (d.id === 'cpu' && ah.cpu) ||
+				(d.id === 'temp' && ah.temp);
+			node.classList.toggle('topo-kpi-alert', !!on);
+		}, this);
 	},
 
 	entityTitle(key, kind) {
@@ -3407,14 +3538,14 @@ return view.extend({
 	},
 
 	fillDetail() {
-		const box = document.getElementById('topo-detail');
-		if (!box || !this.model)
+		const box = this._detailEl || document.getElementById('topo-detail');
+		if (!box)
 			return;
 		const m = this.model;
 		const key = this.selected;
 		const kind = this.selectedKind;
 		box.innerHTML = '';
-		if (!key) {
+		if (!key || !m) {
 			box.appendChild(E('h4', {}, '点选图中的设备或连线'));
 			box.appendChild(E('p', {}, '选中后可勾选要画在图上的数据。点交换机、任一客户端或客户端连线，可改图上显示的客户端数量。'));
 			return;
@@ -4041,7 +4172,7 @@ return view.extend({
 				E('div', { 'id': 'topo-hud', 'class': 'topo-hud' })
 			]),
 			svg,
-			E('div', { 'id': 'topo-detail', 'class': 'topo-detail' }),
+			this._detailEl = E('div', { 'id': 'topo-detail', 'class': 'topo-detail' }),
 			bandixHost,
 			bplusModalHost
 		];
@@ -4049,7 +4180,7 @@ return view.extend({
 		ledeTheme.injectStyles('lede-topo-page', [
 			'#maincontent .topo-title h2 { display:block !important; margin:0; font-size:1.4em; font-weight:700; background:transparent !important; }',
 			'.topo-hud-row { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:12px; margin:0 0 10px; width:100%; }',
-			'.topo-hud { display:flex; flex-wrap:wrap; gap:8px; margin:0; flex:1 1 auto; min-width:0; }',
+			'.topo-hud { display:flex; flex-wrap:nowrap; gap:8px; margin:0; flex:1 1 auto; min-width:0; overflow-x:auto; align-items:stretch; }',
 			'#maincontent h2[name="content"], #maincontent > .container > h2 { position: relative; padding-right: 0; min-height: 2em; }',
 			'#maincontent h2[name="content"] > .lede-clock-status, #maincontent h2 > .lede-clock-status { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); margin: 0; pointer-events: none; }',
 			'.lede-clock-status { white-space: nowrap; text-align: center; font-size: 18px; font-weight: 750; font-variant-numeric: tabular-nums; font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace; line-height: 1.2; color: var(--primary, #2563eb); }',
@@ -4057,9 +4188,11 @@ return view.extend({
 			'.topo-wrap { width: 100%; min-width: 0; box-sizing: border-box; padding: 0; box-shadow: none; border: none; background: transparent; }',
 			'.topo-layout-ops { display:flex; justify-content:flex-end; align-items:center; gap:14px; margin:0; font-size:12px; white-space:nowrap; pointer-events:auto; }',
 			'.topo-layout-ops label { margin:0; cursor:pointer; }',
-			'.topo-kpi { min-width:88px; padding:8px 10px; border-radius:8px; background: var(--cbi-section-bg, var(--background-color-high, #fff)); border:1px solid rgba(0,0,0,0.08); box-shadow: 0 2px 6px rgba(0,0,0,0.03); }',
-			'.topo-kpi .k { font-size:11px; opacity:.65; }',
-			'.topo-kpi .v { font-size:15px; font-weight:750; font-variant-numeric: tabular-nums; }',
+			'.topo-kpi { flex:0 0 auto; min-width:88px; min-height:54px; padding:8px 10px 7px; border-radius:8px; background: var(--cbi-section-bg, var(--background-color-high, #fff)); border:1px solid rgba(0,0,0,0.08); box-shadow: 0 2px 6px rgba(0,0,0,0.03); display:flex; flex-direction:column; align-items:center; justify-content:flex-start; box-sizing:border-box; }',
+			'.topo-kpi .k { width:100%; text-align:center; font-size:11px; opacity:.65; line-height:1.25; flex:0 0 auto; white-space:nowrap; }',
+			'.topo-kpi .v { width:100%; text-align:center; font-size:15px; font-weight:750; font-variant-numeric: tabular-nums lining-nums; line-height:1.2; flex:0 0 auto; margin-top:auto; white-space:nowrap; letter-spacing:0; transform:translateY(0); }',
+			'.topo-kpi .v.topo-kpi-alert { color:#dc2626 !important; animation:topo-kpi-alert-bounce 0.9s ease-in-out infinite; }',
+			'@keyframes topo-kpi-alert-bounce { 0%, 100% { transform:translateY(0); } 50% { transform:translateY(-4px); } }',
 			'.topo-svg { width:100%; height:auto; display:block; min-height:520px; overflow:hidden; background: var(--cbi-section-bg, var(--background-color-high, #fafbfc)); border:1px solid rgba(0,0,0,0.08); border-radius:8px; color: var(--text-color-high, #1e293b); box-shadow: 0 2px 6px rgba(0,0,0,0.03); }',
 			'.topo-shumoku-card { pointer-events: bounding-box; }',
 			'.topo-port-badge text { pointer-events: none; }',
@@ -4069,7 +4202,7 @@ return view.extend({
 			'.topo-edit-lab { margin-top:10px !important; font-weight:650; }',
 			'.topo-edit { display:flex; flex-wrap:wrap; gap:10px 14px; }',
 			'.topo-wan-x { animation: topo-x-blink .7s step-end infinite; }',
-			'@keyframes topo-x-blink { 50% { opacity: .12; } }'
+			'@keyframes topo-x-blink { 50% { opacity: .12; } }',
 		].join('\n'), [
 			'.lede-clock-status { color: var(--primary, #60a5fa); }',
 			'.topo-kpi, .topo-detail, .topo-svg { background: rgba(255,255,255,0.03); border-color: rgba(255,255,255,0.08); box-shadow: none; }'
@@ -4098,6 +4231,8 @@ return view.extend({
 
 	handleRemove: function() {
 		this.unmountBandixDevList();
+		this._detailEl = null;
+		this._hudCells = null;
 		this.polling = false;
 		this.animating = false;
 		if (this._pollIv) {

@@ -219,3 +219,5 @@ diy-part2.sh                   # 固件自检与 feed 烘焙
 ```
 
 维护 overlay → 更新 manifest → 打包 → 安装验证 → 提交源码（含 `files/` 与 manifest，可选提交 `dist/` 作发布附件）。
+
+整盘 `.img` 升级与组件包的区别见 [FIRMWARE-UPGRADE.md](FIRMWARE-UPGRADE.md)。

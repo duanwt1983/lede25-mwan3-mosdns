@@ -1,0 +1,5 @@
+# 组件包元数据（build-lede-component-pack.sh hwinfo 读取）
+pack_id=lede-component-hwinfo-refresh
+version=1.0.1
+description=硬件信息页：刷新重新采集、显示采集时间、修复刷新 RPC/ACL；组件安装不再重启 rpcd
+archive=lede-component-hwinfo-refresh-v1.0.1.tar.gz

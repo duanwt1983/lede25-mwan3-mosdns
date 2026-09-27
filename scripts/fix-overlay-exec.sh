@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 # Mark overlay scripts executable in git index and working tree.
 # Run from repo root after adding new init/hotplug/libexec scripts.
 set -e

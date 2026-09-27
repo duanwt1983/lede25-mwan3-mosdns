@@ -1,0 +1,11 @@
+# Samba4 overlay hotfix bundle (one path per line, relative to files/)
+usr/libexec/lede-samba-policy
+usr/libexec/lede-samba-sync
+etc/init.d/lede-samba-policy
+etc/init.d/lede-samba-sync
+etc/init.d/samba4
+etc/hotplug.d/block/20-smb
+etc/hotplug.d/block/21-lede-samba-policy
+www/luci-static/resources/view/samba4.js
+usr/share/ucitrack/luci-app-samba4.json
+usr/libexec/lede-component-apply

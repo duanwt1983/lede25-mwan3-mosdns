@@ -256,6 +256,33 @@ export function bandix_wan_rates(maps, wans) {
 	return out;
 }
 
+/* Prefer Bandix WAN-zone interface metrics (same source as pulse.wan_rates). */
+export function bandix_wan_rate_for(maps, bj, dev, uci_name) {
+	dev = trim(`${dev || ''}`);
+	uci_name = trim(`${uci_name || ''}`);
+	let r = bandix_resolve_iface_rates(maps, dev || uci_name, [ uci_name, dev ]);
+	if (+(r.down_bps || 0) + +(r.up_bps || 0) > 0)
+		return r;
+	if (!bj || !bj.data || type(bj.data.interfaces) != 'array')
+		return r;
+	for (let i = 0; i < length(bj.data.interfaces); i++) {
+		let iface = bj.data.interfaces[i];
+		if (type(iface) != 'object')
+			continue;
+		if (lc(trim(`${iface.zone || ''}`)) != 'wan')
+			continue;
+		let ifn = trim(`${iface.ifname || ''}`);
+		if (ifn == '')
+			continue;
+		if (dev != '' && ifn != dev && ifn != uci_name)
+			continue;
+		if (dev == '' && uci_name != '' && ifn != uci_name)
+			continue;
+		return bandix_resolve_iface_rates(maps, ifn, [ ifn, dev, uci_name ]);
+	}
+	return r;
+}
+
 export function bandix_rate_meta(bj, wans, lan_dev, clients) {
 	let empty = {
 		interval: 2,

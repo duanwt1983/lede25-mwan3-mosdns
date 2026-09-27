@@ -1,0 +1,4 @@
+pack_id=lede-component-upgrader
+version=1.0.3
+description=固件升级：镜像保存到 /data/firmware.bin；ACL 与 LuCI 说明更新
+archive=lede-component-upgrader-v1.0.3.tar.gz

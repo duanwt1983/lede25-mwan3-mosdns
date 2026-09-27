@@ -1,0 +1,19 @@
+#!/bin/sh
+# List component pack files on the router (for LuCI picker).
+export PATH="/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
+
+json_str() {
+	printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
+printf '{"packages":['
+first=1
+for f in $(find /tmp /data -maxdepth 4 -type f \( -name '*.tar.gz' -o -name '*.tgz' -o -name '*.tar' \) 2>/dev/null | head -80); do
+	[ -f "$f" ] || continue
+	sz=$(stat -c %s "$f" 2>/dev/null || echo 0)
+	name=$(basename "$f")
+	[ "$first" -eq 1 ] || printf ','
+	first=0
+	printf '{"path":"%s","name":"%s","bytes":%s}' "$(json_str "$f")" "$(json_str "$name")" "$sz"
+done
+printf ']}'

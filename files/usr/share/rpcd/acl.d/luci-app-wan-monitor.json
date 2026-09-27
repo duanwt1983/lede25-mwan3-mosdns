@@ -3,8 +3,8 @@
 		"description": "Grant access to WAN monitor and system alerts",
 		"read": {
 			"ubus": {
-				"wanmonitor": [ "snapshot", "pulse", "rate_hist", "layout_get", "hwinfo" ],
-				"luci.bandix_plus": [ "getDevices", "getSchedules" ],
+				"wanmonitor": [ "snapshot", "pulse", "rate_hist", "layout_get", "hwinfo", "hwinfo_refresh" ],
+				"luci.bandix_plus": [ "getDevices", "getSchedules", "getOverview", "getTrend" ],
 				"lede-autolimit": [ "status" ]
 			},
 			"uci": [ "wanalert", "lede-log", "system", "mosdns", "passwall", "network", "mwan3", "firewall", "lede-autolimit" ],

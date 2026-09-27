@@ -1,0 +1,5 @@
+# 状态 → 概览 → 拓扑图顶部 KPI（CPU 等）数字对齐
+pack_id=lede-component-topo-hud-kpi
+version=1.0.3
+description=拓扑页 WAN 组合历史图（多 WAN+总和、延时丢包、15分～24h、悬停）
+archive=lede-component-topo-hud-kpi-v1.0.3.tar.gz

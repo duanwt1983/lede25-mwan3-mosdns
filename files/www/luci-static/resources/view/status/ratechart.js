@@ -397,8 +397,297 @@ function draw(wrap, spec) {
 	}
 }
 
+const COMBO_W = 800;
+const COMBO_H = 240;
+const COMBO_PAD = { l: 118, r: 78, t: 22, b: 24 };
+
+function comboPlotBox() {
+	return {
+		x: COMBO_PAD.l,
+		y: COMBO_PAD.t,
+		w: COMBO_W - COMBO_PAD.l - COMBO_PAD.r,
+		h: COMBO_H - COMBO_PAD.t - COMBO_PAD.b
+	};
+}
+
+function comboAxisText(x, y, text, anchor, color, weight, inside) {
+	const n = svgEl('text', {
+		x: String(x),
+		y: String(y),
+		'text-anchor': anchor || 'start',
+		'font-size': '11',
+		'font-weight': weight || '400',
+		fill: color || 'currentColor'
+	});
+	n.textContent = text == null ? '' : String(text);
+	if (inside) {
+		n.setAttribute('stroke', 'var(--background-color-high, #fff)');
+		n.setAttribute('stroke-width', '4');
+		n.setAttribute('paint-order', 'stroke');
+	}
+	return n;
+}
+
+function comboLinePath(values, max, box, pointCount) {
+	const n = Math.max(2, +(pointCount || 0) || (values ? values.length : 0) || 2);
+	const arr = values && values.length ? values : [];
+	const pts = [];
+	for (let i = 0; i < n; i++) {
+		const v = i < arr.length ? (Number(arr[i]) || 0) : 0;
+		const x = box.x + (i / (n - 1)) * box.w;
+		pts.push(x.toFixed(1) + ',' + yOf(v, max, box).toFixed(1));
+	}
+	return pts.join(' ');
+}
+
+function comboTrafficMax(traffic) {
+	let maxBps = 1;
+	(traffic || []).forEach(l => {
+		(l.values || []).forEach(v => {
+			const n = Number(v) || 0;
+			if (n > maxBps)
+				maxBps = n;
+		});
+	});
+	return niceMax(Math.max(maxBps, 50000));
+}
+
+function drawComboPanel(wrap, spec) {
+	ensureCombo(wrap);
+	wrap._comboSpec = spec || { t: [], traffic: [], quality: [] };
+	const t = wrap._comboSpec.t || [];
+	const traffic = wrap._comboSpec.traffic || [];
+	const quality = wrap._comboSpec.quality || [];
+	const n = t.length;
+	const box = comboPlotBox();
+	wrap._comboBox = box;
+	const svg = wrap._comboSvg;
+	const gGrid = wrap._comboGrid;
+	const gPlot = wrap._comboPlot;
+	const gAxis = wrap._comboAxis;
+	while (gGrid.firstChild)
+		gGrid.removeChild(gGrid.firstChild);
+	while (gPlot.firstChild)
+		gPlot.removeChild(gPlot.firstChild);
+	while (gAxis.firstChild)
+		gAxis.removeChild(gAxis.firstChild);
+
+	const maxBps = comboTrafficMax(traffic);
+	let maxLat = 10;
+	let maxLoss = 10;
+	quality.forEach(l => {
+		const arr = l.values || [];
+		if (l.kind === 'pct')
+			arr.forEach(v => { if (v > maxLoss) maxLoss = v; });
+		else
+			arr.forEach(v => { if (v > maxLat) maxLat = v; });
+	});
+	maxLat = niceMax(Math.max(10, maxLat));
+	maxLoss = niceMax(Math.max(10, Math.min(100, maxLoss)));
+	const xLossLab = 8;
+	const xLatLab = 58;
+	const xLossAxis = 104;
+	const xLatAxis = 112;
+
+	gGrid.appendChild(svgEl('rect', {
+		x: String(box.x), y: String(box.y),
+		width: String(box.w), height: String(box.h),
+		fill: 'rgba(127,127,127,.06)', rx: '4'
+	}));
+
+	gAxis.appendChild(svgEl('line', {
+		x1: String(box.x + box.w), x2: String(box.x + box.w),
+		y1: String(box.y), y2: String(box.y + box.h),
+		stroke: '#2563eb', 'stroke-width': '1.5', opacity: '0.65'
+	}));
+	gAxis.appendChild(svgEl('line', {
+		x1: String(xLatAxis), x2: String(xLatAxis),
+		y1: String(box.y), y2: String(box.y + box.h),
+		stroke: COL_LAT, 'stroke-width': '1.5', opacity: '0.65'
+	}));
+	gAxis.appendChild(svgEl('line', {
+		x1: String(xLossAxis), x2: String(xLossAxis),
+		y1: String(box.y), y2: String(box.y + box.h),
+		stroke: '#dc2626', 'stroke-width': '1.5', opacity: '0.65'
+	}));
+
+	for (let k = 0; k <= 4; k++) {
+		const frac = k / 4;
+		const y = box.y + box.h * (1 - frac);
+		gGrid.appendChild(svgEl('line', {
+			x1: String(box.x), x2: String(box.x + box.w),
+			y1: y.toFixed(1), y2: y.toFixed(1),
+			stroke: 'rgba(127,127,127,.22)', 'stroke-width': '1'
+		}));
+		if (frac < 1)
+			gAxis.appendChild(comboAxisText(box.x + box.w + 6, y + 4, fmtBit(maxBps * frac), 'start', '#1d4ed8', '600'));
+		if (frac < 1) {
+			gAxis.appendChild(comboAxisText(xLatLab, y + 4, fmtMs(maxLat * frac), 'start', COL_LAT, '600', true));
+			gAxis.appendChild(comboAxisText(xLossLab, y + 4, (maxLoss * frac).toFixed(0) + '%', 'start', '#dc2626', '600', true));
+		}
+	}
+
+	const span = n >= 2 ? (t[n - 1] - t[0]) : 0;
+	const tickN = 6;
+	for (let k = 0; k < tickN; k++) {
+		const frac = tickN === 1 ? 0 : k / (tickN - 1);
+		const i = n <= 1 ? 0 : Math.round(frac * (n - 1));
+		const x = n <= 1 ? box.x : box.x + (i / Math.max(1, n - 1)) * box.w;
+		const lab = svgEl('text', {
+			x: x.toFixed(1),
+			y: String(COMBO_H - 4),
+			'text-anchor': k === 0 ? 'start' : (k === tickN - 1 ? 'end' : 'middle'),
+			'font-size': '10',
+			fill: 'currentColor',
+			opacity: '.72'
+		});
+		lab.textContent = n ? (span >= 12 * 3600 ? fmtWhenLong(t[i]) : fmtWhen(t[i])) : '';
+		gAxis.appendChild(lab);
+	}
+
+	if (n >= 2) {
+		traffic.forEach(l => {
+			const pts = comboLinePath(l.values, maxBps, box, n);
+			const isTotal = (l.label || '').indexOf('总') >= 0;
+			const isUp = (l.label || '').indexOf('上行') >= 0;
+			gPlot.appendChild(svgEl('polyline', {
+				fill: 'none',
+				stroke: l.color || '#2563eb',
+				'stroke-width': String(l.width || (isTotal ? 1.6 : 1.15)),
+				'stroke-dasharray': l.dash || '',
+				'stroke-linecap': 'round',
+				'stroke-linejoin': 'round',
+				opacity: isUp ? '0.88' : '1',
+				points: pts
+			}));
+		});
+		quality.forEach(l => {
+			const max = l.kind === 'pct' ? maxLoss : maxLat;
+			gPlot.appendChild(svgEl('polyline', {
+				fill: 'none',
+				stroke: l.color || COL_LAT,
+				'stroke-width': String(l.kind === 'pct' ? '0.95' : '1.05'),
+				'stroke-dasharray': l.dash || (l.kind === 'pct' ? '4 3' : '2 2'),
+				'stroke-linecap': 'round',
+				opacity: l.kind === 'pct' ? '0.88' : '0.78',
+				points: comboLinePath(l.values, max, box, n)
+			}));
+		});
+	}
+
+	const hit = wrap.querySelector('.ratecombo-hit');
+	if (hit) {
+		hit.setAttribute('x', String(box.x));
+		hit.setAttribute('y', String(box.y));
+		hit.setAttribute('width', String(box.w));
+		hit.setAttribute('height', String(box.h));
+	}
+	const cursor = wrap.querySelector('.ratecombo-cursor');
+	if (cursor) {
+		cursor.setAttribute('y1', String(box.y));
+		cursor.setAttribute('y2', String(box.y + box.h));
+	}
+}
+
+function bindComboHover(wrap) {
+	const tip = wrap.querySelector('.ratecombo-tip');
+	const cursor = wrap.querySelector('.ratecombo-cursor');
+	const svg = wrap._comboSvg;
+	const hide = function() {
+		tip.style.display = 'none';
+		cursor.setAttribute('opacity', '0');
+	};
+	const hit = wrap.querySelector('.ratecombo-hit');
+	if (!hit)
+		return;
+	hit.addEventListener('mouseleave', hide);
+	hit.addEventListener('mousemove', function(ev) {
+		const spec = wrap._comboSpec;
+		const box = wrap._comboBox || comboPlotBox();
+		if (!spec || !spec.t || !spec.t.length)
+			return;
+		const rec = svg.getBoundingClientRect();
+		if (rec.width <= 0)
+			return;
+		const sx = (ev.clientX - rec.left) * (COMBO_W / rec.width);
+		const n = spec.t.length;
+		let i = Math.round(((sx - box.x) / box.w) * (n - 1));
+		if (i < 0)
+			i = 0;
+		if (i > n - 1)
+			i = n - 1;
+		const x = box.x + (i / Math.max(1, n - 1)) * box.w;
+		cursor.setAttribute('x1', x.toFixed(1));
+		cursor.setAttribute('x2', x.toFixed(1));
+		cursor.setAttribute('opacity', '1');
+		const span = spec.t[n - 1] - spec.t[0];
+		const when = span >= 12 * 3600 ? fmtWhenLong(spec.t[i]) : fmtWhen(spec.t[i]);
+		const lines = [when];
+		(spec.traffic || []).forEach(l => {
+			lines.push(l.label + '  ' + fmtBitFull((l.values || [])[i]));
+		});
+		(spec.quality || []).forEach(l => {
+			const v = (l.values || [])[i];
+			if (l.kind === 'pct')
+				lines.push(l.label + '  ' + (Number(v) || 0).toFixed(1) + ' %');
+			else
+				lines.push(l.label + '  ' + fmtMs(v));
+		});
+		tip.textContent = lines.join('\n');
+		tip.style.display = 'block';
+		const left = ev.clientX - rec.left + 14;
+		const top = ev.clientY - rec.top + 10;
+		tip.style.left = Math.min(left, rec.width - 200) + 'px';
+		tip.style.top = Math.min(top, rec.height - 100) + 'px';
+	});
+}
+
+function ensureCombo(wrap) {
+	if (wrap._comboReady)
+		return wrap;
+	wrap.classList.add('ratecombo-wrap');
+	const svg = svgEl('svg', {
+		viewBox: '0 0 ' + COMBO_W + ' ' + COMBO_H,
+		class: 'ratecombo',
+		preserveAspectRatio: 'none'
+	});
+	svg.style.width = '100%';
+	svg.style.height = COMBO_H + 'px';
+	svg.style.display = 'block';
+	svg.style.overflow = 'visible';
+	wrap._comboSvg = svg;
+	wrap._comboGrid = svgEl('g');
+	wrap._comboPlot = svgEl('g');
+	wrap._comboAxis = svgEl('g');
+	svg.appendChild(wrap._comboGrid);
+	svg.appendChild(wrap._comboPlot);
+	svg.appendChild(wrap._comboAxis);
+	svg.appendChild(svgEl('line', {
+		class: 'ratecombo-cursor',
+		stroke: 'rgba(30,41,59,.55)',
+		'stroke-width': '1',
+		opacity: '0'
+	}));
+	svg.appendChild(svgEl('rect', { class: 'ratecombo-hit', fill: 'transparent' }));
+	const tip = document.createElement('div');
+	tip.className = 'ratecombo-tip';
+	wrap.appendChild(svg);
+	wrap.appendChild(tip);
+	bindComboHover(wrap);
+	wrap._comboReady = true;
+	return wrap;
+}
+
+function drawCombo(wrap, spec) {
+	ensureCombo(wrap);
+	drawComboPanel(wrap, spec);
+	return wrap;
+}
+
 return baseclass.extend({
 	COLORS: ['#16a34a', '#2563eb', '#ea580c', '#7c3aed', '#db2777', '#0891b2'],
+	WAN_TRAFFIC_COLORS: ['#dc2626', '#2563eb', '#ca8a04', '#059669', '#7c3aed', '#db2777'],
+	WAN_TOTAL_COLOR: '#0f172a',
 
 	renderInto(el, spec) {
 		if (!el)
@@ -425,5 +714,12 @@ return baseclass.extend({
 		const wrap = document.createElement('div');
 		draw(wrap, { t: times && times.length ? times : [], series: series || [] });
 		return wrap;
+	},
+
+	renderCombo(el, spec) {
+		if (!el)
+			return el;
+		drawCombo(el, spec);
+		return el;
 	}
 });

@@ -1,0 +1,67 @@
+#!/bin/sh
+# ubus object: lede-component { status, apply_url, apply_file }
+
+case "$1" in
+	list)
+		cat <<'EOF'
+{"status":{},"list_packs":{},"apply_url":{"url":""},"apply_file":{"path":""}}
+EOF
+		;;
+		list_packs)
+			/usr/libexec/lede-component-list-packs
+			;;
+	call)
+		case "$2" in
+			status)
+				if [ -f /etc/lede-component-state.json ]; then
+					cat /etc/lede-component-state.json
+				else
+					echo '{"ok":true,"version":"","pack_id":"","applied_at":""}'
+				fi
+				;;
+			apply_url)
+				read -r input
+				url=$(printf '%s' "$input" | jsonfilter -e '@.url' 2>/dev/null)
+				[ -n "$url" ] || url=$(printf '%s' "$input" | sed -n 's/.*"url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+				[ -n "$url" ] || { echo '{"ok":false,"error":"missing url"}'; exit 1; }
+				LOCK=/tmp/lede-component-apply.lock
+				if [ -f "$LOCK" ]; then
+					pid=$(cat "$LOCK" 2>/dev/null)
+					if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+						echo '{"ok":false,"error":"install in progress"}'
+						exit 0
+					fi
+				fi
+				( /usr/libexec/lede-component-apply url "$url"; rm -f "$LOCK" ) >>/tmp/lede-component-apply.log 2>&1 &
+				echo $! > "$LOCK"
+				echo '{"ok":true,"started":true}'
+				;;
+			apply_file)
+				read -r input
+				path=$(printf '%s' "$input" | jsonfilter -e '@.path' 2>/dev/null)
+				[ -n "$path" ] || path=$(printf '%s' "$input" | sed -n 's/.*"path"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+				[ -n "$path" ] || path="/tmp/lede-overlay.tar.gz"
+				[ -f "$path" ] || { echo '{"ok":false,"error":"file not found"}'; exit 0; }
+				LOCK=/tmp/lede-component-apply.lock
+				if [ -f "$LOCK" ]; then
+					pid=$(cat "$LOCK" 2>/dev/null)
+					if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+						echo '{"ok":false,"error":"install in progress"}'
+						exit 0
+					fi
+				fi
+				( /usr/libexec/lede-component-apply file "$path"; rm -f "$LOCK" ) >>/tmp/lede-component-apply.log 2>&1 &
+				echo $! > "$LOCK"
+				echo '{"ok":true,"started":true}'
+				;;
+			*)
+				echo '{"ok":false,"error":"unknown method"}'
+				exit 1
+				;;
+		esac
+		;;
+	*)
+		echo '{"ok":false,"error":"unknown command"}'
+		exit 1
+		;;
+esac

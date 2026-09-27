@@ -1,43 +1,67 @@
-#!/bin/sh
-# System page: description field label -> 标题 (brand title for login/sidebar).
+#!/bin/bash
+# Patch flash.js for component upgrade + bake overlay LuCI into feed packages.
 set -e
-ROOT="${1:-.}"
-SYS="$(find "$ROOT/feeds/luci" "$ROOT/package" -path '*/view/system/system.js' -type f 2>/dev/null | head -n 1 || true)"
-[ -n "$SYS" ] || { echo "system.js not found"; exit 0; }
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+BUILD="$(cd "${1:-.}" && pwd)"
+PATCH="$ROOT/patches/luci-mod-system/patch-flash-component.py"
+OUT="$ROOT/files/www/luci-static/resources/view/system/flash.js"
+UP="$ROOT/tmp-flash-upstream.js"
 
-python3 - "$SYS" <<'PY'
-from pathlib import Path
-import re
-import sys
+if [ ! -f "$OUT" ] || ! grep -q handleLedeComponentUrl "$OUT" 2>/dev/null; then
+	SRC=""
+	for p in \
+		"$UP" \
+		"$BUILD/feeds/luci/modules/luci-mod-system/htdocs/luci-static/resources/view/system/flash.js" \
+		"$BUILD/package/luci-mod-system/htdocs/luci-static/resources/view/system/flash.js" \
+		"$ROOT/../feeds/luci/modules/luci-mod-system/htdocs/luci-static/resources/view/system/flash.js"
+	do
+		[ -f "$p" ] && SRC=$p && break
+	done
 
-p = Path(sys.argv[1])
-t = p.read_text(encoding="utf-8")
-if "form.Value, 'description', _('标题')" in t:
-    print("system.js description label already 标题", p)
-    raise SystemExit(0)
+	if [ -z "$SRC" ]; then
+		echo "luci-mod-system: no upstream flash.js for patch (overlay must ship flash.js)"
+	else
+		python3 "$PATCH" "$SRC" "$OUT"
+		echo "luci-mod-system: patched flash.js -> $OUT"
+	fi
+else
+	echo "luci-mod-system: flash.js overlay OK"
+fi
 
-old = (
-    "o = s.taboption('general', form.Value, 'description', _('Description'), "
-    "_('An optional, short description for this device'));"
-)
-new = (
-    "o = s.taboption('general', form.Value, 'description', _('标题'), "
-    "_('登录页与侧栏显示的品牌标题，留空则显示主机名'));"
-)
-if old in t:
-    t = t.replace(old, new, 1)
-else:
-    t2, n = re.subn(
-        r"(s\.taboption\('general', form\.Value, 'description', _\(')[^']*('\),\s*_\(')[^']*('\)\);)",
-        r"\1标题\2登录页与侧栏显示的品牌标题，留空则显示主机名\3",
-        t,
-        count=1,
-    )
-    if not n:
-        print("system.js description field not found", p)
-        raise SystemExit(1)
-    t = t2
+bake_view() {
+	local rel="$1" label="$2"
+	local src="$ROOT/files/www/luci-static/resources/view/$rel"
+	[ -f "$src" ] || { echo "WARN: missing overlay view $src"; return 0; }
+	find "$BUILD/feeds" "$BUILD/package" -path "*/view/$rel" -type f 2>/dev/null \
+	| while IFS= read -r f; do
+		[ -n "$f" ] || continue
+		cp "$src" "$f"
+		echo "$label: baked $rel -> $f"
+	done
+}
 
-p.write_text(t, encoding="utf-8")
-print("patched", p, "description -> 标题")
-PY
+bake_view "system/flash.js" "luci-mod-system"
+bake_view "samba4.js" "luci-app-samba4"
+
+# Samba4 server init + hotplug from overlay (same as rootfs files/)
+install_overlay_file() {
+	local rel="$1"
+	local src="$ROOT/files/$rel"
+	[ -f "$src" ] || return 0
+	local dest=""
+	case "$rel" in
+		etc/init.d/samba4)
+			dest=$(find "$BUILD/feeds" "$BUILD/package" -path '*/samba4-server/*/init.d/samba4' -type f 2>/dev/null | head -n 1)
+			;;
+		etc/hotplug.d/block/20-smb)
+			dest=$(find "$BUILD/feeds" "$BUILD/package" -path '*/samba4-server/*/hotplug.d/block/20-smb' -type f 2>/dev/null | head -n 1)
+			;;
+	esac
+	if [ -n "$dest" ] && [ -f "$dest" ]; then
+		install -m 755 "$src" "$dest"
+		echo "samba4-server: baked $rel -> $dest"
+	fi
+}
+
+install_overlay_file etc/init.d/samba4
+install_overlay_file etc/hotplug.d/block/20-smb

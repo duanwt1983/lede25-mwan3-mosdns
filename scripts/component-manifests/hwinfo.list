@@ -1,0 +1,5 @@
+# 状态 → 概览 → 硬件信息：刷新按钮 + RPC/ACL
+www/luci-static/resources/view/status/hwinfo.js
+usr/libexec/rpcd/wanmonitor
+usr/share/rpcd/acl.d/luci-app-wan-monitor.json
+usr/libexec/lede-component-apply

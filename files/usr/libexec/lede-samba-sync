@@ -1,0 +1,19 @@
+#!/bin/sh
+# Keep /etc/init.d/samba4 enable symlink aligned with UCI samba.enabled (no uci commit).
+export PATH="/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
+
+[ -f /etc/config/samba4 ] || exit 0
+
+sid=$(uci -q show samba4 2>/dev/null | sed -n "s/^samba4\\.\\([^=]*\\)=samba\$/\\1/p" | head -1)
+[ -n "$sid" ] || exit 0
+
+en=$(uci -q get "samba4.$sid.enabled" 2>/dev/null || echo 0)
+[ -x /etc/init.d/samba4 ] || exit 0
+
+if [ "$en" = "1" ]; then
+	/etc/init.d/samba4 enable >/dev/null 2>&1 || true
+else
+	/etc/init.d/samba4 disable >/dev/null 2>&1 || true
+fi
+
+exit 0

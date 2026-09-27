@@ -3,15 +3,17 @@
 import { readfile, writefile, popen, unlink } from 'fs';
 import * as ubus from 'ubus';
 import { trim, as_bool, load_rate_hist, save_rate_hist, save_rate_windows } from '/usr/share/ucode/lede-metrics.uc';
+import { collect_wan_rows } from '/usr/share/ucode/lede-wan.uc';
 import {
-	bandix_load, bandix_build_maps, bandix_iface_rates, bandix_resolve_iface_rates,
-	bandix_clients_list
+	bandix_load, bandix_build_maps, bandix_iface_rates, bandix_wan_rate_for,
+	bandix_wan_rates, bandix_clients_list
 } from '/usr/share/ucode/lede-bandix.uc';
 import { wan_cause } from '/usr/share/ucode/lede-diag.uc';
 
 const STATE = '/tmp/lede-watch.json';
 const RATE_HIST_MAX = 8640;
-const RH_EVERY = 10;
+/* Bandix /api/snapshot 本地缓存约 4s；历史按固定间隔落盘，不覆盖已写入点。 */
+const RH_EVERY = 5;
 const ST_SAVE_EVERY = 3;
 let LAST_LOG_T = 0;
 let LAST_RH_T = 0;
@@ -244,30 +246,7 @@ function iface_bundle(ctx) {
 				mw = mj.interfaces;
 		} catch (e) {}
 	}
-	let rows = [];
-	ctx.foreach('mwan3', 'interface', (s) => {
-		if (!as_bool(s.enabled, true))
-			return;
-		let name = s['.name'];
-		let st = {};
-		if (u) {
-			try { st = u.call('network.interface.' + name, 'status') || {}; } catch (e) { st = {}; }
-		}
-		let dev = st.l3_device || ctx.get('network', name, 'device') || '';
-		let phy = st.device || ctx.get('network', name, 'device') || '';
-		let ip = '';
-		let a4 = st['ipv4-address'];
-		if (type(a4) == 'array' && a4[0] && a4[0].address)
-			ip = a4[0].address;
-		let up = (st.up == true || st.up == 1);
-		let d = mw[name] || {};
-		push(rows, {
-			name, dev, phy, ip, up,
-			track: d.status || '',
-			bw_down: +(ctx.get('network', name, 'lede_bw_down') || 0),
-			bw_up: +(ctx.get('network', name, 'lede_bw_up') || 0)
-		});
-	});
+	let rows = collect_wan_rows(ctx, u, mw);
 	let lan_dev = ctx.get('network', 'lan', 'device') || 'br-lan';
 	if (u) {
 		try {
@@ -331,6 +310,30 @@ function read_wan_lat(name) {
 	return 0;
 }
 
+function read_wan_loss(name) {
+	if (!name || match(`${name}`, /[^A-Za-z0-9_-]/))
+		return 0;
+	let p = popen(sprintf('ls -1 /var/run/mwan3track/%s/LOSS_* 2>/dev/null', name), 'r');
+	if (!p)
+		return 0;
+	let text = p.read('all') || '';
+	p.close();
+	let sum = 0, n = 0;
+	for (let line in split(text, '\n')) {
+		line = trim(line);
+		if (line == '')
+			continue;
+		let v = +trim(readfile(line) || '0');
+		if (v < 0)
+			v = 0;
+		if (v > 100)
+			v = 100;
+		sum += v;
+		n++;
+	}
+	return n ? int((sum + n / 2) / n) : 0;
+}
+
 function trim_hist(a, max) {
 	let n = length(a);
 	if (n <= max)
@@ -370,28 +373,51 @@ function record_bandix_rate_hist(ctx, now) {
 	let mw = bundled.mw || {};
 	let lan_dev = bundled.lan_dev || ctx.get('network', 'lan', 'device') || 'br-lan';
 
+	let nt = length(h.t);
+	if (nt > 0 && now < +h.t[nt - 1])
+		now = +h.t[nt - 1];
+	if (nt > 0 && now - +h.t[nt - 1] < RH_EVERY)
+		return;
 	push(h.t, now);
+	let idx = nt;
+
+	function hist_push(arr, val) {
+		if (type(arr) != 'array')
+			arr = [];
+		push(arr, val);
+		return arr;
+	}
+
+	let wans = [];
+	for (let w in rows) {
+		if (!w || !w.name)
+			continue;
+		push(wans, { name: w.name, device: w.dev || '' });
+	}
+	let wrates = bandix_wan_rates(maps, wans);
+
 	for (let w in rows) {
 		if (!w || !w.name)
 			continue;
 		if (w.up)
 			kick_wan_ping(w.name, w.dev, ping_host_for(ctx, mw, w.name));
 		if (type(h.series[w.name]) != 'object')
-			h.series[w.name] = { rx: [], tx: [], lat: [] };
-		let r = bandix_resolve_iface_rates(maps, w.dev || w.name, [ w.name, w.dev ]);
-		push(h.series[w.name].rx, r.down_bps);
-		push(h.series[w.name].tx, r.up_bps);
-		if (type(h.series[w.name].lat) != 'array')
-			h.series[w.name].lat = [];
-		while (length(h.series[w.name].lat) < length(h.series[w.name].rx) - 1)
-			push(h.series[w.name].lat, 0);
-		push(h.series[w.name].lat, w.up ? read_wan_lat(w.name) : 0);
+			h.series[w.name] = { rx: [], tx: [], lat: [], loss: [] };
+		let r = wrates[w.name];
+		if (type(r) != 'object')
+			r = { down_bps: 0, up_bps: 0 };
+		if (!(+(r.down_bps || 0) + +(r.up_bps || 0)))
+			r = bandix_wan_rate_for(maps, bj, w.dev, w.name);
+		h.series[w.name].rx = hist_push(h.series[w.name].rx, r.down_bps);
+		h.series[w.name].tx = hist_push(h.series[w.name].tx, r.up_bps);
+		h.series[w.name].lat = hist_push(h.series[w.name].lat, w.up ? read_wan_lat(w.name) : 0);
+		h.series[w.name].loss = hist_push(h.series[w.name].loss, w.up ? read_wan_loss(w.name) : 0);
 	}
 	if (type(h.series['_lan']) != 'object')
-		h.series['_lan'] = { rx: [], tx: [], lat: [] };
+		h.series['_lan'] = { rx: [], tx: [], lat: [], loss: [] };
 	let lr = bandix_iface_rates(maps, lan_dev);
-	push(h.series['_lan'].rx, lr.down_bps);
-	push(h.series['_lan'].tx, lr.up_bps);
+	h.series['_lan'].rx = hist_push(h.series['_lan'].rx, lr.down_bps);
+	h.series['_lan'].tx = hist_push(h.series['_lan'].tx, lr.up_bps);
 
 	h.t = trim_hist(h.t, RATE_HIST_MAX);
 	for (let name in h.series) {
@@ -399,14 +425,13 @@ function record_bandix_rate_hist(ctx, now) {
 		h.series[name].tx = trim_hist(h.series[name].tx || [], RATE_HIST_MAX);
 		if (type(h.series[name].lat) == 'array')
 			h.series[name].lat = trim_hist(h.series[name].lat, RATE_HIST_MAX);
+		if (type(h.series[name].loss) == 'array')
+			h.series[name].loss = trim_hist(h.series[name].loss || [], RATE_HIST_MAX);
 	}
-	h.interval = 10;
+	h.interval = RH_EVERY;
 	RH = h;
 	try { save_rate_windows(h); } catch (e) {}
-	if (!(RH_SAVE > 0) || now - RH_SAVE >= 60) {
-		RH_SAVE = now;
-		save_rate_hist(h, now);
-	}
+	save_rate_hist(h, now);
 }
 
 function scan_bandix_burst(ctx, st, out, bj, lan_ip, now, leases, arp) {
@@ -648,6 +673,22 @@ function remote_ban(ip, seconds) {
 	return system("nft -f /tmp/lede-remote-ban.nft >/dev/null 2>&1") == 0;
 }
 
+/* LuCI over WAN: 401/404 on /ubus and static assets are normal, not Internet scans. */
+function remote_luci_path(uri) {
+	return match(uri, /^\/(ubus|cgi-bin\/luci|luci-static)(\/|$)/);
+}
+
+function remote_suspicious(method, uri, status) {
+	/* Normal LuCI/ubus/static on the WAN admin port — not Internet background scan. */
+	if (remote_luci_path(uri))
+		return false;
+	if (status >= 400)
+		return true;
+	if (!match(method, /^(GET|POST|HEAD)$/))
+		return true;
+	return match(uri, /\/(\.env|wp-|phpmyadmin|actuator|vendor|boaform|HNAP1)/i);
+}
+
 function scan_remote_access(ctx, st, out, line, now) {
 	if ((ctx.get('lede-remote', 'main', 'scan_enabled') || '1') == '0')
 		return;
@@ -666,8 +707,8 @@ function scan_remote_access(ctx, st, out, line, now) {
 	let login_ban_n = remote_num(ctx, 'login_ban_n', 8, 3, 100);
 	let ban_sec = remote_num(ctx, 'ban_minutes', 30, 1, 1440) * 60;
 	let auto_ban = (ctx.get('lede-remote', 'main', 'auto_ban') || '1') != '0';
-	let suspicious = status >= 400 || !match(method, /^(GET|POST|HEAD)$/) ||
-		match(uri, /\/(\.env|wp-|phpmyadmin|cgi-bin|actuator|vendor|boaform|HNAP1)/i);
+	let suspicious = remote_suspicious(method, uri, status);
+	let failed_login = login && (status == 401 || status == 403);
 
 	if (type(st.remote_guard) != 'object')
 		st.remote_guard = {};
@@ -680,7 +721,7 @@ function scan_remote_access(ctx, st, out, line, now) {
 	hit.uri = uri;
 	if (suspicious)
 		push(hit.scan, now);
-	if (login)
+	if (failed_login)
 		push(hit.login, now);
 
 	if (length(hit.scan) >= scan_alert_n && now >= +(hit.scan_notice || 0)) {
@@ -691,8 +732,8 @@ function scan_remote_access(ctx, st, out, line, now) {
 		hit.scan_notice = now + scan_window;
 	}
 	if (length(hit.login) >= login_ban_n && now >= +(hit.login_notice || 0)) {
-		ev(out, '中等', '安全', '远程登录尝试过多',
-			sprintf('来源 %s 在 %d 分钟内提交 %d 次登录请求。',
+		ev(out, '中等', '安全', '远程登录失败过多',
+			sprintf('来源 %s 在 %d 分钟内失败登录 %d 次。',
 				ip, int(login_window / 60), length(hit.login)),
 			'remote-login-' + ip, 'alert_remote_scan');
 		hit.login_notice = now + login_window;

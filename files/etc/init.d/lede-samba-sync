@@ -1,0 +1,15 @@
+#!/bin/sh /etc/rc.common
+
+START=99
+STOP=10
+
+start() {
+	[ -x /usr/libexec/lede-samba-sync ] || return 0
+	sleep 2
+	/usr/libexec/lede-samba-sync
+}
+
+stop() {
+	[ -x /usr/libexec/lede-samba-sync ] || return 0
+	/usr/libexec/lede-samba-sync
+}

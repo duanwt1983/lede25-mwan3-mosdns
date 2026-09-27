@@ -109,8 +109,8 @@ return view.extend({
 		o.rmempty = false;
 		o.depends('scan_enabled', '1');
 
-		o = s.option(form.Value, 'login_ban_n', _('登录尝试封禁阈值'),
-			_('无法记录密码内容；仅统计短时间内重复提交登录请求。'));
+		o = s.option(form.Value, 'login_ban_n', _('登录失败封禁阈值'),
+			_('仅统计 session.login 且 HTTP 401/403 的失败次数；成功登录不计入。'));
 		o.datatype = 'range(3,100)';
 		o.default = '8';
 		o.rmempty = false;

@@ -1,0 +1,58 @@
+{
+	"luci-mod-system-flash": {
+		"description": "Grant access to flash operations and LEDE component packs",
+		"read": {
+			"cgi-io": [ "backup", "download" ],
+			"file": {
+				"/dev/mtdblock[0-9]*": [ "read" ],
+				"/etc/sysupgrade.conf": [ "read" ],
+				"/etc/lede-component-state.json": [ "read" ],
+				"/lib/upgrade/platform.sh": [ "list" ],
+				"/proc/[0-9]*/mounts": [ "read" ],
+				"/proc/mounts": [ "read" ],
+				"/proc/mtd": [ "read" ],
+				"/proc/partitions": [ "read" ],
+				"/proc/sys/kernel/hostname": [ "read" ],
+				"/sbin/sysupgrade --list-backup": [ "exec" ],
+				"/tmp/lede-component-apply.log": [ "read" ]
+			},
+			"ubus": {
+				"file": [ "exec", "read", "stat" ],
+				"lede-component": [ "status", "list_packs" ]
+			}
+		},
+		"write": {
+			"cgi-io": [ "upload" ],
+			"file": {
+				"/bin/tar -tzf /tmp/backup.tar.gz": [ "exec" ],
+				"/etc/sysupgrade.conf": [ "write" ],
+				"/sbin/firstboot -r -y": [ "exec" ],
+				"/sbin/reboot": [ "exec" ],
+				"/sbin/sysupgrade --force /data/firmware.bin": [ "exec" ],
+				"/sbin/sysupgrade -n --force /data/firmware.bin": [ "exec" ],
+				"/sbin/sysupgrade --force -k /data/firmware.bin": [ "exec" ],
+				"/sbin/sysupgrade --force -u /data/firmware.bin": [ "exec" ],
+				"/sbin/sysupgrade --force -u -k /data/firmware.bin": [ "exec" ],
+				"/sbin/sysupgrade -n /data/firmware.bin": [ "exec" ],
+				"/sbin/sysupgrade -k /data/firmware.bin": [ "exec" ],
+				"/sbin/sysupgrade -u /data/firmware.bin": [ "exec" ],
+				"/sbin/sysupgrade -u -k /data/firmware.bin": [ "exec" ],
+				"/sbin/sysupgrade --restore-backup /tmp/backup.tar.gz": [ "exec" ],
+				"/sbin/sysupgrade --test /data/firmware.bin": [ "exec" ],
+				"/sbin/sysupgrade /data/firmware.bin": [ "exec" ],
+				"/tmp/backup.tar.gz": [ "write" ],
+				"/data/firmware.bin": [ "write" ],
+				"/usr/libexec/lede-component-apply": [ "exec" ],
+				"/tmp/lede-overlay.tar.gz": [ "write", "read" ],
+				"/tmp/lede-component-dl.tar.gz": [ "write", "read" ],
+				"/data": [ "list" ],
+				"/data/*": [ "read", "write", "list" ]
+			},
+			"ubus": {
+				"file": [ "exec", "remove", "write" ],
+				"system": [ "validate_firmware_image" ],
+				"lede-component": [ "apply_url", "apply_file" ]
+			}
+		}
+	}
+}
