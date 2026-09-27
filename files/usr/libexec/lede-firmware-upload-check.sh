@@ -26,15 +26,25 @@ grep -q 'reload-on-as = 0' /etc/uwsgi/vassals/luci-cgi_io.ini 2>/dev/null && \
 	note "uwsgi reload-on-as disabled" || bad "uwsgi reload-on-as still enabled (kills large uploads)"
 
 if grep -q ' /dat ' /proc/mounts 2>/dev/null; then
-	note "/dat bind mount (upload session active)"
+	note "/dat upload bind active"
+elif [ -x /usr/libexec/lede-firmware-upload-env.sh ]; then
+	note "/dat upload bind idle (OK; run upload-env before large upload)"
 else
-	note "/dat not mounted (idle; upload-env mounts only during firmware upload)"
+	bad "upload-env missing"
 fi
 
 if strings /usr/libexec/cgi-io 2>/dev/null | grep -qx '/dat'; then
-	note "cgi-io temp path /dat"
+	if grep -q ' /dat ' /proc/mounts 2>/dev/null; then
+		note "cgi-io temp /dat (bind OK)"
+	elif [ -x /usr/libexec/lede-firmware-upload-env.sh ]; then
+		/usr/libexec/lede-firmware-upload-env.sh && \
+			grep -q ' /dat ' /proc/mounts && note "cgi-io /dat (bind applied)" || \
+			bad "cgi-io uses /dat but bind failed"
+	else
+		bad "cgi-io uses /dat but upload-env missing"
+	fi
 elif strings /usr/libexec/cgi-io 2>/dev/null | grep -qx '/tmp'; then
-	bad "cgi-io still uses /tmp"
+	note "cgi-io temp /tmp (upload-env patches before firmware upload)"
 else
 	bad "cgi-io path unknown"
 fi

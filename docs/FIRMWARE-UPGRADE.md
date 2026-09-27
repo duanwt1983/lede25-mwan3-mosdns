@@ -39,7 +39,7 @@
 | uwsgi 上传到一半断连 | **`reload-on-as` / `reload-on-rss` 设为 0**，`harakiri=7200`，`limit-as=8192` |
 | 上传 HTTP 失败但已落盘 | LuCI 按 `/data/firmware.bin` 大小自动恢复继续校验 |
 
-自检：`/usr/libexec/lede-firmware-upload-check.sh`（`fail=0` 再传 2GB）。**最终固件仍在 `/data/firmware.bin`**；`/dat` 只是 cgi 上传临时目录，与 data 分区不是拼写错误。
+自检：`/usr/libexec/lede-firmware-upload-check.sh`（`fail=0` 再传 2GB）。空闲时 **`OK: /dat upload bind idle` 是正常**，不是故障；上传/校验前 LuCI 会先跑 **`upload-env.sh`** 再检查。
 
 刷机后 **`47` 只恢复 `do_stage2`**，**不会**开机挂载 `/dat`；`lede-cgi-tmp` **禁止 enable**。打开 LuCI 刷写/上传前由 `upload-env.sh` 按需准备环境。
 
