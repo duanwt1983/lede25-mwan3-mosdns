@@ -18,12 +18,12 @@
 2. **已有 `/data/firmware.bin`**：不自动刷写 →「使用此固件包 / 删除 / 取消」。
 3. **上传**：进度**只在弹窗顶部状态栏**；日志不写上传百分比。
 4. **上传完成后**：日志立即写「上传完成 → 进入校验…」；校验 / `--test` 长耗时阶段每 **~10 秒**一行阶段日志（非 logread 内核垃圾）。
-4. **校验通过后**：必须点 **「确认刷写并重启」** 才 `sysupgrade`。
-5. **刷写中**：轮询 `lede-firmware-progress.sh`（dd / 日志）；**LuCI 会在写盘时断线**，浏览器里**看不到** stage2 的「3 秒后 reboot」（该条在路由器日志与 `/data/lede-fw-flash.log`）；断线后页面应**自动重连**当前 IP（如 192.168.9.1）。
-6. **刷写后重启**：`do_stage2` 提示 **3 秒后 reboot** 后 `sync; reboot -f`；**不** `umount -a`（避免 `/data`/bind 挂载卡死）；stage2 **不用 logger**。
+5. **校验通过后**：必须点 **「确认刷写并重启」** 才 `sysupgrade`。
+6. **刷写中**：轮询 `lede-firmware-progress.sh`（dd / 日志）；**LuCI 会在写盘时断线**，浏览器里**看不到** stage2 的「3 秒后 reboot」（该条在路由器日志与 `/data/lede-fw-flash.log`）；断线后页面应**自动重连**当前 IP（如 192.168.9.1）。
+7. **刷写后重启**：`do_stage2` 提示 **3 秒后 reboot** 后 `sync; reboot -f`；**不** `umount -a`（避免 `/data`/bind 挂载卡死）；stage2 **不用 logger**。
    - **整盘刷机后** rootfs 会回到镜像自带的 stock `do_stage2`（含 `umount -a`）→ 表现为 **dd 可能已跑完但一直不重启**。必须先 **组件 v1.0.8+ / deploy 脚本** 或 **6.80 带 overlay 的新镜像**，再刷下一次。
    - 成功标志：重启后 `/etc/lede-fw-last-flash-success`；刷写前会有 `/data/.lede-fw-flash-pending`。
-7. **刷写成功重启后**：`46-lede-firmware-cleanup` 删除 `/data/firmware.bin`，写入 `/etc/lede-fw-last-flash-success`；再次打开弹窗可见「上次刷写记录」。
+8. **刷写成功重启后**：`46-lede-firmware-cleanup` 删除 `/data/firmware.bin`，写入 `/etc/lede-fw-last-flash-success`；再次打开弹窗可见「上次刷写记录」。
 
 ---
 
