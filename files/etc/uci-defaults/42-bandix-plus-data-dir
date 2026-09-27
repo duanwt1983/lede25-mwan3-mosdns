@@ -1,0 +1,15 @@
+#!/bin/sh
+# One-time migrate Bandix data_dir to persistent /data (sysupgrade keep-config safe).
+
+[ -x /etc/init.d/bandix-plus ] || exit 0
+
+cur=$(uci -q get bandix_plus.general.data_dir)
+case "$cur" in
+	/data/bandix-plus|/data/bandix-plus/) exit 0 ;;
+esac
+
+uci -q set bandix_plus.general.data_dir='/data/bandix-plus'
+uci -q commit bandix_plus
+mkdir -p /data/bandix-plus
+/etc/init.d/bandix-plus restart >/dev/null 2>&1 || true
+exit 0
