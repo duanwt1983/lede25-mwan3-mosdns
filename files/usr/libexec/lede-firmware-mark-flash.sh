@@ -24,6 +24,7 @@ EOF
 
 rm -f "$SUCCESS"
 : > /tmp/lede-fw-flash.log 2>/dev/null || true
+: > /data/lede-fw-flash.log 2>/dev/null || true
 {
 	echo "time=$(date -Is 2>/dev/null || date)"
 	echo "action=mark_flash_pending"

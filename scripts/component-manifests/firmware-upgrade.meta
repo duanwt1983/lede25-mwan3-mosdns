@@ -1,4 +1,4 @@
 pack_id=lede-component-firmware-upgrade
-version=1.0.7
-description=固件升级：修复 /dat 未创建导致上传失败；刷写前自检 upload-env
-archive=lede-component-firmware-upgrade-v1.0.7.tar.gz
+version=1.0.9
+description=固件升级：/dat 按需挂载，取消开机 bind；刷写后 teardown
+archive=lede-component-firmware-upgrade-v1.0.9.tar.gz

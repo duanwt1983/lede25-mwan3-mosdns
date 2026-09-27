@@ -3,6 +3,8 @@ usr/libexec/lede-component-apply
 www/luci-static/resources/view/system/flash.js
 www/luci-static/resources/lede-firmware/nginx-luci.locations
 www/luci-static/resources/lede-firmware/uwsgi-luci-cgi_io.ini
+www/luci-static/resources/lede-firmware/do_stage2
+usr/libexec/lede-firmware-restore-upgrade.sh
 usr/share/rpcd/acl.d/zzz-lede-flash-acl.json
 usr/libexec/lede-firmware-prepare.sh
 usr/libexec/lede-firmware-mark-flash.sh
@@ -10,6 +12,7 @@ usr/libexec/lede-firmware-delete.sh
 usr/libexec/lede-firmware-progress.sh
 usr/libexec/lede-firmware-upload-env.sh
 usr/libexec/lede-firmware-upload-check.sh
+usr/libexec/lede-firmware-upload-teardown.sh
 etc/init.d/lede-cgi-tmp
 etc/uci-defaults/45-nginx-firmware-upload
 etc/uci-defaults/46-lede-firmware-cleanup

@@ -3,7 +3,11 @@
 set -eu
 
 LOG=/tmp/lede-fw-flash.log
-if [ -r "$LOG" ]; then
+DATA_LOG=/data/lede-fw-flash.log
+if [ -r "$DATA_LOG" ]; then
+	echo '--- /data/lede-fw-flash.log (tail) ---'
+	tail -25 "$DATA_LOG" 2>/dev/null || true
+elif [ -r "$LOG" ]; then
 	echo '--- lede-fw-flash.log (tail) ---'
 	tail -40 "$LOG" 2>/dev/null || true
 fi

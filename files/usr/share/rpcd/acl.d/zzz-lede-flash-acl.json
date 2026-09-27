@@ -55,6 +55,7 @@
 				"/usr/libexec/lede-firmware-progress.sh": [ "exec" ],
 				"/usr/libexec/lede-firmware-upload-env.sh": [ "exec" ],
 				"/usr/libexec/lede-firmware-upload-check.sh": [ "exec" ],
+				"/usr/libexec/lede-firmware-upload-teardown.sh": [ "exec" ],
 				"/usr/libexec/lede-firmware-run-sysupgrade.sh": [ "exec" ],
 				"/tmp/sysupgrade.log": [ "read" ],
 				"/tmp/lede-fw-flash.log": [ "read" ],

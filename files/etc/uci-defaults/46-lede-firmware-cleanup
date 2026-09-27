@@ -18,6 +18,9 @@ umount "$TMP" 2>/dev/null || true
 rm -f "$DATA" "$TMP" /tmp/sysupgrade.img /tmp/image.bs 2>/dev/null || true
 rm -f "$PENDING"
 
+[ -x /usr/libexec/lede-firmware-upload-teardown.sh ] && \
+	/usr/libexec/lede-firmware-upload-teardown.sh || true
+
 cat >"$SUCCESS" <<EOF
 time=$(date -Is 2>/dev/null || date)
 result=success

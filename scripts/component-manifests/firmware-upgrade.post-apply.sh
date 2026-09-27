@@ -5,6 +5,8 @@ set -eu
 STAGE_NGINX=/www/luci-static/resources/lede-firmware/nginx-luci.locations
 STAGE_UWSGI=/www/luci-static/resources/lede-firmware/uwsgi-luci-cgi_io.ini
 
+[ -x /usr/libexec/lede-firmware-restore-upgrade.sh ] && \
+	/usr/libexec/lede-firmware-restore-upgrade.sh
 [ -x /usr/libexec/lede-firmware-upload-env.sh ] && /usr/libexec/lede-firmware-upload-env.sh
 
 if [ -f "$STAGE_NGINX" ]; then
@@ -15,8 +17,7 @@ if [ -f "$STAGE_UWSGI" ]; then
 	cp -f "$STAGE_UWSGI" /etc/uwsgi/vassals/luci-cgi_io.ini
 fi
 
-/etc/init.d/lede-cgi-tmp enable 2>/dev/null || true
-/etc/init.d/lede-cgi-tmp start 2>/dev/null || true
+/etc/init.d/lede-cgi-tmp disable 2>/dev/null || true
 
 /etc/init.d/uwsgi restart 2>/dev/null || true
 /etc/init.d/nginx reload 2>/dev/null || /etc/init.d/nginx restart 2>/dev/null || true

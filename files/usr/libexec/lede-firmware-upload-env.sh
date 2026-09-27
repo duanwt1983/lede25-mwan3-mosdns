@@ -1,8 +1,11 @@
 #!/bin/sh
-# Idempotent stack for multi-GB LuCI cgi-upload → /data/firmware.bin
-# Fixes: nginx body limit/temp dir, uwsgi memory reload, cgi-io /tmp → /dat bind.
+# On-demand prep for multi-GB LuCI cgi-upload → /data/firmware.bin (call from LuCI flash flow).
+# Binds /data/cgi-tmp → /dat only for the session; use upload-teardown.sh when done.
 set -eu
 export PATH=/usr/sbin:/sbin:/usr/bin:/bin
+
+[ -x /usr/libexec/lede-firmware-restore-upgrade.sh ] && \
+	/usr/libexec/lede-firmware-restore-upgrade.sh || true
 
 mkdir -p /data/nginx-body /data/cgi-tmp
 mkdir -p /dat
