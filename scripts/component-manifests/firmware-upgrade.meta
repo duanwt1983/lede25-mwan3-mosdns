@@ -1,4 +1,4 @@
 pack_id=lede-component-firmware-upgrade
-version=1.0.6
-description=固件升级：修复刷写后 umount/logger 导致无法 reboot
-archive=lede-component-firmware-upgrade-v1.0.6.tar.gz
+version=1.0.7
+description=固件升级：修复 /dat 未创建导致上传失败；刷写前自检 upload-env
+archive=lede-component-firmware-upgrade-v1.0.7.tar.gz

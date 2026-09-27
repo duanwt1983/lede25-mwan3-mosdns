@@ -5,7 +5,9 @@ set -eu
 export PATH=/usr/sbin:/sbin:/usr/bin:/bin
 
 mkdir -p /data/nginx-body /data/cgi-tmp
+mkdir -p /dat
 chmod 700 /data/nginx-body /data/cgi-tmp 2>/dev/null || true
+chmod 755 /dat 2>/dev/null || true
 
 for f in /etc/nginx/uci.conf /etc/nginx/uci.conf.template; do
 	[ -f "$f" ] || continue
@@ -18,7 +20,12 @@ for f in /etc/nginx/uci.conf /etc/nginx/uci.conf.template; do
 		sed -i '/client_max_body_size 0;/a\        client_body_temp_path /data/nginx-body;' "$f"
 done
 
-grep -q ' /dat ' /proc/mounts 2>/dev/null || mount --bind /data/cgi-tmp /dat
+if ! grep -q ' /dat ' /proc/mounts 2>/dev/null; then
+	mount --bind /data/cgi-tmp /dat || {
+		echo "lede-firmware-upload-env: bind /data/cgi-tmp -> /dat failed" >&2
+		exit 1
+	}
+fi
 
 patch_cgi_io() {
 	local bin=/usr/libexec/cgi-io

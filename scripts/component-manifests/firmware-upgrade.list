@@ -13,6 +13,7 @@ usr/libexec/lede-firmware-upload-check.sh
 etc/init.d/lede-cgi-tmp
 etc/uci-defaults/45-nginx-firmware-upload
 etc/uci-defaults/46-lede-firmware-cleanup
+etc/uci-defaults/47-lede-firmware-upload-boot
 etc/nginx/conf.d/luci.locations
 etc/uwsgi/vassals/luci-cgi_io.ini
 lib/upgrade/lede-flash-dd.sh

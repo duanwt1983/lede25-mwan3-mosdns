@@ -1,0 +1,6 @@
+#!/bin/sh
+# Ensure cgi-upload stack after sysupgrade (keep-config may skip older uci-defaults).
+[ -x /usr/libexec/lede-firmware-upload-env.sh ] || exit 0
+/usr/libexec/lede-firmware-upload-env.sh || true
+/etc/init.d/lede-cgi-tmp enable 2>/dev/null || true
+exit 0

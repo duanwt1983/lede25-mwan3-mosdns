@@ -30,6 +30,8 @@ router_put "$ROOT/files/etc/uci-defaults/46-lede-firmware-cleanup" \
 	'/etc/uci-defaults/46-lede-firmware-cleanup'
 router_put "$ROOT/files/etc/uci-defaults/45-nginx-firmware-upload" \
 	'/etc/uci-defaults/45-nginx-firmware-upload'
+router_put "$ROOT/files/etc/uci-defaults/47-lede-firmware-upload-boot" \
+	'/etc/uci-defaults/47-lede-firmware-upload-boot'
 router_put "$ROOT/files/etc/init.d/lede-cgi-tmp" \
 	'/etc/init.d/lede-cgi-tmp' 755
 router_put "$ROOT/files/etc/nginx/conf.d/luci.locations" \
@@ -44,6 +46,7 @@ router_put "$ROOT/files/usr/libexec/lede-firmware-run-sysupgrade.sh" \
 	'/usr/libexec/lede-firmware-run-sysupgrade.sh' 755
 
 router_sh "$(cat <<'END_REMOTE'
+/etc/uci-defaults/47-lede-firmware-upload-boot 2>/dev/null || true
 /usr/libexec/lede-firmware-upload-env.sh
 /etc/init.d/lede-cgi-tmp enable
 /etc/init.d/lede-cgi-tmp start

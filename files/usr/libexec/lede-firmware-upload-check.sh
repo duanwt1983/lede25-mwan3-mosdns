@@ -25,7 +25,13 @@ grep -q 'limit-as = 8192' /etc/uwsgi/vassals/luci-cgi_io.ini 2>/dev/null && \
 grep -q 'reload-on-as = 0' /etc/uwsgi/vassals/luci-cgi_io.ini 2>/dev/null && \
 	note "uwsgi reload-on-as disabled" || bad "uwsgi reload-on-as still enabled (kills large uploads)"
 
-grep -q ' /dat ' /proc/mounts 2>/dev/null && note "/dat bind mount" || bad "/dat not mounted"
+if grep -q ' /dat ' /proc/mounts 2>/dev/null; then
+	note "/dat bind mount"
+elif [ -x /usr/libexec/lede-firmware-upload-env.sh ]; then
+	/usr/libexec/lede-firmware-upload-env.sh && grep -q ' /dat ' /proc/mounts && note "/dat bind mount (fixed)" || bad "/dat not mounted"
+else
+	bad "/dat not mounted"
+fi
 
 if strings /usr/libexec/cgi-io 2>/dev/null | grep -qx '/dat'; then
 	note "cgi-io temp path /dat"

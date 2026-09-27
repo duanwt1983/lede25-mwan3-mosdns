@@ -728,6 +728,7 @@ for _rel in \
   etc/init.d/lede-cgi-tmp \
   etc/uci-defaults/45-nginx-firmware-upload \
   etc/uci-defaults/46-lede-firmware-cleanup \
+  etc/uci-defaults/47-lede-firmware-upload-boot \
   etc/nginx/conf.d/luci.locations \
   etc/uwsgi/vassals/luci-cgi_io.ini \
   lib/upgrade/lede-flash-dd.sh \
@@ -965,6 +966,9 @@ assert_grep 'mount --bind' "$_LEDE_FILES/usr/libexec/lede-firmware-prepare.sh"
 assert_grep 'lede-fw-last-flash-success' "$_LEDE_FILES/etc/uci-defaults/46-lede-firmware-cleanup"
 assert_grep 'reload-on-as = 0' "$_LEDE_FILES/etc/uwsgi/vassals/luci-cgi_io.ini"
 assert_grep 'lede-firmware-upload-env.sh' "$_LEDE_FILES/etc/init.d/lede-cgi-tmp"
+assert_grep 'mkdir -p /dat' "$_LEDE_FILES/usr/libexec/lede-firmware-upload-env.sh"
+assert_grep 'lede-firmware-upload-env.sh' "$_LEDE_FILES/etc/uci-defaults/47-lede-firmware-upload-boot"
+assert_grep 'lede-firmware-upload-check.sh' "$_LEDE_FILES/www/luci-static/resources/view/system/flash.js"
 assert_grep 'fmtHudCpu' "$_LEDE_FILES/www/luci-static/resources/view/status/index.js"
 assert_grep 'topo-kpi-alert' "$_LEDE_FILES/www/luci-static/resources/view/status/index.js"
 assert_grep 'wanalert_hud_flags' "$_LEDE_FILES/usr/share/ucode/lede-metrics.uc"

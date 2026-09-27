@@ -32,11 +32,13 @@
 |------|------|
 | nginx 128M / 413 | 全局与 cgi-upload `client_max_body_size 0` |
 | nginx 落盘占满 root | `client_body_temp_path /data/nginx-body` |
-| cgi-io 写 `/tmp` tmpfs 满 | 二进制路径改为 `/dat` + bind `/data/cgi-tmp` → `/dat` |
+| cgi-io 写 `/tmp` tmpfs 满 | 二进制里只能改 4 字节路径：`/tmp` → **`/dat`**（不能写成 `/data`）；**必须先 `mkdir -p /dat`** 再 `mount --bind /data/cgi-tmp /dat` |
 | uwsgi 上传到一半断连 | **`reload-on-as` / `reload-on-rss` 设为 0**，`harakiri=7200`，`limit-as=8192` |
 | 上传 HTTP 失败但已落盘 | LuCI 按 `/data/firmware.bin` 大小自动恢复继续校验 |
 
-自检：`/usr/libexec/lede-firmware-upload-check.sh`（`fail=0` 再传 2GB）
+自检：`/usr/libexec/lede-firmware-upload-check.sh`（`fail=0` 再传 2GB）。**最终固件仍在 `/data/firmware.bin`**；`/dat` 只是 cgi 上传临时目录，与 data 分区不是拼写错误。
+
+刷机或保留配置升级后：`47-lede-firmware-upload-boot` 与 `lede-cgi-tmp` 会再次执行 `upload-env.sh`。
 
 **注意：** 上传过程中不要执行会 `uwsgi restart` / `nginx reload` 的部署脚本，否则会出现「upstream closed」误报失败。
 
