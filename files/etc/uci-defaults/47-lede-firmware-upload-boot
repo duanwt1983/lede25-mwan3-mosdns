@@ -2,5 +2,7 @@
 # After full-disk flash: restore LEDE do_stage2 only (not upload bind / nginx on every boot).
 [ -x /usr/libexec/lede-firmware-restore-upgrade.sh ] && \
 	/usr/libexec/lede-firmware-restore-upgrade.sh || true
+[ -x /usr/libexec/lede-firmware-upload-sanity.sh ] && \
+	/usr/libexec/lede-firmware-upload-sanity.sh boot || true
 /etc/init.d/lede-cgi-tmp disable 2>/dev/null || true
 exit 0

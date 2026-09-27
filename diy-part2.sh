@@ -728,6 +728,9 @@ for _rel in \
   usr/libexec/lede-firmware-upload-env.sh \
   usr/libexec/lede-firmware-upload-check.sh \
   usr/libexec/lede-firmware-upload-teardown.sh \
+  usr/libexec/lede-firmware-cgi-io.sh \
+  usr/libexec/lede-firmware-upload-sanity.sh \
+  dat/.keep \
   etc/init.d/lede-cgi-tmp \
   etc/uci-defaults/45-nginx-firmware-upload \
   etc/uci-defaults/46-lede-firmware-cleanup \
@@ -972,6 +975,8 @@ assert_grep 'reload-on-as = 0' "$_LEDE_FILES/etc/uwsgi/vassals/luci-cgi_io.ini"
 assert_grep 'lede-firmware-upload-env.sh' "$_LEDE_FILES/etc/init.d/lede-cgi-tmp"
 assert_grep 'mkdir -p /dat' "$_LEDE_FILES/usr/libexec/lede-firmware-upload-env.sh"
 assert_grep 'upload-teardown' "$_LEDE_FILES/usr/libexec/lede-firmware-delete.sh"
+assert_grep 'lede_cgi_io_revert_tmp' "$_LEDE_FILES/usr/libexec/lede-firmware-upload-sanity.sh"
+assert_overlay 'dat/.keep'
 assert_grep 'lede-firmware-restore-upgrade.sh' "$_LEDE_FILES/etc/uci-defaults/47-lede-firmware-upload-boot"
 assert_grep 'lede-cgi-tmp disable' "$_LEDE_FILES/etc/uci-defaults/47-lede-firmware-upload-boot"
 assert_grep 'lede-firmware-upload-check.sh' "$_LEDE_FILES/www/luci-static/resources/view/system/flash.js"

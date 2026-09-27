@@ -3,6 +3,8 @@
 set -eu
 export PATH=/usr/sbin:/sbin:/usr/bin:/bin
 
+. /usr/libexec/lede-firmware-cgi-io.sh
+
 ok=0
 fail=0
 note(){ echo "OK: $*"; ok=$((ok + 1)); }
@@ -26,25 +28,25 @@ grep -q 'reload-on-as = 0' /etc/uwsgi/vassals/luci-cgi_io.ini 2>/dev/null && \
 	note "uwsgi reload-on-as disabled" || bad "uwsgi reload-on-as still enabled (kills large uploads)"
 
 if grep -q ' /dat ' /proc/mounts 2>/dev/null; then
-	note "/dat upload bind active"
-elif [ -x /usr/libexec/lede-firmware-upload-env.sh ]; then
-	note "/dat upload bind idle (OK; run upload-env before large upload)"
+	note "/dat bind active (firmware upload session)"
+elif lede_cgi_io_patched_dat; then
+	bad "cgi-io still uses /dat without bind (run upload-env or reboot after sysupgrade)"
+elif [ -d /dat ]; then
+	note "/dat mountpoint present (cgi-io uses /tmp until upload-env)"
 else
-	bad "upload-env missing"
+	bad "/dat mountpoint missing"
 fi
 
-if strings /usr/libexec/cgi-io 2>/dev/null | grep -qx '/dat'; then
+if lede_cgi_io_patched_dat; then
 	if grep -q ' /dat ' /proc/mounts 2>/dev/null; then
 		note "cgi-io temp /dat (bind OK)"
 	elif [ -x /usr/libexec/lede-firmware-upload-env.sh ]; then
-		/usr/libexec/lede-firmware-upload-env.sh && \
-			grep -q ' /dat ' /proc/mounts && note "cgi-io /dat (bind applied)" || \
-			bad "cgi-io uses /dat but bind failed"
+		bad "cgi-io uses /dat but bind missing — run upload-env before upload"
 	else
 		bad "cgi-io uses /dat but upload-env missing"
 	fi
-elif strings /usr/libexec/cgi-io 2>/dev/null | grep -qx '/tmp'; then
-	note "cgi-io temp /tmp (upload-env patches before firmware upload)"
+elif lede_cgi_io_patched_tmp; then
+	note "cgi-io temp /tmp (normal; upload-env patches for large firmware upload)"
 else
 	bad "cgi-io path unknown"
 fi

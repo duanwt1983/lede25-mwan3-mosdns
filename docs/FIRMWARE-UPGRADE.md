@@ -35,13 +35,14 @@
 |------|------|
 | nginx 128M / 413 | 全局与 cgi-upload `client_max_body_size 0` |
 | nginx 落盘占满 root | `client_body_temp_path /data/nginx-body` |
-| cgi-io 写 `/tmp` tmpfs 满 | 上传前由 **`upload-env.sh`** 临时：`mkdir -p /dat` + `bind /data/cgi-tmp → /dat`（cgi-io 二进制里路径为 4 字节的 `/dat`，不是 `/data`）；**平时不挂载**，删除固件/刷机成功 **`upload-teardown.sh` 会 umount** |
+| cgi-io 写 `/tmp` tmpfs 满 | 仅在上传前 **`upload-env.sh`**：`bind /data/cgi-tmp → /dat` + 临时把 cgi-io 改为 `/dat`；**平时 cgi-io 为 `/tmp`、LuCI 挂载列表无 `/dat` 是正常的** |
+| **保留配置 sysupgrade 后** | overlay 里可能残留 **cgi-io=/dat 却无 bind** → 开机 **`upload-sanity.sh`** 会 **umount /dat 并恢复 cgi-io=/tmp**；固件上传前再跑 upload-env |
 | uwsgi 上传到一半断连 | **`reload-on-as` / `reload-on-rss` 设为 0**，`harakiri=7200`，`limit-as=8192` |
 | 上传 HTTP 失败但已落盘 | LuCI 按 `/data/firmware.bin` 大小自动恢复继续校验 |
 
-自检：`/usr/libexec/lede-firmware-upload-check.sh`（`fail=0` 再传 2GB）。空闲时 **`OK: /dat upload bind idle` 是正常**，不是故障；上传/校验前 LuCI 会先跑 **`upload-env.sh`** 再检查。
+自检：`/usr/libexec/lede-firmware-upload-check.sh`（`fail=0` 再传 2GB）。若见 **`FAIL: cgi-io still uses /dat without bind`**，在路由器执行 **`/usr/libexec/lede-firmware-upload-sanity.sh boot`** 或重启后再 **upload-env**。
 
-刷机后 **`47` 只恢复 `do_stage2`**，**不会**开机挂载 `/dat`；`lede-cgi-tmp` **禁止 enable**。打开 LuCI 刷写/上传前由 `upload-env.sh` 按需准备环境。
+刷机后 **`47` + `lede-data-mount`** 会跑 **`upload-sanity`**（不常驻 bind）；`lede-cgi-tmp` **禁止 enable**。
 
 **注意：** 上传过程中不要执行会 `uwsgi restart` / `nginx reload` 的部署脚本，否则会出现「upstream closed」误报失败。
 

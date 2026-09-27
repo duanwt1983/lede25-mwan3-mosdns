@@ -6,6 +6,8 @@ STOP=90
 start() {
 	[ -x /usr/libexec/lede-data-mount ] || return 0
 	/usr/libexec/lede-data-mount mount
+	[ -x /usr/libexec/lede-firmware-upload-sanity.sh ] && \
+		/usr/libexec/lede-firmware-upload-sanity.sh after-data
 }
 
 stop() {
