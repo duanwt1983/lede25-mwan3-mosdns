@@ -7,6 +7,9 @@ STAGE_UWSGI=/www/luci-static/resources/lede-firmware/uwsgi-luci-cgi_io.ini
 
 [ -x /usr/libexec/lede-firmware-restore-upgrade.sh ] && \
 	/usr/libexec/lede-firmware-restore-upgrade.sh
+[ -x /usr/libexec/lede-firmware-upload-sanity.sh ] && \
+	/usr/libexec/lede-firmware-upload-sanity.sh boot
+mkdir -p /dat
 [ -x /usr/libexec/lede-firmware-upload-env.sh ] && /usr/libexec/lede-firmware-upload-env.sh
 
 if [ -f "$STAGE_NGINX" ]; then
