@@ -11,6 +11,7 @@ uci -q set bandix_plus.general.tc_order='last'
 uci -q set bandix_plus.general.tc_backend='auto'
 uci -q set bandix_plus.general.port='8787'
 uci -q set bandix_plus.general.host='127.0.0.1'
+uci -q set bandix_plus.general.data_dir='/data/bandix-plus'
 
 uci -q delete bandix_plus.general.iface 2>/dev/null || true
 uci -q add_list bandix_plus.general.iface='br-lan'
