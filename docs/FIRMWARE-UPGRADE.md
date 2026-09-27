@@ -19,7 +19,8 @@
 3. **上传完成后**：日志立即写「上传完成 → 进入校验…」；校验 / `--test` 长耗时阶段每 **~10 秒**一行阶段日志（非 logread 内核垃圾）。
 4. **校验通过后**：必须点 **「确认刷写并重启」** 才 `sysupgrade`。
 5. **刷写中**：仅此时轮询 `lede-firmware-progress.sh`（upgrade / dd 命令行 / 写盘字节数）；断连后停止轮询。
-6. **刷写成功重启后**：`46-lede-firmware-cleanup` 删除 `/data/firmware.bin`，写入 `/etc/lede-fw-last-flash-success`；再次打开弹窗可见「上次刷写记录」。
+6. **刷写后重启**：`do_stage2` 提示 **3 秒后 reboot** 后 `sync; reboot -f`；**不** `umount -a`（避免 `/data`/bind 挂载卡死）；stage2 **不用 logger**。
+7. **刷写成功重启后**：`46-lede-firmware-cleanup` 删除 `/data/firmware.bin`，写入 `/etc/lede-fw-last-flash-success`；再次打开弹窗可见「上次刷写记录」。
 
 ---
 

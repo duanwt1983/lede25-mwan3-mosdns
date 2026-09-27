@@ -16,15 +16,19 @@ if [ -n "$UPGRADE_BACKUP" ] && type 'platform_copy_config' >/dev/null 2>/dev/nul
 fi
 
 v "Upgrade completed"
-logger -t lede-fw "Upgrade completed"
+[ -w /tmp/lede-fw-flash.log ] && echo "Upgrade completed $(date -Is 2>/dev/null || date)" >>/tmp/lede-fw-flash.log
+
 sleep 1
 
 v "Rebooting system..."
-logger -t lede-fw "Reboot scheduled in 3 seconds (LEDE flash UI)"
-v "LEDE: 刷写流程已完成，3 秒后执行 reboot -f"
+v "LEDE: 刷写已完成，3 秒后执行 reboot -f"
+[ -w /tmp/lede-fw-flash.log ] && echo "Reboot in 3s $(date -Is 2>/dev/null || date)" >>/tmp/lede-fw-flash.log
 sleep 3
 
-umount -a
+# Do not umount -a on x86 with /data and bind mounts (/dat, /tmp/firmware.bin):
+# it can hang forever and block reboot. sync + reboot -f is enough here.
+sync
 reboot -f
-sleep 5
+
+sleep 2
 echo b 2>/dev/null >/proc/sysrq-trigger

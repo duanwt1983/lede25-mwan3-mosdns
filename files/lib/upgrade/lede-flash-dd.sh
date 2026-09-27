@@ -9,7 +9,6 @@ get_image_dd() {
 	v "LEDE dd 写盘开始"
 	v "  源: $from"
 	v "  参数: dd $*"
-	logger -t lede-fw "dd start from=$from args=$*"
 	{
 		echo "=== dd start $(date -Is 2>/dev/null || date) ==="
 		echo "from=$from"

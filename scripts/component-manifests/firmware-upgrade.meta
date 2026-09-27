@@ -1,4 +1,4 @@
 pack_id=lede-component-firmware-upgrade
-version=1.0.5
-description=固件升级：dd 写盘日志、刷写完成后延迟 3 秒再 reboot
-archive=lede-component-firmware-upgrade-v1.0.5.tar.gz
+version=1.0.6
+description=固件升级：修复刷写后 umount/logger 导致无法 reboot
+archive=lede-component-firmware-upgrade-v1.0.6.tar.gz
