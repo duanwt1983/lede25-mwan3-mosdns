@@ -1,4 +1,4 @@
 pack_id=lede-component-firmware-upgrade
-version=1.0.9
-description=固件升级：/dat 按需挂载，取消开机 bind；刷写后 teardown
-archive=lede-component-firmware-upgrade-v1.0.9.tar.gz
+version=1.0.10
+description=固件升级：备份页与弹窗标题显示当前固件版本
+archive=lede-component-firmware-upgrade-v1.0.10.tar.gz
