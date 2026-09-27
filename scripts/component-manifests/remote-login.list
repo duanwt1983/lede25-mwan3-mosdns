@@ -1,0 +1,3 @@
+# 远程管理：正常 LuCI 访问不再被当成扫描/登录失败而封禁
+usr/share/ucode/lede-watch.uc
+www/luci-static/resources/view/system/remote-v2.js

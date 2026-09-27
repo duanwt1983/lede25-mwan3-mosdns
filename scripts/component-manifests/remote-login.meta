@@ -1,0 +1,4 @@
+pack_id=lede-component-remote-login-guard
+version=1.0.0
+description=远程管理封禁：正常 LuCI/ubus 不再计为扫描；仅 401/403 的登录失败才计入封禁
+archive=lede-component-remote-login-guard-v1.0.0.tar.gz
