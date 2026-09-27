@@ -717,6 +717,17 @@ for _rel in \
   usr/share/rpcd/acl.d/zzz-lede-flash-acl.json \
   usr/share/luci/menu.d/zzz-lede-flash-menu.json \
   www/luci-static/resources/view/system/flash.js \
+  www/luci-static/resources/lede-firmware/nginx-luci.locations \
+  www/luci-static/resources/lede-firmware/uwsgi-luci-cgi_io.ini \
+  usr/libexec/lede-firmware-prepare.sh \
+  usr/libexec/lede-firmware-mark-flash.sh \
+  usr/libexec/lede-firmware-delete.sh \
+  usr/libexec/lede-firmware-progress.sh \
+  etc/init.d/lede-cgi-tmp \
+  etc/uci-defaults/45-nginx-firmware-upload \
+  etc/uci-defaults/46-lede-firmware-cleanup \
+  etc/nginx/conf.d/luci.locations \
+  etc/uwsgi/vassals/luci-cgi_io.ini \
   etc/config/lede-component \
   usr/libexec/lede-samba-policy \
   usr/libexec/lede-samba-sync \
@@ -776,6 +787,9 @@ for _rel in \
   usr/libexec/packet-cap \
   etc/hotplug.d/net/90-lede-wan-carrier \
   etc/hotplug.d/iface/28-bandix-plus-restart \
+  etc/config/bandix_plus \
+  etc/uci-defaults/40-bandix-plus \
+  etc/uci-defaults/42-bandix-plus-data-dir \
   etc/hotplug.d/dhcp/30-lede-mwan3-mac \
   usr/sbin/wan-fail-dump \
   usr/sbin/wan-fail-watch
@@ -936,6 +950,12 @@ assert_grep 'config_foreach chk_en samba' "$_LEDE_FILES/etc/hotplug.d/block/20-s
 assert_grep 'list_packs' "$_LEDE_FILES/usr/libexec/rpcd/lede-component"
 assert_grep 'skip rpcd restart' "$_LEDE_FILES/usr/libexec/lede-component-apply"
 assert_grep 'callLedeCompStatus' "$_LEDE_FILES/www/luci-static/resources/view/system/flash.js"
+assert_grep '不会自动刷写' "$_LEDE_FILES/www/luci-static/resources/view/system/flash.js"
+assert_grep 'showConfirmFlash' "$_LEDE_FILES/www/luci-static/resources/view/system/flash.js"
+assert_grep 'lede-firmware-mark-flash.sh' "$_LEDE_FILES/www/luci-static/resources/view/system/flash.js"
+assert_grep 'ledeFwFlashPollStart' "$_LEDE_FILES/www/luci-static/resources/view/system/flash.js"
+assert_grep 'mount --bind' "$_LEDE_FILES/usr/libexec/lede-firmware-prepare.sh"
+assert_grep 'lede-fw-last-flash-success' "$_LEDE_FILES/etc/uci-defaults/46-lede-firmware-cleanup"
 assert_grep 'fmtHudCpu' "$_LEDE_FILES/www/luci-static/resources/view/status/index.js"
 assert_grep 'topo-kpi-alert' "$_LEDE_FILES/www/luci-static/resources/view/status/index.js"
 assert_grep 'wanalert_hud_flags' "$_LEDE_FILES/usr/share/ucode/lede-metrics.uc"

@@ -1,74 +1,46 @@
 # 整盘固件升级 vs 组件升级
 
-## 能否用「组件包」代替刷机？
+## 机制对比
 
-**不能等价替代。** 两者机制不同：
+| | **组件升级**（`.tar.gz`） | **整盘固件**（`.img` / `.img.gz` + `sysupgrade`） |
+|---|---------------------------|-----------------------------------------------------|
+| 入口 | 系统 → 备份与更新 → **组件升级** | 系统 → 备份与更新 → **刷写固件…** |
+| 镜像路径 | — | 上传到 **`/data/firmware.bin`**，刷写经 bind 为 `/tmp/firmware.bin` |
+| 重启 | 一般不需要 | **必须** |
 
-| | **组件升级**（`.tar.gz` + manifest） | **整盘固件**（`.img` / `.img.gz` + `sysupgrade`） |
-|---|--------------------------------------|-----------------------------------------------------|
-| 机制 | 覆盖 `files/` 里允许的路径 | 写分区、换 kernel + rootfs + 包集合 |
-| 是否重启 | 一般不需要（清 LuCI 缓存即可） | **必须重启** |
-| 典型体积 | KB～几 MB | 数百 MB～数 GB |
-| 适用 | LuCI/脚本热修、小功能发布 | 大版本、换 `.config` 包集、内核/驱动变更 |
-| 本仓库入口 | **系统 → 备份与更新 → 组件升级** | **系统 → 备份与更新 → 固件升级**（刷写镜像） |
-
-组件安装器 `lede-component-apply` 的 **白名单路径** 故意不包含 `/sbin/sysupgrade`、分区设备等，避免误把整盘镜像当文件覆盖。
+整盘能力也可通过组件包 **`lede-component-firmware-upgrade-v*.tar.gz`** 热更（刷机后需重装）。
 
 ---
 
-## 当前固件上的用法
+## 固件升级 UX 约定（实现 checklist）
 
-1. **日常小改**：继续用组件包（与 overlay 开发流程一致，见 [COMPONENT-PACK-DEVELOPMENT.md](COMPONENT-PACK-DEVELOPMENT.md)）。
-2. **换整盘新固件**：**系统 → 备份与更新 → 操作 → 固件升级 → 刷写固件…**（**仅本地上传**，不做 URL 整盘下载）  
-   - 上传 `openwrt-x86-64-generic-ext4-combined-efi.img` 或 **`.img.gz`（更省磁盘）**  
-   - 镜像写入 **`/data/firmware.bin`**（`/tmp` 多为 tmpfs，放不下整盘包）  
-   - 走 OpenWrt 校验、`sysupgrade`、重启；弹窗里默认勾选 **保留当前配置**（见下文）  
-   - **不能**做成无重启的组件包。
-
----
-
-## 为何之前像「只能刷机、没有在线整盘升级」？
-
-定制 `flash.js` 时曾 **用「组件升级」替换掉** 原版「Flash new firmware image」入口，**`handleSysupgrade` 仍在代码里**，但页面上没有按钮。  
-已在 overlay 中 **恢复「固件升级」区块**，与组件升级并列。
+1. **已有 `/data/firmware.bin`**：不自动刷写 →「使用此固件包 / 删除 / 取消」。
+2. **上传**：进度**只在弹窗顶部状态栏**；日志不写上传百分比。
+3. **上传完成后**：日志立即写「上传完成 → 进入校验…」；校验 / `--test` 长耗时阶段每 **~10 秒**一行阶段日志（非 logread 内核垃圾）。
+4. **校验通过后**：必须点 **「确认刷写并重启」** 才 `sysupgrade`。
+5. **刷写中**：仅此时轮询 `lede-firmware-progress.sh`（upgrade / dd 命令行 / 写盘字节数）；断连后停止轮询。
+6. **刷写成功重启后**：`46-lede-firmware-cleanup` 删除 `/data/firmware.bin`，写入 `/etc/lede-fw-last-flash-success`；再次打开弹窗可见「上次刷写记录」。
 
 ---
 
-## 能否保留旧固件的配置？
+## 大文件上传依赖（overlay / 组件包）
 
-**可以（默认就是保留）。** LuCI 刷写确认框里 **「Keep settings and retain the current configuration」** 默认勾选：
-
-- **勾选**：`sysupgrade` **不带** `-n`，会备份 `/etc` 等并在新固件启动后恢复（OpenWrt 标准行为）。  
-- **取消勾选**：等价于 `sysupgrade -n`，**清空配置**，相当于全新安装。  
-
-注意：
-
-- 大版本或包集变化大时，保留配置仍可能有个别 UCI/服务需手动调整；重大升级前建议先 **生成配置备份**。  
-- 若镜像校验提示 **不允许保留配置**（`allow_backup` 为假），界面会禁用该选项。  
-- 可选 **`-k`**：额外把已安装软件包列表写入备份（便于升级后对照补装）。  
-- 有 **`/data` 等持久分区** 时，还可选 **`-u`**：跳过与 `/rom` 相同的备份文件（减少冗余）。
-
-**不保留的内容**：整盘镜像本身、内核/rootfs 里的系统文件会被新固件替换；仅 **配置与用户数据** 按上述规则迁移。
+- nginx：`client_max_body_size 0`，body 临时目录 `/data/nginx-body`
+- uwsgi cgi-io：超时与 `limit-as` 调大
+- `lede-cgi-tmp`：cgi-io 临时目录 bind 到 `/dat`（避免 `/tmp` tmpfs 不足）
 
 ---
 
-## 整盘 URL 在线下载
+## 部署与打包
 
-**当前不需要、也未实现。** 整盘升级仅 **浏览器本地上传** 到 `/data/firmware.bin` 即可。
-
----
-
-## 编译机产出物对应关系
-
-| 产出 | 用途 |
+| 场景 | 命令 |
 |------|------|
-| `dist/lede-component-*.tar.gz` | 路由器 **组件升级** |
-| `openwrt/.../openwrt-x86-64-generic-ext4-combined-efi.img(.gz)` | 路由器 **固件升级** 或线下刷机 |
-| GitHub Release（若手动跑 Actions） | 同上镜像，非组件包 |
+| 测试机热更（如 9.1） | `./scripts/dev/deploy-flash-firmware-ui-91.sh [ip] [password]` |
+| 打组件包 | `./scripts/build-lede-component-pack.sh firmware-upgrade` → `dist/lede-component-firmware-upgrade-v*.tar.gz` |
+| 进镜像 | `files/` + `diy-part2.sh` overlay 自检 |
 
 ---
 
-## 推荐策略
+## 保留配置
 
-- **9.1 已跑新固件**：小改动只发 **组件包**；仅当包集/内核/分区策略变了再 **整盘 sysupgrade**。  
-- **开发机 6.80 增量编** 出 img 后，内网 HTTP 或 U 盘拷到路由器，用 **固件升级** 上传（后续可加 URL 下载封装）。
+弹窗内 **「保留当前配置」** 默认勾选 → `sysupgrade` 不带 `-n`；取消则 `-n` 清空配置。

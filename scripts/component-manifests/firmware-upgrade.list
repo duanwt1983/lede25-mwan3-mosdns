@@ -1,0 +1,13 @@
+# 整盘固件升级（LuCI 刷写 /data/firmware.bin）。nginx/uwsgi 模板在 www 下，post-apply 拷到 /etc。
+usr/libexec/lede-component-apply
+www/luci-static/resources/view/system/flash.js
+www/luci-static/resources/lede-firmware/nginx-luci.locations
+www/luci-static/resources/lede-firmware/uwsgi-luci-cgi_io.ini
+usr/share/rpcd/acl.d/zzz-lede-flash-acl.json
+usr/libexec/lede-firmware-prepare.sh
+usr/libexec/lede-firmware-mark-flash.sh
+usr/libexec/lede-firmware-delete.sh
+usr/libexec/lede-firmware-progress.sh
+etc/init.d/lede-cgi-tmp
+etc/uci-defaults/45-nginx-firmware-upload
+etc/uci-defaults/46-lede-firmware-cleanup

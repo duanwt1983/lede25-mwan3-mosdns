@@ -1,0 +1,32 @@
+#!/bin/sh
+# After a LuCI-triggered sysupgrade, remove the uploaded image and leave a success note.
+
+PENDING=/data/.lede-fw-flash-pending
+SUCCESS=/etc/lede-fw-last-flash-success
+DATA=/data/firmware.bin
+TMP=/tmp/firmware.bin
+
+[ -f "$PENDING" ] || exit 0
+
+new_rev=$(grep DISTRIB_REVISION /etc/openwrt_release 2>/dev/null | cut -d= -f2 | tr -d "'\"")
+new_rel=$(grep DISTRIB_RELEASE /etc/openwrt_release 2>/dev/null | cut -d= -f2 | tr -d "'\"")
+started=$(grep '^started=' "$PENDING" 2>/dev/null | cut -d= -f2-)
+sha=$(grep '^sha256=' "$PENDING" 2>/dev/null | cut -d= -f2-)
+old_rev=$(grep '^old_revision=' "$PENDING" 2>/dev/null | cut -d= -f2-)
+
+umount "$TMP" 2>/dev/null || true
+rm -f "$DATA" "$TMP" /tmp/sysupgrade.img /tmp/image.bs 2>/dev/null || true
+rm -f "$PENDING"
+
+cat >"$SUCCESS" <<EOF
+time=$(date -Is 2>/dev/null || date)
+result=success
+message=刷写后已自动删除 /data/firmware.bin
+old_revision=${old_rev:-unknown}
+new_revision=${new_rev:-unknown}
+new_release=${new_rel:-unknown}
+sha256=${sha:-unknown}
+started=${started:-unknown}
+EOF
+
+exit 0

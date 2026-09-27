@@ -1,0 +1,12 @@
+#!/bin/sh
+# Allow multi-GB firmware uploads. Root and /tmp are smaller than the image;
+# nginx must spool the body on /data.
+mkdir -p /data/nginx-body
+chmod 700 /data/nginx-body
+for f in /etc/nginx/uci.conf /etc/nginx/uci.conf.template; do
+	[ -f "$f" ] || continue
+	sed -i 's/client_max_body_size 128M;/client_max_body_size 0;/' "$f"
+	grep -q 'client_body_temp_path /data/nginx-body' "$f" || \
+		sed -i '/client_max_body_size 0;/a\	client_body_temp_path /data/nginx-body;' "$f"
+done
+exit 0

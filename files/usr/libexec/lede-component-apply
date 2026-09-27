@@ -12,6 +12,8 @@ ALLOW_PREFIX="
 /etc/init.d/
 /etc/hotplug.d/
 /etc/uci-defaults/
+/etc/nginx/conf.d/
+/etc/uwsgi/vassals/
 /www/luci-static/
 /usr/share/luci/
 /usr/share/rpcd/
