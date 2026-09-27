@@ -27,7 +27,7 @@ old_load = (
 )
 new_load = (
     "load(){const tasks=[L.resolveDefault(fs.stat('/lib/upgrade/platform.sh'),{}),"
-    "fs.trimmed('/proc/sys/kernel/hostname'),fs.trimmed('/proc/mtd'),"
+    "fs.trimmed('/proc/sys/kernel/hostname'),L.resolveDefault(fs.trimmed('/proc/mtd'),''),"
     "fs.trimmed('/proc/partitions'),fs.trimmed('/proc/mounts'),"
     "];return Promise.all(tasks);}"
 )

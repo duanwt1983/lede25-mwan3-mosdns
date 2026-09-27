@@ -126,6 +126,8 @@ for piece in pieces:
 sh("mv -f '%s' '%s'" % (tmp, dest.replace("'", "'\\''")))
 if not mode and data.startswith(b"#!"):
     mode = "755"
+elif not mode and (b"/www/" in dest.encode() or b"/usr/share/luci/" in dest.encode()):
+    mode = "644"
 if mode:
     sh("chmod %s '%s'" % (mode, dest.replace("'", "'\\''")))
 print("UPLOADED %s (%d bytes)" % (dest, len(data)))

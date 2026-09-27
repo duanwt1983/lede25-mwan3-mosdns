@@ -53,6 +53,8 @@
 				"/usr/libexec/lede-firmware-mark-flash.sh": [ "exec" ],
 				"/usr/libexec/lede-firmware-delete.sh": [ "exec" ],
 				"/usr/libexec/lede-firmware-progress.sh": [ "exec" ],
+				"/usr/libexec/lede-firmware-upload-env.sh": [ "exec" ],
+				"/usr/libexec/lede-firmware-upload-check.sh": [ "exec" ],
 				"/tmp/sysupgrade.log": [ "read" ],
 				"/tmp/lede-fw-flash.log": [ "read" ],
 				"/etc/lede-fw-last-flash-success": [ "read" ],

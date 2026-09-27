@@ -1,4 +1,4 @@
 pack_id=lede-component-firmware-upgrade
-version=1.0.1
-description=固件升级：确认刷写、上传进度仅顶栏、校验/写盘有意义日志、刷后删包与成功记录
-archive=lede-component-firmware-upgrade-v1.0.1.tar.gz
+version=1.0.3
+description=固件升级：nginx/uwsgi/cgi-io 大文件上传栈、uwsgi reload-on-as 修复、落盘恢复
+archive=lede-component-firmware-upgrade-v1.0.3.tar.gz

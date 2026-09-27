@@ -25,9 +25,19 @@
 
 ## 大文件上传依赖（overlay / 组件包）
 
-- nginx：`client_max_body_size 0`，body 临时目录 `/data/nginx-body`
-- uwsgi cgi-io：超时与 `limit-as` 调大
-- `lede-cgi-tmp`：cgi-io 临时目录 bind 到 `/dat`（避免 `/tmp` tmpfs 不足）
+统一脚本：**`/usr/libexec/lede-firmware-upload-env.sh`**（`45-nginx-firmware-upload`、`lede-cgi-tmp` 均调用它）
+
+| 问题 | 处理 |
+|------|------|
+| nginx 128M / 413 | 全局与 cgi-upload `client_max_body_size 0` |
+| nginx 落盘占满 root | `client_body_temp_path /data/nginx-body` |
+| cgi-io 写 `/tmp` tmpfs 满 | 二进制路径改为 `/dat` + bind `/data/cgi-tmp` → `/dat` |
+| uwsgi 上传到一半断连 | **`reload-on-as` / `reload-on-rss` 设为 0**，`harakiri=7200`，`limit-as=8192` |
+| 上传 HTTP 失败但已落盘 | LuCI 按 `/data/firmware.bin` 大小自动恢复继续校验 |
+
+自检：`/usr/libexec/lede-firmware-upload-check.sh`（`fail=0` 再传 2GB）
+
+**注意：** 上传过程中不要执行会 `uwsgi restart` / `nginx reload` 的部署脚本，否则会出现「upstream closed」误报失败。
 
 ---
 

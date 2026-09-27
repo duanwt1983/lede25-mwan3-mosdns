@@ -1,17 +1,13 @@
 #!/bin/sh /etc/rc.common
-# cgi-io spools uploads with O_TMPFILE on a hardcoded directory.
-# /tmp is a small tmpfs; keep that directory on the /data disk instead.
+# cgi-io spools uploads on disk; /tmp tmpfs is too small for firmware images.
 START=96
 STOP=10
 
 start() {
-	rm -f /tmp/sysupgrade.img /tmp/image.bs 2>/dev/null || true
-	mkdir -p /data/cgi-tmp /dat
-	grep -q ' /dat ' /proc/mounts || mount --bind /data/cgi-tmp /dat
-	[ -f /usr/libexec/cgi-io ] || return 0
-	# File offset of the "/tmp" temp directory string in the current cgi-io.
-	cur=$(dd if=/usr/libexec/cgi-io bs=1 skip=17084 count=4 2>/dev/null)
-	if [ "$cur" = "/tmp" ]; then
-		printf '/dat' | dd of=/usr/libexec/cgi-io bs=1 seek=17084 conv=notrunc >/dev/null 2>&1
-	fi
+	[ -x /usr/libexec/lede-firmware-upload-env.sh ] && \
+		/usr/libexec/lede-firmware-upload-env.sh
+}
+
+stop() {
+	umount /dat 2>/dev/null || true
 }

@@ -8,6 +8,10 @@ usr/libexec/lede-firmware-prepare.sh
 usr/libexec/lede-firmware-mark-flash.sh
 usr/libexec/lede-firmware-delete.sh
 usr/libexec/lede-firmware-progress.sh
+usr/libexec/lede-firmware-upload-env.sh
+usr/libexec/lede-firmware-upload-check.sh
 etc/init.d/lede-cgi-tmp
 etc/uci-defaults/45-nginx-firmware-upload
 etc/uci-defaults/46-lede-firmware-cleanup
+etc/nginx/conf.d/luci.locations
+etc/uwsgi/vassals/luci-cgi_io.ini
