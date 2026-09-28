@@ -6,4 +6,6 @@ STAGE_UWSGI=/www/luci-static/resources/lede-firmware/uwsgi-luci-cgi_io.ini
 [ -f "$STAGE_UWSGI" ] && mkdir -p /etc/uwsgi/vassals && \
 	cp -f "$STAGE_UWSGI" /etc/uwsgi/vassals/luci-cgi_io.ini
 /etc/init.d/lede-cgi-tmp disable 2>/dev/null || true
+/etc/init.d/uwsgi restart 2>/dev/null || true
+/etc/init.d/nginx reload 2>/dev/null || /etc/init.d/nginx restart 2>/dev/null || true
 exit 0

@@ -15,9 +15,6 @@ df -h /data 2>/dev/null | grep -q /data && note "/data mounted" || bad "/data no
 grep -q 'client_max_body_size 0' /etc/nginx/uci.conf 2>/dev/null && \
 	note "nginx client_max_body_size 0" || bad "nginx global body limit not 0"
 
-grep -q 'client_body_temp_path /data/nginx-body' /etc/nginx/uci.conf 2>/dev/null && \
-	note "nginx body temp on /data" || bad "nginx body temp not on /data/nginx-body"
-
 grep -q 'client_max_body_size 0' /etc/nginx/conf.d/luci.locations 2>/dev/null && \
 	note "luci.locations cgi-upload limit 0" || bad "luci.locations missing upload limit 0"
 
@@ -27,26 +24,24 @@ grep -q 'limit-as = 8192' /etc/uwsgi/vassals/luci-cgi_io.ini 2>/dev/null && \
 grep -q 'reload-on-as = 0' /etc/uwsgi/vassals/luci-cgi_io.ini 2>/dev/null && \
 	note "uwsgi reload-on-as disabled" || bad "uwsgi reload-on-as still enabled (kills large uploads)"
 
-if grep -q ' /dat ' /proc/mounts 2>/dev/null; then
-	note "/dat bind active (firmware upload session)"
-elif lede_cgi_io_patched_dat; then
-	bad "cgi-io still uses /dat without bind (run upload-env or reboot after sysupgrade)"
-elif [ -d /dat ]; then
-	note "/dat mountpoint present (cgi-io uses /tmp until upload-env)"
+grep -q 'uwsgi_request_buffering off' /etc/nginx/conf.d/luci.locations 2>/dev/null && \
+	note "nginx uwsgi_request_buffering off" || \
+	bad "luci.locations missing uwsgi_request_buffering off"
+
+tmp_kb=$(df -k /tmp 2>/dev/null | awk 'NR==2 {print $2}')
+tmp_h=$(df -h /tmp 2>/dev/null | awk 'NR==2 {print $2}')
+if [ -n "$tmp_kb" ] && [ "$tmp_kb" -ge $((2600 * 1024)) ]; then
+	note "/tmp tmpfs ready for multi-GB upload ($tmp_h)"
+elif [ -f /var/run/lede-fw-upload-active ]; then
+	bad "/tmp tmpfs too small ($tmp_h) — re-run upload-env before upload"
 else
-	bad "/dat mountpoint missing"
+	note "/tmp tmpfs $tmp_h (upload-env grows RAM tmpfs on demand)"
 fi
 
 if lede_cgi_io_patched_dat; then
-	if grep -q ' /dat ' /proc/mounts 2>/dev/null; then
-		note "cgi-io temp /dat (bind OK)"
-	elif [ -x /usr/libexec/lede-firmware-upload-env.sh ]; then
-		bad "cgi-io uses /dat but bind missing — run upload-env before upload"
-	else
-		bad "cgi-io uses /dat but upload-env missing"
-	fi
+	bad "cgi-io patched to /dat (legacy) — run upload-sanity boot to restore /tmp"
 elif lede_cgi_io_patched_tmp; then
-	note "cgi-io temp /tmp (normal; upload-env patches for large firmware upload)"
+	note "cgi-io temp /tmp (memory upload path)"
 else
 	bad "cgi-io path unknown"
 fi

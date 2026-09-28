@@ -1,15 +1,20 @@
 #!/bin/sh
-# End firmware upload session: drop /dat bind and restore cgi-io to /tmp.
+# End firmware upload session: restore /tmp tmpfs size (if we grew it).
 set -eu
 export PATH=/usr/sbin:/sbin:/usr/bin:/bin
 
-. /usr/libexec/lede-firmware-cgi-io.sh
+LEDE_FW_UPLOAD_ACTIVE=/var/run/lede-fw-upload-active
+LEDE_FW_TMP_PREV=/var/run/lede-fw-upload-tmp-prev-kb
 
 rm -f "$LEDE_FW_UPLOAD_ACTIVE" 2>/dev/null || true
 
-if grep -q ' /dat ' /proc/mounts 2>/dev/null; then
-	umount /dat 2>/dev/null || umount -l /dat 2>/dev/null || true
+if [ -f "$LEDE_FW_TMP_PREV" ]; then
+	prev_kb=$(cat "$LEDE_FW_TMP_PREV" 2>/dev/null)
+	rm -f "$LEDE_FW_TMP_PREV"
+	if [ -n "$prev_kb" ]; then
+		mount -o remount,size="${prev_kb}k" /tmp 2>/dev/null || \
+			mount -o remount /tmp 2>/dev/null || true
+	fi
 fi
 
-lede_cgi_io_revert_tmp
 exit 0

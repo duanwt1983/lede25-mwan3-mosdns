@@ -19,7 +19,7 @@
 3. **上传**：进度**只在弹窗顶部状态栏**；日志不写上传百分比。
 4. **上传完成后**：日志立即写「上传完成 → 进入校验…」；校验 / `--test` 长耗时阶段每 **~10 秒**一行阶段日志（非 logread 内核垃圾）。
 5. **校验通过后**：必须点 **「确认刷写并重启」** 才 `sysupgrade`。
-6. **刷写中**：轮询 `lede-firmware-progress.sh`（dd / 日志）；**LuCI 会在写盘时断线**，浏览器里**看不到** stage2 的「3 秒后 reboot」（该条在路由器日志与 `/data/lede-fw-flash.log`）；断线后页面应**自动重连**当前 IP（如 192.168.9.1）。
+6. **刷写中**：轮询 `lede-firmware-progress.sh`（dd / 日志）；**LuCI 会在写盘时断线**，浏览器里**看不到** stage2 的「3 秒后 reboot」（该条在路由器日志与 `/data/lede-fw-flash.log`）；断线后状态栏为 **「等待重连」**（**不是失败**），并 **自动重连**当前 IP（v1.0.20+）。
 7. **刷写后重启**：`do_stage2` 提示 **3 秒后 reboot** 后 `sync; reboot -f`；**不** `umount -a`（避免 `/data`/bind 挂载卡死）；stage2 **不用 logger**。
    - **整盘刷机后** rootfs 会回到镜像自带的 stock `do_stage2`（含 `umount -a`）→ 表现为 **dd 可能已跑完但一直不重启**。必须先 **组件 v1.0.8+ / deploy 脚本** 或 **6.80 带 overlay 的新镜像**，再刷下一次。
    - 成功标志：重启后 `/etc/lede-fw-last-flash-success`；刷写前会有 `/data/.lede-fw-flash-pending`。
@@ -34,13 +34,14 @@
 | 问题 | 处理 |
 |------|------|
 | nginx 128M / 413 | 全局与 cgi-upload `client_max_body_size 0` |
-| nginx 落盘占满 root | `client_body_temp_path /data/nginx-body` |
-| cgi-io 写 `/tmp` tmpfs 满 | 仅在上传前 **`upload-env.sh`**：`bind /data/cgi-tmp → /dat` + 临时把 cgi-io 改为 `/dat`；**平时 cgi-io 为 `/tmp`、LuCI 挂载列表无 `/dat` 是正常的** |
-| **保留配置 sysupgrade 后** | overlay 里可能残留 **cgi-io=/dat 却无 bind** → 开机 **`upload-sanity.sh`** 会 **umount /dat 并恢复 cgi-io=/tmp**；固件上传前再跑 upload-env |
+| **≥~1.7GB HTTP 500** | 上传路径 **nginx → uWSGI → cgi-io** 会先把整包 POST 放在 **`/tmp`（tmpfs）**；默认只有约 **内存一半**。固件升级偶尔用一次 → **`upload-env`** **临时 remount 扩大 `/tmp`（用 RAM）**，`upload-teardown` 恢复；**不在 /data 上为上传专门 bind** |
+| 最终镜像文件 | 仍写到 **`/data/firmware.bin`**（大分区）；与 `/tmp` 临时缓冲无关 |
+| **保留配置 sysupgrade 后** | 若 overlay 里残留旧版 **cgi-io=/dat** → **`upload-sanity.sh boot`** 恢复 **cgi-io=/tmp** |
+| **新固件未点上传** | **v1.0.9+** 按需 `upload-env`（LuCI 上传前自动调用）；未跑则 `/tmp` 仍为默认大小 |
 | uwsgi 上传到一半断连 | **`reload-on-as` / `reload-on-rss` 设为 0**，`harakiri=7200`，`limit-as=8192` |
 | 上传 HTTP 失败但已落盘 | LuCI 按 `/data/firmware.bin` 大小自动恢复继续校验 |
 
-自检：`/usr/libexec/lede-firmware-upload-check.sh`（`fail=0` 再传 2GB）。若见 **`FAIL: cgi-io still uses /dat without bind`**，在路由器执行 **`/usr/libexec/lede-firmware-upload-sanity.sh boot`** 或重启后再 **upload-env**。
+自检：`/usr/libexec/lede-firmware-upload-check.sh`（`fail=0` 再传 2GB）。**内存建议 ≥4G** 以便把 `/tmp` 扩到 ~2.6G+ 传 2G 级镜像。若见 **cgi-io patched to /dat (legacy)**，执行 **`upload-sanity.sh boot`**。
 
 刷机后 **`47` + `lede-data-mount`** 会跑 **`upload-sanity`**（不常驻 bind）；`lede-cgi-tmp` **禁止 enable**。
 

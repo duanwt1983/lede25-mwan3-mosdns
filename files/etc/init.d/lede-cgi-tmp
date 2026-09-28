@@ -1,6 +1,6 @@
 #!/bin/sh /etc/rc.common
 # On-demand only: do NOT enable at boot. Use upload-env / upload-teardown manually or via LuCI.
-# START is unset so procd will not auto-run this without explicit enable (avoid permanent /dat bind).
+# START is unset — upload-env runs on demand (grows /tmp tmpfs for the upload session).
 
 start() {
 	[ -x /usr/libexec/lede-firmware-upload-env.sh ] && \

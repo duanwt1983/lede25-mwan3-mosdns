@@ -1,4 +1,4 @@
 pack_id=lede-component-firmware-upgrade
-version=1.0.15
-description=固件升级：BusyBox 下正确 revert cgi-io；/dat 仅上传会话
-archive=lede-component-firmware-upgrade-v1.0.15.tar.gz
+version=1.0.20
+description=固件升级：刷写断线不再误报失败，自动等待重连
+archive=lede-component-firmware-upgrade-v1.0.20.tar.gz
