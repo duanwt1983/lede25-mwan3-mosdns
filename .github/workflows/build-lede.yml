@@ -43,7 +43,11 @@ jobs:
           sudo mkdir -p /workdir
           sudo chown "$USER:$GROUPS" /workdir
           timeout 90 sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
-          timeout 120 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y musl-tools clang llvm
+          timeout 180 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            musl-tools clang llvm llvm-dev libllvm-dev libclang-dev \
+            llvm-18 llvm-18-dev libllvm-18-dev || true
+          timeout 180 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            musl-tools clang llvm llvm-dev libllvm-dev libclang-dev
           echo "init done $(date -Is)"
           free -h
           df -hT

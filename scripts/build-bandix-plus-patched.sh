@@ -18,6 +18,21 @@ trap cleanup EXIT
 
 mkdir -p "$WORK" "$(dirname "$OUT")"
 
+ensure_llvm() {
+	if command -v bpf-linker >/dev/null 2>&1 || [ -x "$CARGO_HOME/bin/bpf-linker" ]; then
+		return 0
+	fi
+	if command -v apt-get >/dev/null 2>&1 && [ "$(id -u)" -eq 0 ]; then
+		apt-get install -y musl-tools clang llvm llvm-dev libllvm-dev libclang-dev \
+			llvm-18 llvm-18-dev libllvm-18-dev 2>/dev/null || true
+	elif command -v sudo >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1; then
+		sudo DEBIAN_FRONTEND=noninteractive apt-get install -y musl-tools clang llvm llvm-dev \
+			libllvm-dev libclang-dev llvm-18 llvm-18-dev libllvm-18-dev 2>/dev/null || \
+		sudo DEBIAN_FRONTEND=noninteractive apt-get install -y musl-tools clang llvm llvm-dev \
+			libllvm-dev libclang-dev 2>/dev/null || true
+	fi
+}
+
 ensure_rust() {
 	export PATH="$CARGO_HOME/bin:$PATH"
 	if ! command -v rustup >/dev/null 2>&1; then
@@ -28,8 +43,14 @@ ensure_rust() {
 	rustup toolchain install stable nightly >/dev/null
 	rustup target add "$TARGET" --toolchain stable >/dev/null
 	if ! command -v bpf-linker >/dev/null 2>&1 && [ ! -x "$CARGO_HOME/bin/bpf-linker" ]; then
+		ensure_llvm
 		echo "Installing bpf-linker (nightly)..."
-		cargo +nightly install bpf-linker --locked 2>/dev/null || cargo +nightly install bpf-linker
+		if ! cargo +nightly install bpf-linker --locked 2>/dev/null; then
+			cargo +nightly install bpf-linker || {
+				echo "ERROR: bpf-linker install failed (need libLLVM: llvm-dev / libllvm-*-dev)" >&2
+				exit 1
+			}
+		fi
 	fi
 	export PATH="$CARGO_HOME/bin:$PATH"
 }
