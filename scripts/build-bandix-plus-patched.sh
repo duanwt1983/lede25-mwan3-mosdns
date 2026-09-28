@@ -55,6 +55,9 @@ ensure_rust() {
 	fi
 	rustup toolchain install stable nightly >/dev/null
 	rustup target add "$TARGET" --toolchain stable >/dev/null
+	rustup target add "$TARGET" --toolchain nightly >/dev/null
+	# aya build.rs compiles eBPF with nightly + -Z build-std=core (needs rust-src).
+	rustup component add rust-src --toolchain nightly >/dev/null
 	ensure_bpf_linker
 	export PATH="$CARGO_HOME/bin:$PATH"
 }
@@ -88,9 +91,9 @@ fetch_src() {
 build_bin() {
 	cd "$WORK/src"
 	export PATH="$CARGO_HOME/bin:$PATH"
-	if cargo build -q --release --target "$TARGET" -p bandix-plus; then
+	if cargo +nightly build -q --release --target "$TARGET" -p bandix-plus; then
 		:
-	elif cargo +nightly build -q --release --target "$TARGET" -p bandix-plus; then
+	elif cargo build -q --release --target "$TARGET" -p bandix-plus; then
 		:
 	else
 		echo "ERROR: cargo build failed for patched bandix-plus" >&2
