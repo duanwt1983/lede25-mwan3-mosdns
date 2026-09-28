@@ -920,6 +920,11 @@ assert_grep 'LEDE_BANDIX_COUNT_FORWARDED' "$_BANDIX_PLUS_MK"
   exit 1
 }
 echo "content OK: bandix-plus count-forwarded-only patch"
+[ -f package/bandix-plus/lede-patched/bandix-plus ] || {
+  echo "ERROR: package/bandix-plus/lede-patched/bandix-plus missing (host build failed)"
+  exit 1
+}
+echo "content OK: bandix-plus lede-patched binary"
 assert_grep 'all_down_sent' "$_LEDE_FILES/usr/share/ucode/lede-watch.uc"
 assert_grep '有人占用已分配地址' "$_LEDE_FILES/usr/share/ucode/lede-watch.uc"
 assert_grep 'MAX_CAP_SEC' "$_LEDE_FILES/usr/libexec/packet-cap"

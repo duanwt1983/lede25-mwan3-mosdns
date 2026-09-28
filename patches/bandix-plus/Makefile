@@ -7,21 +7,14 @@ PKG_RELEASE:=2
 PKG_LICENSE:=Apache-2.0
 PKG_MAINTAINER:=timsaya
 
-# LEDE: build from upstream source + count-forwarded-only eBPF patch (not prebuilt release).
+# LEDE: count-forwarded-only eBPF patch; binary built on host in diy-part2 (see scripts/build-bandix-plus-patched.sh).
 # LEDE_BANDIX_COUNT_FORWARDED:=1
 
 PKG_SOURCE:=v0.1.2.tar.gz
 PKG_SOURCE_URL:=https://github.com/timsaya/bandix-plus/archive/refs/tags
 PKG_HASH:=ae1179018a709b46455c551c46a2b6ffc458aad2f276999c82f13e2a569362f3
 
-PKG_BUILD_DEPENDS:=rust/host
-PKG_BUILD_PARALLEL:=1
-
 include $(INCLUDE_DIR)/package.mk
-include $(TOPDIR)/feeds/packages/lang/rust/rust-values.mk
-
-# Same triple mapping as upstream prebuilt release tarballs (via OpenWrt rust-values.mk).
-RUST_BANDIX_TARGET:=$(RUSTC_TARGET_ARCH)
 
 define Package/$(PKG_NAME)
 	SECTION:=net
@@ -41,12 +34,12 @@ define Build/Prepare
 endef
 
 define Build/Compile
-	$(SH) $(CURDIR)/lede-build-bandix.sh \
-		$(PKG_BUILD_DIR) \
-		$(PKG_BUILD_DIR)/bandix-plus \
-		$(RUST_BANDIX_TARGET) \
-		$(TARGET_CC_NOCACHE) \
-		$(STAGING_DIR_HOST)
+	[ -f "$(CURDIR)/lede-patched/bandix-plus" ] || { \
+		echo "ERROR: missing $(CURDIR)/lede-patched/bandix-plus — run diy-part2 (build-bandix-plus-patched.sh)" >&2; \
+		exit 1; \
+	}
+	$(CP) "$(CURDIR)/lede-patched/bandix-plus" "$(PKG_BUILD_DIR)/bandix-plus"
+	chmod 0755 "$(PKG_BUILD_DIR)/bandix-plus"
 endef
 
 define Package/$(PKG_NAME)/install

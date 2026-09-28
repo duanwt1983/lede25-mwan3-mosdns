@@ -18,7 +18,7 @@ apt-get install -y \
   libncurses5-dev libreadline-dev libssl-dev libtool libz-dev lrzsz mkisofs \
   msmtp nano ninja-build patch pkgconf python3 python3-setuptools python3-dev \
   python3-pip qemu-utils rsync scons squashfs-tools subversion \
-  swig texinfo unzip wget xxd zlib1g-dev
+  swig texinfo unzip wget xxd zlib1g-dev musl-tools clang llvm
 
 # Lean / PassWall Go builds need a recent host Go when diy-part2 probes go.mod.
 if ! command -v go >/dev/null 2>&1; then

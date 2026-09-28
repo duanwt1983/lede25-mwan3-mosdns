@@ -28,4 +28,21 @@ grep -Fq 'LEDE_BANDIX_COUNT_FORWARDED' "$PKG/Makefile" || {
 	exit 1
 }
 
-echo "bandix-plus: patched source build wired (PKG_RELEASE 2, count-forwarded-only)"
+PATCHED_BIN="$PKG/lede-patched/bandix-plus"
+STAMP="$PKG/lede-patched/.patch-stamp"
+PATCH_MD5=$(md5sum "$SELF/count-forwarded-only.patch" | awk '{print $1}')
+BUILD_SCRIPT="$OVERLAY/scripts/build-bandix-plus-patched.sh"
+mkdir -p "$PKG/lede-patched"
+if [ ! -x "$BUILD_SCRIPT" ]; then
+	echo "ERROR: missing $BUILD_SCRIPT" >&2
+	exit 1
+fi
+if [ -f "$PATCHED_BIN" ] && [ -f "$STAMP" ] && [ "$(cat "$STAMP")" = "$PATCH_MD5" ]; then
+	echo "bandix-plus: reusing lede-patched binary (patch unchanged)"
+else
+	bash "$BUILD_SCRIPT" "$PATCHED_BIN"
+	echo "$PATCH_MD5" > "$STAMP"
+fi
+[ -f "$PATCHED_BIN" ] || { echo "ERROR: bandix-plus patched binary not built" >&2; exit 1; }
+
+echo "bandix-plus: patched build ready (PKG_RELEASE 2, count-forwarded-only)"
