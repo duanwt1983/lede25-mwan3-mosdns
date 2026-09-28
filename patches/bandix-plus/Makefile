@@ -20,44 +20,8 @@ PKG_BUILD_PARALLEL:=1
 include $(INCLUDE_DIR)/package.mk
 include $(TOPDIR)/feeds/packages/lang/rust/rust-values.mk
 
-ifeq ($(ARCH),x86_64)
-	RUST_BANDIX_TARGET:=x86_64-unknown-linux-musl
-else ifeq ($(ARCH),aarch64)
-	RUST_BANDIX_TARGET:=aarch64-unknown-linux-musl
-else ifeq ($(ARCH),arm)
-	ARM_CPU_TYPE:=arm-armel
-	ifeq ($(CONFIG_arm_v6)$(CONFIG_arm_v7),)
-		ARM_CPU_TYPE:=$(subst arm-,armv5te-,$(ARM_CPU_TYPE))
-	else ifeq ($(CONFIG_arm_v7),y)
-		ARM_CPU_TYPE:=$(subst arm-,armv7-,$(ARM_CPU_TYPE))
-	endif
-	ifeq ($(CONFIG_HAS_FPU),y)
-		ARM_CPU_TYPE:=$(subst -armel,-armhf,$(ARM_CPU_TYPE))
-	endif
-	ifeq ($(ARM_CPU_TYPE),arm-armel)
-		RUST_BANDIX_TARGET:=arm-unknown-linux-musleabi
-	else ifeq ($(ARM_CPU_TYPE),arm-armhf)
-		RUST_BANDIX_TARGET:=arm-unknown-linux-musleabihf
-	else ifeq ($(ARM_CPU_TYPE),armv5te-armel)
-		RUST_BANDIX_TARGET:=armv5te-unknown-linux-musleabi
-	else ifeq ($(ARM_CPU_TYPE),armv7-armel)
-		RUST_BANDIX_TARGET:=armv7-unknown-linux-musleabi
-	else ifeq ($(ARM_CPU_TYPE),armv7-armhf)
-		RUST_BANDIX_TARGET:=armv7-unknown-linux-musleabihf
-	else
-		$(error bandix-plus: unsupported ARM CPU type $(ARM_CPU_TYPE))
-	endif
-else ifeq ($(ARCH),mips)
-	RUST_BANDIX_TARGET:=mips-unknown-linux-musl
-else ifeq ($(ARCH),mipsel)
-	RUST_BANDIX_TARGET:=mipsel-unknown-linux-musl
-else ifeq ($(ARCH),powerpc64)
-	RUST_BANDIX_TARGET:=powerpc64le-unknown-linux-musl
-else ifeq ($(ARCH),riscv64)
-	RUST_BANDIX_TARGET:=riscv64gc-unknown-linux-musl
-else
-	$(error bandix-plus: LEDE patched source build not configured for ARCH $(ARCH))
-endif
+# Same triple mapping as upstream prebuilt release tarballs (via OpenWrt rust-values.mk).
+RUST_BANDIX_TARGET:=$(RUSTC_TARGET_ARCH)
 
 define Package/$(PKG_NAME)
 	SECTION:=net
