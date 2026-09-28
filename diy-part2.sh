@@ -851,7 +851,22 @@ while IFS= read -r f; do
   fi
 done < <(find feeds package -path '*/luci-mod-system/*' -path '*/view/system/flash.js' -type f 2>/dev/null)
 [ -z "$_FLASH_PKG" ] && _FLASH_PKG=$(find feeds package -path '*/luci-mod-system/*' -path '*/view/system/flash.js' -type f 2>/dev/null | head -n 1 || true)
-_SAMBAJS_PKG=$(find package feeds -path '*/luci-app-samba4/*/view/samba4.js' -type f 2>/dev/null | head -n 1 || true)
+_samba_overlay="$_LEDE_FILES/www/luci-static/resources/view/samba4.js"
+if [ -f "$_samba_overlay" ]; then
+  find feeds package -path '*/luci-app-samba4/*' -path '*/view/samba4.js' -type f 2>/dev/null \
+    | while IFS= read -r f; do
+        install -m 0644 "$_samba_overlay" "$f"
+        echo "luci-app-samba4: synced overlay samba4.js -> $f"
+      done
+fi
+_SAMBAJS_PKG=""
+while IFS= read -r f; do
+  if grep -Fq 'lede-samba-sync' "$f" 2>/dev/null; then
+    _SAMBAJS_PKG=$f
+    break
+  fi
+done < <(find feeds package -path '*/luci-app-samba4/*' -path '*/view/samba4.js' -type f 2>/dev/null)
+[ -z "$_SAMBAJS_PKG" ] && _SAMBAJS_PKG=$(find feeds package -path '*/luci-app-samba4/*' -path '*/view/samba4.js' -type f 2>/dev/null | head -n 1 || true)
 [ -n "$_FLASH_PKG" ] || { echo "ERROR: luci-mod-system flash.js not in build tree"; exit 1; }
 [ -n "$_SAMBAJS_PKG" ] || { echo "ERROR: luci-app-samba4 samba4.js not in build tree"; exit 1; }
 assert_grep 'ledeCompOpenInstallModal' "$_FLASH_PKG"
