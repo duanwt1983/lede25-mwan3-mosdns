@@ -38,13 +38,14 @@ define Build/Compile
 		echo "ERROR: missing $(CURDIR)/lede-patched/bandix-plus — run diy-part2 (build-bandix-plus-patched.sh)" >&2; \
 		exit 1; \
 	}
-	$(CP) "$(CURDIR)/lede-patched/bandix-plus" "$(PKG_BUILD_DIR)/bandix-plus"
-	chmod 0755 "$(PKG_BUILD_DIR)/bandix-plus"
+	# Do not use $(PKG_BUILD_DIR)/bandix-plus — source tree already has bandix-plus/ crate dir.
+	$(CP) "$(CURDIR)/lede-patched/bandix-plus" "$(PKG_BUILD_DIR)/bandix-plus.bin"
+	chmod 0755 "$(PKG_BUILD_DIR)/bandix-plus.bin"
 endef
 
 define Package/$(PKG_NAME)/install
 	$(INSTALL_DIR) $(1)/usr/bin
-	$(INSTALL_BIN) $(PKG_BUILD_DIR)/bandix-plus $(1)/usr/bin/
+	$(INSTALL_BIN) $(PKG_BUILD_DIR)/bandix-plus.bin $(1)/usr/bin/bandix-plus
 
 	$(INSTALL_DIR) $(1)/etc/init.d
 	$(INSTALL_DIR) $(1)/etc/config
