@@ -9,6 +9,7 @@ PATCH="$ROOT/patches/bandix-plus/count-forwarded-only.patch"
 PKG_HASH="ae1179018a709b46455c551c46a2b6ffc458aad2f276999c82f13e2a569362f3"
 TARBALL_URL="https://github.com/timsaya/bandix-plus/archive/refs/tags/v0.1.2.tar.gz"
 TARGET="x86_64-unknown-linux-musl"
+BPF_LINKER_VERSION="${BPF_LINKER_VERSION:-v0.11.1}"
 WORK="${TMPDIR:-/tmp}/bandix-plus-patched-$$"
 CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}"
 RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"
@@ -16,21 +17,33 @@ RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"
 cleanup() { rm -rf "$WORK"; }
 trap cleanup EXIT
 
-mkdir -p "$WORK" "$(dirname "$OUT")"
+mkdir -p "$WORK" "$(dirname "$OUT")" "$CARGO_HOME/bin"
 
-ensure_llvm() {
-	if command -v bpf-linker >/dev/null 2>&1 || [ -x "$CARGO_HOME/bin/bpf-linker" ]; then
+ensure_bpf_linker() {
+	export PATH="$CARGO_HOME/bin:$PATH"
+	if command -v bpf-linker >/dev/null 2>&1; then
 		return 0
 	fi
-	if command -v apt-get >/dev/null 2>&1 && [ "$(id -u)" -eq 0 ]; then
-		apt-get install -y musl-tools clang llvm llvm-dev libllvm-dev libclang-dev \
-			llvm-18 llvm-18-dev libllvm-18-dev 2>/dev/null || true
-	elif command -v sudo >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1; then
-		sudo DEBIAN_FRONTEND=noninteractive apt-get install -y musl-tools clang llvm llvm-dev \
-			libllvm-dev libclang-dev llvm-18 llvm-18-dev libllvm-18-dev 2>/dev/null || \
-		sudo DEBIAN_FRONTEND=noninteractive apt-get install -y musl-tools clang llvm llvm-dev \
-			libllvm-dev libclang-dev 2>/dev/null || true
+	if [ ! -x "$CARGO_HOME/bin/bpf-linker" ]; then
+		local url="https://github.com/aya-rs/bpf-linker/releases/download/${BPF_LINKER_VERSION}/bpf-linker-x86_64-unknown-linux-musl.tar.zst"
+		local zst="$WORK/bpf-linker.tar.zst"
+		echo "bandix-plus: fetching bpf-linker ${BPF_LINKER_VERSION} (prebuilt)..."
+		curl -fsSL -o "$zst" "$url"
+		if ! tar --zstd -xf "$zst" -C "$CARGO_HOME/bin" 2>/dev/null; then
+			if command -v zstd >/dev/null 2>&1; then
+				zstd -d -q -o "$WORK/bpf-linker" "$zst"
+				install -m 0755 "$WORK/bpf-linker" "$CARGO_HOME/bin/bpf-linker"
+			else
+				echo "ERROR: need tar --zstd or zstd to unpack bpf-linker" >&2
+				exit 1
+			fi
+		fi
+		chmod +x "$CARGO_HOME/bin/bpf-linker"
 	fi
+	command -v bpf-linker >/dev/null 2>&1 || {
+		echo "ERROR: bpf-linker missing after install" >&2
+		exit 1
+	}
 }
 
 ensure_rust() {
@@ -42,16 +55,7 @@ ensure_rust() {
 	fi
 	rustup toolchain install stable nightly >/dev/null
 	rustup target add "$TARGET" --toolchain stable >/dev/null
-	if ! command -v bpf-linker >/dev/null 2>&1 && [ ! -x "$CARGO_HOME/bin/bpf-linker" ]; then
-		ensure_llvm
-		echo "Installing bpf-linker (nightly)..."
-		if ! cargo +nightly install bpf-linker --locked 2>/dev/null; then
-			cargo +nightly install bpf-linker || {
-				echo "ERROR: bpf-linker install failed (need libLLVM: llvm-dev / libllvm-*-dev)" >&2
-				exit 1
-			}
-		fi
-	fi
+	ensure_bpf_linker
 	export PATH="$CARGO_HOME/bin:$PATH"
 }
 
