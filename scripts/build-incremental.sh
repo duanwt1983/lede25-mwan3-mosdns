@@ -8,6 +8,14 @@ LEDE_WORK="${LEDE_WORK:-/openwrt-build}"
 OVERLAY="${OVERLAY:-$LEDE_WORK/overlay}"
 LEDE_JOBS="${LEDE_JOBS:-$(nproc)}"
 export TZ="${TZ:-Asia/Shanghai}"
+LOCK_FILE="${LEDE_WORK}/incremental.lock"
+
+mkdir -p "$LEDE_WORK"
+exec 9>"$LOCK_FILE"
+if ! flock -n 9; then
+  echo "ERROR: another incremental build holds $LOCK_FILE (see build.pid / incremental-*.log)" >&2
+  exit 1
+fi
 
 [ -d "$LEDE_WORK/openwrt/.git" ] || { echo "Missing $LEDE_WORK/openwrt — run full build-offline first" >&2; exit 1; }
 [ -f "$OVERLAY/diy-part2.sh" ] || { echo "Missing overlay at $OVERLAY" >&2; exit 1; }
