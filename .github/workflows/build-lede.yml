@@ -111,6 +111,11 @@ jobs:
             echo "host golang failed to compile"
             exit 1
           fi
+          echo "build rust/host for bandix-plus source compile $(date -Is)"
+          if ! make -j1 package/feeds/packages/lang/rust/host/compile; then
+            echo "host rust failed to compile"
+            exit 1
+          fi
           if [ -x staging_dir/hostpkg/bin/go ]; then
             staging_dir/hostpkg/bin/go version
           elif [ -x staging_dir/host/bin/go ]; then

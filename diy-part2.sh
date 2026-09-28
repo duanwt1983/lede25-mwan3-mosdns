@@ -831,7 +831,26 @@ assert_pkg_file 'commitDisableToUci' \
   package/luci-app-mwan3 -path '*/view/mwan3/network/globals.js'
 assert_pkg_file 'lede-theme-page' \
   package/luci-app-mwan3 -path '*/view/mwan3/network/globals.js'
-_FLASH_PKG=$(find package feeds -path '*/luci-mod-system/*/view/system/flash.js' -type f 2>/dev/null | head -n 1 || true)
+# Re-bake flash.js after feeds/package copies (package/feeds symlinks may still point at stock LuCI).
+_flash_overlay="$_LEDE_FILES/www/luci-static/resources/view/system/flash.js"
+if [ -f "$_LUCI_SYSTEM_PATCH" ]; then
+  bash "$_LUCI_SYSTEM_PATCH" "$(pwd)"
+fi
+if [ -f "$_flash_overlay" ]; then
+  find feeds package -path '*/luci-mod-system/*' -path '*/view/system/flash.js' -type f 2>/dev/null \
+    | while IFS= read -r f; do
+        install -m 0644 "$_flash_overlay" "$f"
+        echo "luci-mod-system: synced overlay flash.js -> $f"
+      done
+fi
+_FLASH_PKG=""
+while IFS= read -r f; do
+  if grep -Fq 'ledeCompOpenInstallModal' "$f" 2>/dev/null; then
+    _FLASH_PKG=$f
+    break
+  fi
+done < <(find feeds package -path '*/luci-mod-system/*' -path '*/view/system/flash.js' -type f 2>/dev/null)
+[ -z "$_FLASH_PKG" ] && _FLASH_PKG=$(find feeds package -path '*/luci-mod-system/*' -path '*/view/system/flash.js' -type f 2>/dev/null | head -n 1 || true)
 _SAMBAJS_PKG=$(find package feeds -path '*/luci-app-samba4/*/view/samba4.js' -type f 2>/dev/null | head -n 1 || true)
 [ -n "$_FLASH_PKG" ] || { echo "ERROR: luci-mod-system flash.js not in build tree"; exit 1; }
 [ -n "$_SAMBAJS_PKG" ] || { echo "ERROR: luci-app-samba4 samba4.js not in build tree"; exit 1; }
