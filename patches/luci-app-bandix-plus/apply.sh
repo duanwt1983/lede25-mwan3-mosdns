@@ -2,11 +2,12 @@
 # Patch luci-app-bandix-plus index.js at build time (search, pagination, topo embed).
 
 set -e
-ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-PKG="package/luci-app-bandix-plus/htdocs/luci-static/resources/view/bandix_plus/index.js"
-SRC="$ROOT/tmp-bandix-index.js"
-OUT="$ROOT/files/www/luci-static/resources/view/bandix_plus/index.js"
-PATCH="$ROOT/patches/luci-app-bandix-plus/patch-index.py"
+OVERLAY="$(cd "$(dirname "$0")/../.." && pwd)"
+OWRT="${LEDE_OPENWRT:-$(pwd)}"
+PKG="$OWRT/package/luci-app-bandix-plus/htdocs/luci-static/resources/view/bandix_plus/index.js"
+SRC="$OVERLAY/tmp-bandix-index.js"
+OUT="$OVERLAY/files/www/luci-static/resources/view/bandix_plus/index.js"
+PATCH="$OVERLAY/patches/luci-app-bandix-plus/patch-index.py"
 
 if [ ! -f "$OUT" ]; then
   if [ -f "$PKG" ]; then

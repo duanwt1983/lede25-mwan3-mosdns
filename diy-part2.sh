@@ -187,8 +187,12 @@ else
 fi
 rm -rf /tmp/openwrt-bandix-plus /tmp/luci-app-bandix-plus
 rm -rf feeds/luci/applications/luci-app-bandix-plus package/feeds/luci/luci-app-bandix-plus || true
+export LEDE_OPENWRT="$(pwd)"
 _LUCI_BANDIX_PATCH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/patches/luci-app-bandix-plus/apply.sh"
 [ -x "$_LUCI_BANDIX_PATCH" ] && "$_LUCI_BANDIX_PATCH" || bash "$_LUCI_BANDIX_PATCH" 2>/dev/null || true
+_BANDIX_PLUS_PATCH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/patches/bandix-plus/apply.sh"
+[ -f "$_BANDIX_PLUS_PATCH" ] || { echo "ERROR: patches/bandix-plus/apply.sh missing"; exit 1; }
+bash "$_BANDIX_PLUS_PATCH"
 
 rm -rf package/ddns-go package/luci-app-ddns-go /tmp/luci-app-ddns-go
 git clone --depth=1 https://github.com/sirpdboy/luci-app-ddns-go /tmp/luci-app-ddns-go
@@ -874,6 +878,14 @@ assert_grep 'autolimit_status' "$_LEDE_FILES/usr/share/ucode/lede-autolimit.uc"
 assert_grep 'bplus_iface_is_lan' "$_LEDE_FILES/usr/share/ucode/lede-bandix.uc"
 assert_grep "option data_dir '/data/bandix-plus'" "$_LEDE_FILES/etc/config/bandix_plus"
 assert_grep "data_dir='/data/bandix-plus'" "$_LEDE_FILES/etc/uci-defaults/40-bandix-plus"
+_BANDIX_PLUS_MK="package/bandix-plus/Makefile"
+[ -f "$_BANDIX_PLUS_MK" ] || { echo "ERROR: package/bandix-plus/Makefile missing"; exit 1; }
+assert_grep 'LEDE_BANDIX_COUNT_FORWARDED' "$_BANDIX_PLUS_MK"
+[ -f package/bandix-plus/patches/100-count-forwarded-only.patch ] || {
+  echo "ERROR: bandix-plus eBPF patch not installed under package/bandix-plus/patches/"
+  exit 1
+}
+echo "content OK: bandix-plus count-forwarded-only patch"
 assert_grep 'all_down_sent' "$_LEDE_FILES/usr/share/ucode/lede-watch.uc"
 assert_grep '有人占用已分配地址' "$_LEDE_FILES/usr/share/ucode/lede-watch.uc"
 assert_grep 'MAX_CAP_SEC' "$_LEDE_FILES/usr/libexec/packet-cap"

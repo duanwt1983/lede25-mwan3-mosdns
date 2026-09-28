@@ -1,0 +1,28 @@
+diff --git a/bandix-plus-ebpf/src/main.rs b/bandix-plus-ebpf/src/main.rs
+index 0e6d07d..6ec1c77 100644
+--- a/bandix-plus-ebpf/src/main.rs
++++ b/bandix-plus-ebpf/src/main.rs
+@@ -107,6 +107,12 @@ fn try_bandix_plus(ctx: TcContext, direction: u8) -> Result<i32, i32> {
+         direction,
+         _pad: [0; 2],
+     };
++
++    if should_drop_by_rate_limit(ifindex, meta.mac, meta.ip_version, direction, pkt_len) {
++        return Ok(TC_ACT_SHOT);
++    }
++
++    // Count only forwarded packets so UI rates match traffic after the limit.
+     bump_iface_counter(&iface_key, pkt_len);
+ 
+     if let Some(mac) = meta.mac {
+@@ -119,10 +125,6 @@ fn try_bandix_plus(ctx: TcContext, direction: u8) -> Result<i32, i32> {
+         bump_device_counter(&device_key, pkt_len);
+     }
+ 
+-    if should_drop_by_rate_limit(ifindex, meta.mac, meta.ip_version, direction, pkt_len) {
+-        return Ok(TC_ACT_SHOT);
+-    }
+-
+     Ok(TC_ACT_UNSPEC)
+ }
+ 
