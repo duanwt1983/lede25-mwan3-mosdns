@@ -1060,8 +1060,9 @@ assert_grep 'autofix_hold_min' "$_LEDE_FILES/usr/libexec/wan-alert"
 assert_grep 'ping -c 2' "$_LEDE_FILES/usr/share/ucode/lede-wan-probe.uc"
 assert_grep "option autofix_hold_min '5'" "$_LEDE_FILES/etc/config/wanalert"
 
-_SYSJS=$(find feeds/luci package -path '*/view/system/system.js' -type f 2>/dev/null | head -n 1 || true)
-[ -n "$_SYSJS" ] || { echo "ERROR: system.js not found after luci-mod-system patch"; exit 1; }
-assert_grep '标题' "$_SYSJS"
+_SYSJS=$(find feeds package -path '*/luci-mod-system/*' -path '*/view/system/system.js' -type f 2>/dev/null | head -n 1 || true)
+[ -n "$_SYSJS" ] || { echo "ERROR: luci-mod-system system.js not in build tree"; exit 1; }
+assert_grep 'callRcList' "$_SYSJS"
+assert_grep '"title": "备份与更新"' "$_LEDE_FILES/usr/share/luci/menu.d/zzz-lede-flash-menu.json"
 
 echo "LEDE overlay compile self-check passed"
