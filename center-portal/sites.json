@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "sites": [
+    {
+      "id": "t1",
+      "name": "测试",
+      "region": "晋城",
+      "luci_port": 19002,
+      "luci_host": "192.168.9.1",
+      "ssh_port": 0,
+      "tags": [],
+      "tunnels": [
+        {
+          "name": "a1",
+          "port": 19100,
+          "remark": "示例：NVR/Web",
+          "local": "192.168.9.100:80"
+        }
+      ]
+    }
+  ]
+}

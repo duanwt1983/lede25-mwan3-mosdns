@@ -1,0 +1,337 @@
+#!/bin/sh
+# Regional center frpc: write-config | apply | status
+set -e
+. /lib/functions.sh
+
+CONF=/var/etc/lede-center-frpc.toml
+PIDFILE=/var/run/lede-center-frpc.pid
+
+uci_get() {
+	uci -q get "lede-center.main.$1" 2>/dev/null || true
+}
+
+valid_site_id() {
+	case "$1" in
+	''|*[!a-zA-Z0-9_-]*)
+		return 1
+		;;
+	esac
+	return 0
+}
+
+# 隧道须指向门店 LAN 设备，不能指回中心或本机回环
+tunnel_local_ip_bad() {
+	case "$1" in
+	127.0.0.1|::1|localhost|192.168.6.251)
+		return 0
+		;;
+	esac
+	return 1
+}
+
+uci_config_valid() {
+	local site token rpluc
+	site=$(uci_get site_id)
+	token=$(uci_get token)
+	rpluc=$(uci_get remote_port_luci)
+	valid_site_id "$site" || return 1
+	[ -n "$token" ] || return 1
+	[ -n "$rpluc" ] || return 1
+	return 0
+}
+
+write_config() {
+	local en site server port token rpluc rpssh lport tls skip tmp lip
+	en=$(uci_get enabled)
+	site=$(uci_get site_id)
+	server=$(uci_get server)
+	port=$(uci_get port)
+	token=$(uci_get token)
+	rpluc=$(uci_get remote_port_luci)
+	rpssh=$(uci_get remote_port_ssh)
+	lport=$(uci_get local_luci_port)
+	lip=$(uci_get local_luci_ip)
+	tls=$(uci_get tls_insecure)
+	[ -n "$server" ] || server=center.123.gd.cn
+	[ -n "$port" ] || port=18007
+	[ -n "$lport" ] || lport=443
+	if [ -z "$lip" ]; then
+		lip=$(uci -q get network.lan.ipaddr)
+	fi
+	[ -n "$lip" ] || lip=127.0.0.1
+	skip=1
+	[ "$tls" = "0" ] && skip=0
+
+	mkdir -p "$(dirname "$CONF")"
+
+	if [ "$en" != "1" ]; then
+		: >"$CONF"
+		return 0
+	fi
+
+	if ! valid_site_id "$site"; then
+		echo "invalid site_id (use a-z A-Z 0-9 _ -)" >&2
+		return 1
+	fi
+	[ -n "$token" ] || {
+		echo "token is required when enabled" >&2
+		return 1
+	}
+	[ -n "$rpluc" ] || {
+		echo "remote_port_luci is required when enabled" >&2
+		return 1
+	}
+
+	tmp="${CONF}.tmp.$$"
+	cat >"$tmp" <<EOF
+serverAddr = "$server"
+serverPort = $port
+
+auth.method = "token"
+auth.token = "$token"
+
+transport.tls.enable = true
+transport.tls.disableCustomTLSFirstByte = true
+EOF
+
+	# frp 0.61+ has no transport.tls.insecureSkipVerify; with TLS enabled and no
+	# trustedCaFile, frpc connects without verifying the server cert (OK for self-signed).
+
+	cat >>"$tmp" <<EOF
+
+[[proxies]]
+name = "${site}-luci"
+type = "tcp"
+localIP = "$lip"
+localPort = $lport
+remotePort = $rpluc
+EOF
+
+	if [ -n "$rpssh" ] && [ "$rpssh" != "0" ]; then
+		cat >>"$tmp" <<EOF
+
+[[proxies]]
+name = "${site}-ssh"
+type = "tcp"
+localIP = "127.0.0.1"
+localPort = 22
+remotePort = $rpssh
+EOF
+	fi
+
+	append_tunnel_proxies "$site" "$tmp" || {
+		rm -f "$tmp"
+		return 1
+	}
+	mv "$tmp" "$CONF"
+}
+
+append_tunnel_proxy() {
+	local section="$1"
+	local site="$2"
+	local tmp="$3"
+	local en pname lip lport rport
+	config_get en "$section" enabled
+	[ "$en" = "1" ] || return 0
+	config_get pname "$section" name
+	config_get lip "$section" local_ip
+	config_get lport "$section" local_port
+	config_get rport "$section" remote_port
+	[ -n "$lip" ] && [ -n "$lport" ] && [ -n "$rport" ] || return 0
+	valid_site_id "$pname" || return 0
+	if tunnel_local_ip_bad "$lip"; then
+		echo "tunnel ${pname}: local_ip ${lip} 无效（请填门店 LAN 内设备 IP，勿填 6.251/127.0.0.1）" >&2
+		TUNNEL_ERR=1
+		return 1
+	fi
+	cat >>"$tmp" <<EOF
+
+[[proxies]]
+name = "${site}-${pname}"
+type = "tcp"
+localIP = "$lip"
+localPort = $lport
+remotePort = $rport
+EOF
+}
+
+append_tunnel_proxies() {
+	local site="$1"
+	local tmp="$2"
+	TUNNEL_ERR=0
+	config_load lede-center
+	config_foreach append_tunnel_proxy tunnel "$site" "$tmp"
+	[ "${TUNNEL_ERR:-0}" = 0 ] || return 1
+}
+
+drop_tunnel_firewall_rules() {
+	local sid name
+	for sid in $(uci -q show firewall 2>/dev/null | sed -n 's/^firewall\.\([^.]*\)=rule$/\1/p'); do
+		name=$(uci -q get "firewall.$sid.name" 2>/dev/null) || continue
+		case "$name" in
+		lede-center-tunnel-*)
+			uci -q delete "firewall.$sid"
+			;;
+		esac
+	done
+}
+
+sync_one_tunnel_firewall() {
+	local section="$1" site="$2"
+	local en pname lip lport lanip rulename
+	config_get en "$section" enabled
+	[ "$en" = "1" ] || return 0
+	config_get pname "$section" name
+	config_get lip "$section" local_ip
+	config_get lport "$section" local_port
+	[ -n "$lip" ] && [ -n "$lport" ] && [ -n "$pname" ] || return 0
+	valid_site_id "$pname" || return 0
+	case "$lip" in
+	127.0.0.1|::1) return 0 ;;
+	esac
+	lanip=$(uci -q get network.lan.ipaddr)
+	[ "$lip" = "$lanip" ] && return 0
+	rulename="lede-center-tunnel-${site}-${pname}"
+	uci add firewall rule >/dev/null
+	uci set "firewall.@rule[-1].name=$rulename"
+	uci set "firewall.@rule[-1].enabled=1"
+	uci set "firewall.@rule[-1].family=ipv4"
+	uci set "firewall.@rule[-1].proto=tcp"
+	uci set "firewall.@rule[-1].src=lan"
+	uci set "firewall.@rule[-1].dest=lan"
+	uci set "firewall.@rule[-1].dest_ip=$lip"
+	uci set "firewall.@rule[-1].dest_port=$lport"
+	uci set "firewall.@rule[-1].target=ACCEPT"
+}
+
+sync_tunnel_firewall() {
+	local en site
+	en=$(uci_get enabled)
+	site=$(uci_get site_id)
+	drop_tunnel_firewall_rules
+	if [ "$en" = "1" ] && valid_site_id "$site"; then
+		config_load lede-center
+		config_foreach sync_one_tunnel_firewall tunnel "$site"
+	fi
+	uci commit firewall 2>/dev/null || true
+	fw4 reload >/dev/null 2>&1 || /etc/init.d/firewall reload >/dev/null 2>&1 || true
+}
+
+frpc_running() {
+	[ -x /usr/bin/frpc ] || return 1
+	pidof frpc >/dev/null 2>&1
+}
+
+# UCI 已启用且参数完整时：保证 toml 存在且 frpc 进程在跑（仅 status/ensure 调用）
+ensure_service() {
+	local i
+	[ "$(uci_get enabled)" = "1" ] || return 0
+	uci_config_valid || return 0
+	[ -x /usr/bin/frpc ] || return 0
+	if [ ! -s "$CONF" ]; then
+		write_config 2>/dev/null || return 0
+	fi
+	[ -s "$CONF" ] || return 0
+	frpc_running && return 0
+	/etc/init.d/lede-center-frpc restart 2>/dev/null \
+		|| /etc/init.d/lede-center-frpc start 2>/dev/null \
+		|| true
+	i=0
+	while [ $i -lt 8 ]; do
+		frpc_running && return 0
+		sleep 1
+		i=$((i + 1))
+	done
+	return 0
+}
+
+status_tunnel_json_line() {
+	local section="$1"
+	local en pname lip lport rport
+	config_get en "$section" enabled
+	[ "$en" = "1" ] || return 0
+	config_get pname "$section" name
+	config_get lip "$section" local_ip
+	config_get lport "$section" local_port
+	config_get rport "$section" remote_port
+	[ -n "$pname" ] && [ -n "$lip" ] && [ -n "$lport" ] && [ -n "$rport" ] || return 0
+	valid_site_id "$pname" || return 0
+	if [ -n "$STATUS_TUNNELS_JSON" ]; then
+		STATUS_TUNNELS_JSON="$STATUS_TUNNELS_JSON,"
+	fi
+	STATUS_TUNNELS_JSON="$STATUS_TUNNELS_JSON{\"name\":\"$pname\",\"local_ip\":\"$lip\",\"local_port\":$lport,\"remote_port\":$rport}"
+}
+
+status_json() {
+	local en run cfg uci_ok
+	en=$(uci_get enabled)
+	run=0
+	cfg=0
+	uci_ok=0
+	STATUS_TUNNELS_JSON=""
+	if [ "$en" = "1" ] && uci_config_valid; then
+		uci_ok=1
+		ensure_service
+	fi
+	[ -s "$CONF" ] && cfg=1
+	frpc_running && run=1
+	if [ "$en" = "1" ]; then
+		config_load lede-center
+		config_foreach status_tunnel_json_line tunnel
+	fi
+	[ -n "$STATUS_TUNNELS_JSON" ] || STATUS_TUNNELS_JSON=""
+	printf '{"enabled":%s,"running":%s,"config":%s,"uci_ok":%s,"site_id":"%s","server":"%s","port":"%s","remote_port_luci":"%s","tunnels":[%s]}' \
+		"$([ "$en" = "1" ] && echo 1 || echo 0)" \
+		"$run" \
+		"$cfg" \
+		"$uci_ok" \
+		"$(uci_get site_id)" \
+		"$(uci_get server)" \
+		"$(uci_get port)" \
+		"$(uci_get remote_port_luci)" \
+		"$STATUS_TUNNELS_JSON"
+}
+
+case "${1:-status}" in
+write-config)
+	write_config
+	;;
+apply)
+	en=$(uci_get enabled)
+	if [ "$en" = "1" ]; then
+		write_config || exit 1
+	else
+		write_config || true
+	fi
+	sync_tunnel_firewall
+	/etc/init.d/lede-center-frpc stop 2>/dev/null || true
+	killall frpc 2>/dev/null || true
+	sleep 1
+	if [ "$en" = "1" ]; then
+		/etc/init.d/lede-center-frpc start || exit 1
+		sleep 2
+		pidof frpc >/dev/null || {
+			echo "frpc failed to start; see logread | grep frpc" >&2
+			exit 1
+		}
+	fi
+	;;
+restart)
+	en=$(uci_get enabled)
+	[ "$en" = "1" ] || exit 0
+	write_config || exit 1
+	/etc/init.d/lede-center-frpc restart || exit 1
+	sleep 2
+	pidof frpc >/dev/null || {
+		echo "frpc failed to start; see logread | grep frpc" >&2
+		exit 1
+	}
+	;;
+status|ensure)
+	status_json
+	;;
+*)
+	echo "usage: $0 {write-config|apply|restart|ensure|status}" >&2
+	exit 1
+	;;
+esac

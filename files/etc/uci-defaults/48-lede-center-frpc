@@ -1,0 +1,5 @@
+#!/bin/sh
+chmod 755 /usr/libexec/lede-center-frpc /etc/init.d/lede-center-frpc 2>/dev/null || true
+chmod 755 /etc/hotplug.d/iface/35-lede-center-frpc 2>/dev/null || true
+[ -x /etc/init.d/lede-center-frpc ] && /etc/init.d/lede-center-frpc enable
+exit 0

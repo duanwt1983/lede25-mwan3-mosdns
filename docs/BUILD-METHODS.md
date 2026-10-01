@@ -45,6 +45,24 @@ chmod +x scripts/trigger-remote-incremental.sh
 
 产物：`$LEDE_WORK/openwrt/bin/targets/x86/64/`。
 
+### 增量 vs 全量（编译机）
+
+| | **增量** `build-incremental.sh` | **全量** `build-offline.sh` |
+|---|--------------------------------|-----------------------------|
+| 何时用 | **日常**：改 overlay / LuCI / 组件 | **首编**、删树后、或 upstream LEDE **大版本 / toolchain** 变动 |
+| 是否重 clone | 否，沿用 `$LEDE_WORK/openwrt` | 默认 `rm -rf openwrt` 再 clone |
+| 是否重 download | 一般否（保留 `dl/`） | 可 `SKIP_DOWNLOAD=1` 保留 `dl/` |
+| 编出来的固件 | 与全量相同类型的 **sysupgrade / combined** 镜像 | 同上 |
+
+**和路由器升级的关系：** 编译方式只影响 **6.80 上怎么出包**，不影响 **9.1 能否升级**。只要新镜像是同一 **target**（如 `x86/64`）、用 LuCI **刷写固件**（默认 **保留配置**），**增量编出的固件** 和 **全量编出的固件** 都可以在当前系统上升级。大版本升级后若个别 kmod 不匹配，再按需重装对应 ipk 或 `-n` 清空配置刷机。
+
+清理编译机磁盘（保留 openwrt 树以便继续增量）：
+
+```bash
+bash /openwrt-build/overlay/scripts/cleanup-build-host.sh
+# 需要更多空间：AGGRESSIVE=1 bash .../cleanup-build-host.sh
+```
+
 ---
 
 ## 2. GitHub Actions（遗留 / 仅手动发版）
@@ -62,6 +80,27 @@ chmod +x scripts/trigger-remote-incremental.sh
 3. `package/` 本地 feed  
 
 组件热更新见 [COMPONENT-PACK-DEVELOPMENT.md](COMPONENT-PACK-DEVELOPMENT.md)。
+
+### 区域接入中心（frpc）
+
+下文链接中的 `center.example.com` 仅为文档示例；**固件 UCI / frpc 默认中心域名为 `center.123.gd.cn`**（见 `files/etc/config/lede-center`），与线上 Authelia、frps 一致。
+
+固件内置 `lede-center-frpc`（frp **0.61.1**，与总部 frps 一致）。LuCI 在 **系统 → 管理权 → 远程管理** 页内选项卡 **区域接入中心**（与本机外网管理并列）。每台网关填写唯一 **站点 ID**、**remote_port_luci**（在 6.251 登记）和 **frps token** 后保存即可出站连 `center.example.com:18007`；保存并应用时会同步 frpc 配置，并为「内网 TCP 隧道」在防火墙放行网关到 LAN 的访问（不在门店 WAN 开放中心端口）。配置保留见 `lib/upgrade/keep.d/lede-center`。
+
+### 总部中心门户（6.251）
+
+源码目录 `center-portal/`：站点登记、`sites.json`、Nginx/OpenResty Lua（`/home/gw/<site_id>/…` 反代 LuCI）。部署：
+
+```bash
+cp scripts/center-portal-251.env.example scripts/center-portal-251.env   # 填写 SSHPASS，勿提交
+./scripts/deploy-center-portal-251.sh root@192.168.6.251
+```
+
+外网入口 LEDE 仅需转发 **18443**、**18007** 到 6.251。LuCI 推荐链接（需 Authelia，**不**依赖内网隧道 19100 等公网口）：
+
+`https://center.example.com:18443/home/gw/<site_id>/cgi-bin/luci/`
+
+内网 TCP 隧道端口（19100–19999）若要从公网访问，须在入口 LEDE 逐端口转发到 6.251。
 
 ---
 

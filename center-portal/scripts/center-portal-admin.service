@@ -1,0 +1,12 @@
+[Unit]
+Description=Center portal site registry API
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/center-portal/center-portal-admin.py
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

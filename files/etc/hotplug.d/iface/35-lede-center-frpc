@@ -1,0 +1,10 @@
+#!/bin/sh
+[ "$ACTION" = ifup ] || exit 0
+case "$INTERFACE" in
+wan*|pppoe*|wwan*) ;;
+*) exit 0 ;;
+esac
+[ "$(uci -q get lede-center.main.enabled)" = "1" ] || exit 0
+[ -x /etc/init.d/lede-center-frpc ] || exit 0
+/etc/init.d/lede-center-frpc restart >/dev/null 2>&1 &
+exit 0

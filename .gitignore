@@ -6,3 +6,4 @@ tmp-*
 tmp-topo-pull/
 *.log
 *.pid
+scripts/center-portal-251.env

@@ -87,6 +87,8 @@ rm -rf package/mosdns-mwan
 cp -a "$_OVERLAY/package/mosdns-mwan" package/mosdns-mwan
 rm -rf package/wireshark
 cp -a "$_OVERLAY/package/wireshark" package/wireshark
+rm -rf package/lede-center-frpc
+cp -a "$_OVERLAY/package/lede-center-frpc" package/lede-center-frpc
 # Overlay scripts must be executable in the image. A checkout may store them
 # as 100644; fix the index when possible, then chmod the working tree.
 [ -f scripts/fix-overlay-exec.sh ] && sh scripts/fix-overlay-exec.sh || true
