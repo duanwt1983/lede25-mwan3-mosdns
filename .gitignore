@@ -7,3 +7,4 @@ tmp-topo-pull/
 *.log
 *.pid
 scripts/center-portal-251.env
+scripts/build-host-680.env
