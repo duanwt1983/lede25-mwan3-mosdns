@@ -87,13 +87,6 @@
       var cfg = apiData(cfgRes) || cfgRes.data || {};
       window._accCfg = cfg;
 
-      var userEl = $('#acc-username');
-      var nameEl = $('#acc-display-name');
-      if (userEl) userEl.textContent = me.username || '—';
-      if (nameEl) {
-        nameEl.textContent = me.display_name || me.username || '—';
-      }
-
       var disabled = me.password_change_disabled ||
         (cfg && cfg.password_change_disabled);
       var formEl = $('#acc-password-form');

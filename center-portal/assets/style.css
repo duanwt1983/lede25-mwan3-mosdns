@@ -1,15 +1,15 @@
 :root {
-  --bg: #0f1419;
-  --surface: #1a2332;
-  --surface2: #243044;
-  --border: rgba(255, 255, 255, 0.08);
-  --text: #e8eef4;
-  --muted: #8b9cb3;
-  --accent: #3b82f6;
-  --accent-hover: #2563eb;
-  --ok: #22c55e;
-  --warn: #f59e0b;
-  --bad: #ef4444;
+  --bg: #f1f5f9;
+  --surface: #ffffff;
+  --surface2: #e2e8f0;
+  --border: #cbd5e1;
+  --text: #0f172a;
+  --muted: #64748b;
+  --accent: #2563eb;
+  --accent-hover: #1d4ed8;
+  --ok: #16a34a;
+  --warn: #d97706;
+  --bad: #dc2626;
   --radius: 10px;
   font-family: "Segoe UI", system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
 }
@@ -54,7 +54,7 @@ header.top .sub { color: var(--muted); font-size: 0.92rem; margin-top: 6px; }
 }
 .nav-actions a.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 .nav-actions a.primary:hover { background: var(--accent-hover); }
-.nav-actions a:hover { border-color: rgba(255,255,255,0.15); }
+.nav-actions a:hover { border-color: var(--accent); background: #eff6ff; }
 
 .tabs {
   display: flex;
@@ -136,7 +136,7 @@ header.top .sub { color: var(--muted); font-size: 0.92rem; margin-top: 6px; }
   border-radius: 50%;
   margin-right: 6px;
 }
-.status-dot.on { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+.status-dot.on { background: var(--ok); box-shadow: 0 0 0 2px rgba(22, 163, 74, 0.25); }
 .status-dot.off { background: var(--bad); opacity: 0.7; }
 
 .card-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: auto; }
@@ -237,9 +237,9 @@ table.data th { color: var(--muted); font-weight: 600; }
   border-radius: 999px;
   font-size: 0.78rem;
   font-weight: 700;
-  background: rgba(59, 130, 246, 0.2);
-  color: #93c5fd;
-  border: 1px solid rgba(59, 130, 246, 0.35);
+  background: #dbeafe;
+  color: #1d4ed8;
+  border: 1px solid #93c5fd;
 }
 .admin-site-meta { font-size: 0.9rem; margin-bottom: 14px; line-height: 1.65; color: var(--muted); }
 .admin-site-meta strong { color: var(--text); }
@@ -290,7 +290,7 @@ table.data th { color: var(--muted); font-weight: 600; }
   padding: 9px 11px;
   border-radius: 8px;
   border: 1px solid var(--border);
-  background: var(--bg);
+  background: var(--surface);
   color: var(--text);
   font-size: 0.92rem;
 }
@@ -337,7 +337,7 @@ table.data th { color: var(--muted); font-weight: 600; }
   padding: 16px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  background: var(--bg);
+  background: #f8fafc;
 }
 .tunnel-editor h3 { margin: 0 0 8px; font-size: 0.98rem; }
 .tunnel-table { margin: 12px 0; }
@@ -374,10 +374,10 @@ table.data th { color: var(--muted); font-weight: 600; }
 .admin-row-actions .btn-sm {
   padding: 4px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); cursor: pointer; font-size: 0.8rem;
 }
-.admin-row-actions .btn-sm.danger { border-color: rgba(239,68,68,0.4); color: #fca5a5; }
+.admin-row-actions .btn-sm.danger { border-color: #fca5a5; color: var(--bad); background: #fef2f2; }
 .admin-msg { min-height: 1.4em; font-size: 0.88rem; margin: 8px 0 12px; }
 .admin-msg.ok { color: var(--ok); }
-.admin-msg.err { color: #fca5a5; }
+.admin-msg.err { color: var(--bad); }
 
 .frpc-box {
   margin: 0 0 18px;
@@ -418,15 +418,42 @@ table.data th { color: var(--muted); font-weight: 600; }
   padding: 10px 12px;
   border-radius: 8px;
   border: 1px solid var(--border);
-  background: var(--bg);
+  background: var(--surface);
   color: var(--text);
   font-size: 0.92rem;
 }
 .acc-msg { min-height: 1.4em; font-size: 0.88rem; margin: 4px 0 12px; }
 .acc-msg.ok { color: var(--ok); }
-.acc-msg.bad { color: #fca5a5; }
+.acc-msg.bad { color: var(--bad); }
 .acc-msg.warn { color: var(--warn); }
 .acc-disabled { color: var(--warn); }
+
+.docs-dialog {
+  border: none;
+  border-radius: var(--radius);
+  padding: 0;
+  max-width: min(720px, calc(100vw - 32px));
+  max-height: min(85vh, 900px);
+  box-shadow: 0 20px 50px rgba(15, 23, 42, 0.18);
+}
+.docs-dialog::backdrop {
+  background: rgba(15, 23, 42, 0.45);
+}
+.docs-dialog-inner {
+  max-height: min(85vh, 900px);
+  overflow: auto;
+  margin: 0;
+}
+.docs-dialog-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.docs-dialog-head h2 { margin: 0; }
+.docs-dialog-inner h3 { margin: 18px 0 8px; font-size: 0.98rem; }
 
 @media (max-width: 600px) {
   header.top h1 { font-size: 1.25rem; }

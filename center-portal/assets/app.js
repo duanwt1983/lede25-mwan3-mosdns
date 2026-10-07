@@ -23,13 +23,37 @@
     return (root || document).querySelector(sel);
   }
 
+  function openDocsDialog() {
+    var dlg = $('#docs-dialog');
+    if (dlg && typeof dlg.showModal === 'function') dlg.showModal();
+  }
+
+  function docsDialogSetup() {
+    var dlg = $('#docs-dialog');
+    if (!dlg) return;
+    var closeBtn = $('#docs-dialog-close');
+    if (closeBtn) {
+      closeBtn.addEventListener('click', function () { dlg.close(); });
+    }
+    dlg.addEventListener('click', function (ev) {
+      if (ev.target === dlg) dlg.close();
+    });
+    var navDocs = $('#btn-open-docs');
+    if (navDocs) {
+      navDocs.addEventListener('click', function (ev) {
+        ev.preventDefault();
+        openDocsDialog();
+      });
+    }
+  }
+
   function tabSetup() {
     var tabs = document.querySelectorAll('.tabs button');
     tabs.forEach(function (btn) {
       btn.addEventListener('click', function () {
         var id = btn.getAttribute('data-tab');
         tabs.forEach(function (b) { b.classList.toggle('active', b === btn); });
-        document.querySelectorAll('.panel').forEach(function (p) {
+        document.querySelectorAll('section.panel').forEach(function (p) {
           p.classList.toggle('active', p.id === 'panel-' + id);
         });
       });
@@ -74,7 +98,7 @@
   function renderSites(sites, status) {
     var grid = $('#site-grid');
     if (!sites.length) {
-      grid.innerHTML = '<div class="empty">尚未登记站点。请编辑服务器上的 <code>sites.json</code> 后执行 <code>center-portal-sync</code>。</div>';
+      grid.innerHTML = '';
       return;
     }
 
@@ -108,7 +132,7 @@
           (site.note ? '<div class="meta">' + escapeHtml(site.note) + '</div>' : '') +
           '<div class="card-actions">' +
             '<a class="' + (on ? '' : 'disabled') + '" href="' + (on ? gwUrl : '#') + '" target="_blank" rel="noopener">打开 LuCI</a>' +
-            '<a class="secondary" href="#panel-docs" data-goto-docs="1">接入说明</a>' +
+            '<a class="secondary" href="#" data-goto-docs="1">接入说明</a>' +
           '</div>' +
         '</article>'
       );
@@ -117,7 +141,7 @@
     grid.querySelectorAll('[data-goto-docs]').forEach(function (a) {
       a.addEventListener('click', function (ev) {
         ev.preventDefault();
-        document.querySelector('.tabs button[data-tab="docs"]').click();
+        openDocsDialog();
       });
     });
   }
@@ -125,7 +149,7 @@
   function renderPortTable(sites, status) {
     var tbody = $('#port-table-body');
     if (!sites.length) {
-      tbody.innerHTML = '<tr><td colspan="6">暂无</td></tr>';
+      tbody.innerHTML = '';
       return;
     }
     var tmap = tunnelCheckMap(status);
@@ -211,6 +235,7 @@
   window.portalReload = loadAll;
 
   tabSetup();
+  docsDialogSetup();
   loadAll();
   setInterval(loadAll, 60000);
 })();

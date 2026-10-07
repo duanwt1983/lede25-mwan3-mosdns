@@ -6,17 +6,18 @@
   <meta name="portal-base" content="/home/">
   <meta name="portal-center-host" content="center.123.gd.cn">
   <title>区域接入中心</title>
-  <link rel="stylesheet" href="assets/style.css?v=20261001t">
+  <link rel="stylesheet" href="assets/style.css?v=20261007ui1">
 </head>
 <body>
   <div class="wrap">
     <header class="top">
       <div>
         <h1>区域接入中心</h1>
-        <p class="sub">统一认证 · 站点隧道 · 网关 LuCI 入口（center.example.com:18443）</p>
+        <p class="sub">统一认证 · 站点隧道</p>
       </div>
       <nav class="nav-actions">
         <a class="primary" href="/home/" id="btn-refresh">刷新状态</a>
+        <a href="#" id="btn-open-docs">接入文档</a>
         <a href="#" data-goto-tab="account">账户与安全</a>
         <a href="/authelia/logout">退出登录</a>
       </nav>
@@ -25,8 +26,7 @@
     <div class="tabs">
       <button type="button" class="active" data-tab="dashboard">站点概览</button>
       <button type="button" data-tab="admin">站点登记</button>
-      <button type="button" data-tab="ports">端口规划</button>
-      <button type="button" data-tab="docs">接入文档</button>
+      <button type="button" data-tab="ports">在线列表</button>
       <button type="button" data-tab="account">账户与安全</button>
     </div>
 
@@ -68,8 +68,8 @@
 
     <section id="panel-ports" class="panel">
       <div class="doc">
-        <h2>中心端口分配表</h2>
-        <p>与「站点登记」同步。LuCI / SSH / 内网隧道中心端口均须在全网唯一，并与各网关 frpc 配置一致。</p>
+        <h2>在线列表</h2>
+        <p>与「站点登记」同步的 LuCI / SSH / 内网隧道中心端口及代理名。</p>
         <table class="data">
           <thead>
             <tr><th>站点 ID</th><th>名称</th><th>类型</th><th>代理名</th><th>中心端口</th><th>说明 / 备忘</th></tr>
@@ -82,10 +82,6 @@
     <section id="panel-account" class="panel">
       <div class="doc account-panel">
         <h2>账户与安全</h2>
-        <dl class="acc-dl">
-          <dt>登录名</dt><dd><code id="acc-username">—</code></dd>
-          <dt>显示名称</dt><dd id="acc-display-name">—</dd>
-        </dl>
         <p id="acc-disabled-hint" class="sub acc-disabled" hidden>管理员已关闭自助改密，请联系管理员。</p>
         <form id="acc-password-form" class="acc-form" autocomplete="off">
           <h3>修改密码</h3>
@@ -103,9 +99,13 @@
       </div>
     </section>
 
-    <section id="panel-docs" class="panel">
-      <div class="doc">
-        <h2>新站接入流程</h2>
+    <dialog id="docs-dialog" class="docs-dialog">
+      <div class="doc docs-dialog-inner">
+        <div class="docs-dialog-head">
+          <h2>接入文档</h2>
+          <button type="button" class="btn-secondary docs-close" id="docs-dialog-close">关闭</button>
+        </div>
+        <h3>新站接入流程</h3>
         <ol>
           <li>在门户 <strong>站点登记</strong> 页添加站点 ID 与中心端口（自动同步 Nginx）。</li>
           <li>公网入口 LEDE 将 WAN <strong>18443</strong>、<strong>18007</strong> 转发至 192.168.6.251。</li>
@@ -136,13 +136,13 @@
         <h3>维护（一般无需 SSH）</h3>
         <p>站点增删改均在「站点登记」完成。若需排查，在 6.251 上可执行 <code>center-portal-status</code>、<code>systemctl status center-portal-admin frps authelia</code>。</p>
       </div>
-    </section>
+    </dialog>
 
     <p class="foot">区域接入中心 · Authelia 保护 · frp 0.61.1</p>
   </div>
-  <script src="assets/app.js?v=20261001t"></script>
+  <script src="assets/app.js?v=20261007ui1"></script>
   <script src="assets/admin.js?v=20261001t"></script>
-  <script src="assets/account.js?v=20261007pwd5"></script>
+  <script src="assets/account.js?v=20261007ui1"></script>
   <script>document.addEventListener('DOMContentLoaded', function () {
     if (window.initPortalAdmin) window.initPortalAdmin();
     if (window.initPortalAccount) window.initPortalAccount();

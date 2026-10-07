@@ -1023,7 +1023,7 @@ assert_grep 'callLedeCompStatus' "$_LEDE_FILES/www/luci-static/resources/view/sy
 assert_grep '不会自动刷写' "$_LEDE_FILES/www/luci-static/resources/view/system/flash.js"
 assert_grep 'ledeFwUpgradeTitle' "$_LEDE_FILES/www/luci-static/resources/view/system/flash.js"
 assert_grep 'showConfirmFlash' "$_LEDE_FILES/www/luci-static/resources/view/system/flash.js"
-assert_grep 'lede-firmware-mark-flash.sh' "$_LEDE_FILES/www/luci-static/resources/view/system/flash.js"
+assert_grep 'lede-firmware-flash.sh' "$_LEDE_FILES/www/luci-static/resources/view/system/flash.js"
 assert_grep 'ledeFwFlashPollStart' "$_LEDE_FILES/www/luci-static/resources/view/system/flash.js"
 assert_grep 'ledeFwHandleFlashDisconnect' "$_LEDE_FILES/www/luci-static/resources/view/system/flash.js"
 assert_grep 'ledeFwSysupgradeLaunched' "$_LEDE_FILES/www/luci-static/resources/view/system/flash.js"
