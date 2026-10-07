@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import urllib.error
@@ -27,6 +28,30 @@ AUTHELIA_CFG = Path("/etc/authelia/configuration.yml")
 AUTHELIA_INTERNAL = os.environ.get(
     "AUTHELIA_INTERNAL_URL", "http://127.0.0.1:9091/authelia"
 )
+DEFAULT_USERS_DB = Path("/etc/authelia/users_database.yml")
+_authelia_bin: Path | None = None
+
+
+def authelia_bin_path() -> Path:
+    global _authelia_bin
+    if _authelia_bin is not None:
+        return _authelia_bin
+    env = os.environ.get("AUTHELIA_BIN", "").strip()
+    if env:
+        p = Path(env)
+        if p.is_file():
+            _authelia_bin = p
+            return p
+    found = shutil.which("authelia")
+    if found:
+        _authelia_bin = Path(found)
+        return _authelia_bin
+    for candidate in (Path("/usr/local/bin/authelia"), Path("/usr/bin/authelia")):
+        if candidate.is_file():
+            _authelia_bin = candidate
+            return candidate
+    _authelia_bin = Path("/usr/local/bin/authelia")
+    return _authelia_bin
 
 # Ports bound by center OS / Baota / portal — must not be used for frp tunnel remotePort
 RESERVED_CENTER_PORTS = frozenset({
@@ -235,14 +260,15 @@ def authelia_proxy(
         return 400, b'{"status":"KO","message":"bad authelia path"}', "application/json"
     host = authelia_public_host()
     port = authelia_public_port()
+    fwd_host = f"{host}:{port}"
     url = f"{AUTHELIA_INTERNAL.rstrip('/')}{api_path}"
     fwd_uri = f"/authelia{api_path}"
     headers = {
-        "Host": host,
+        "Host": fwd_host,
         "X-Forwarded-Proto": "https",
-        "X-Forwarded-Host": f"{host}:{port}",
+        "X-Forwarded-Host": fwd_host,
         "X-Forwarded-Uri": fwd_uri,
-        "X-Original-URL": f"https://{host}:{port}{fwd_uri}",
+        "X-Original-URL": f"https://{fwd_host}{fwd_uri}",
         "Cookie": cookie_header,
     }
     if body is not None:
@@ -271,18 +297,244 @@ def authelia_user_from_response(payload: bytes) -> dict[str, str] | None:
     info = data.get("data") if data.get("status") == "OK" else data
     if not isinstance(info, dict):
         return None
-    username = str(info.get("username") or "").strip()
-    if not username:
+    username = ""
+    for key in ("username", "name", "login", "preferred_username"):
+        if info.get(key):
+            username = str(info[key]).strip()
+            break
+    display = str(info.get("display_name") or info.get("displayname") or username).strip()
+    if not username and not display:
         return None
-    display = str(info.get("display_name") or username).strip()
-    return {"username": username, "display_name": display}
+    return {"username": username, "display_name": display or username}
+
+
+def authelia_session_ok(cookie_header: str) -> bool:
+    code, _, _ = authelia_proxy("GET", "/api/user/info", cookie_header)
+    return code == 200
+
+
+def authelia_users_db_path() -> Path:
+    if AUTHELIA_CFG.is_file():
+        text = AUTHELIA_CFG.read_text(encoding="utf-8")
+        m = re.search(
+            r"authentication_backend:\s*\n\s*file:\s*\n\s*path:\s*(\S+)",
+            text,
+        )
+        if m:
+            return Path(m.group(1).strip("\"'"))
+    return DEFAULT_USERS_DB
+
+
+def read_file_backend_users() -> dict[str, dict[str, str]]:
+    path = authelia_users_db_path()
+    if not path.is_file():
+        return {}
+    text = path.read_text(encoding="utf-8")
+    users: dict[str, dict[str, str]] = {}
+    block = re.split(r"^users:\s*$", text, maxsplit=1, flags=re.M)
+    if len(block) < 2:
+        return users
+    for m in re.finditer(
+        r"^  ([a-zA-Z0-9_.-]+):\s*\n((?:    .+\n)*)",
+        block[1],
+        flags=re.M,
+    ):
+        uname = m.group(1)
+        body = m.group(2)
+        entry: dict[str, str] = {}
+        for line in body.splitlines():
+            kv = re.match(r"^\s{4}(\w+):\s*(.+)$", line)
+            if kv:
+                entry[kv.group(1)] = kv.group(2).strip().strip("\"'")
+        users[uname] = entry
+    return users
+
+
+def portal_session_present(cookie_header: str) -> bool:
+    return bool(cookie_header and "authelia_session=" in cookie_header)
+
+
+def resolve_session_username(cookie_header: str, info_payload: bytes | None = None) -> str:
+    users = read_file_backend_users()
+    if not users:
+        return ""
+    if len(users) == 1:
+        return next(iter(users))
+    if info_payload is None:
+        code, info_payload, _ = authelia_proxy("GET", "/api/user/info", cookie_header)
+        if code != 200:
+            return ""
+    parsed = authelia_user_from_response(info_payload) or {}
+    display = str(parsed.get("display_name") or "").strip()
+    disp_l = display.lower()
+    for uname, meta in users.items():
+        dn = str(meta.get("displayname") or meta.get("display_name") or "").strip()
+        if dn and dn.lower() == disp_l:
+            return uname
+        if uname.lower() == disp_l:
+            return uname
+    return ""
+
+
+def authelia_verify_password(username: str, password: str) -> bool:
+    """Same check Authelia uses at login (first factor)."""
+    host = authelia_public_host()
+    port = authelia_public_port()
+    fwd_host = f"{host}:{port}"
+    url = f"{AUTHELIA_INTERNAL.rstrip('/')}/api/firstfactor"
+    fwd_uri = "/authelia/api/firstfactor"
+    body = json.dumps(
+        {
+            "username": username,
+            "password": password,
+            "requestMethod": "GET",
+            "keepMeLoggedIn": False,
+        }
+    ).encode("utf-8")
+    headers = {
+        "Host": fwd_host,
+        "Content-Type": "application/json",
+        "X-Forwarded-Proto": "https",
+        "X-Forwarded-Host": fwd_host,
+        "X-Forwarded-Uri": fwd_uri,
+        "X-Original-URL": f"https://{fwd_host}{fwd_uri}",
+    }
+    req = urllib.request.Request(url, data=body, headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            data = authelia_parse_json(resp.read())
+            return (
+                resp.status == 200
+                and isinstance(data, dict)
+                and data.get("status") == "OK"
+            )
+    except urllib.error.HTTPError:
+        return False
+
+
+def authelia_hash_validate(password: str, digest: str) -> bool:
+    bin_path = authelia_bin_path()
+    if not bin_path.is_file():
+        return False
+    cp = subprocess.run(
+        [
+            str(bin_path),
+            "crypto",
+            "hash",
+            "validate",
+            "--password",
+            password,
+            "--",
+            digest,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    return cp.returncode == 0
+
+
+def authelia_hash_generate(password: str) -> str:
+    bin_path = authelia_bin_path()
+    if not bin_path.is_file():
+        raise RuntimeError(
+            f"未找到 authelia 可执行文件（已查找 PATH 与 /usr/local/bin、/usr/bin），"
+            f"请设置环境变量 AUTHELIA_BIN"
+        )
+    cp = subprocess.run(
+        [
+            str(bin_path),
+            "crypto",
+            "hash",
+            "generate",
+            "argon2",
+            "--password",
+            password,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    if cp.returncode != 0:
+        raise RuntimeError((cp.stderr or cp.stdout or "生成密码哈希失败").strip())
+    for line in (cp.stdout or "").splitlines():
+        if line.startswith("Digest:"):
+            return line.split(":", 1)[1].strip()
+    digest = (cp.stdout or "").strip()
+    if digest.startswith("$argon2"):
+        return digest
+    raise RuntimeError("无法解析 authelia 生成的密码哈希")
+
+
+def file_backend_set_password(username: str, new_digest: str) -> None:
+    path = authelia_users_db_path()
+    text = path.read_text(encoding="utf-8")
+    pattern = re.compile(
+        rf"(^  {re.escape(username)}:\n(?:    .+\n)*?    password:\s*)(\"[^\"]+\"|\S+)",
+        re.M,
+    )
+    if not pattern.search(text):
+        raise ValueError(f"用户 {username} 不存在")
+    quoted = json.dumps(new_digest)
+    new_text = pattern.sub(rf"\1{quoted}", text, count=1)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(new_text, encoding="utf-8")
+    tmp.replace(path)
+
+
+def file_backend_change_password(cookie_header: str, old_p: str, new_p: str) -> tuple[int, str]:
+    if not portal_session_present(cookie_header):
+        return 401, "未登录或会话已过期"
+    username = resolve_session_username(cookie_header)
+    if not username:
+        return 400, "无法识别当前登录用户，请联系管理员"
+    users = read_file_backend_users()
+    meta = users.get(username)
+    if not meta:
+        return 400, f"用户 {username} 不存在"
+    if not authelia_verify_password(username, old_p):
+        digest = meta.get("password") or ""
+        if not digest or not authelia_hash_validate(old_p, digest):
+            return 401, "当前密码不正确"
+    if len(new_p) < 8:
+        return 400, "新密码至少 8 位"
+    try:
+        new_digest = authelia_hash_generate(new_p)
+        file_backend_set_password(username, new_digest)
+    except ValueError as e:
+        return 400, str(e)
+    except OSError as e:
+        return 500, f"写入用户数据库失败: {e}"
+    except RuntimeError as e:
+        return 500, str(e)
+    subprocess.run(
+        ["systemctl", "try-restart", "authelia"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    return 200, ""
 
 
 def authelia_current_user(cookie_header: str) -> dict[str, str] | None:
-    code, payload, _ = authelia_proxy("GET", "/api/user/info", cookie_header)
-    if code != 200:
+    if not portal_session_present(cookie_header):
         return None
-    return authelia_user_from_response(payload)
+    username = resolve_session_username(cookie_header)
+    display = ""
+    code, payload, _ = authelia_proxy("GET", "/api/user/info", cookie_header)
+    if code == 200:
+        info = authelia_user_from_response(payload)
+        if info:
+            display = str(info.get("display_name") or "").strip()
+            if not username and info.get("username"):
+                username = str(info["username"]).strip()
+    if not username:
+        return None
+    if not display:
+        users = read_file_backend_users()
+        meta = users.get(username) or {}
+        display = str(meta.get("displayname") or meta.get("display_name") or username).strip()
+    return {"username": username, "display_name": display or username}
 
 
 def read_frp_token() -> str:
@@ -368,11 +620,12 @@ class Handler(BaseHTTPRequestHandler):
 
     def _account_change_password(self, body: dict[str, Any]) -> None:
         cookie = self.headers.get("Cookie", "")
-        user = authelia_current_user(cookie)
-        if not user:
+        if not portal_session_present(cookie):
             self._json(401, {"ok": False, "error": "未登录或会话已过期"})
             return
-        old_p = str(body.get("old_password") or "")
+        user = authelia_current_user(cookie) or {"username": "", "display_name": ""}
+        username = str(body.get("username") or user.get("username") or "").strip()
+        old_p = str(body.get("old_password") or body.get("password") or "")
         new_p = str(body.get("new_password") or "")
         otc = str(body.get("otc") or "").replace(" ", "")
         if not old_p or not new_p:
@@ -390,19 +643,40 @@ class Handler(BaseHTTPRequestHandler):
                 return
         payload = json.dumps(
             {
-                "username": user["username"],
+                "username": username,
                 "old_password": old_p,
                 "new_password": new_p,
             }
         ).encode("utf-8")
         code, resp, _ = authelia_proxy("POST", "/api/change-password", cookie, payload)
+        # Authelia < 4.39 has no /api/change-password — use user portal API.
+        if code in (404, 405):
+            legacy = json.dumps({"password": old_p, "new_password": new_p}).encode("utf-8")
+            code, resp, _ = authelia_proxy("PUT", "/api/user/password", cookie, legacy)
+        if code in (404, 405):
+            fb_code, fb_err = file_backend_change_password(cookie, old_p, new_p)
+            if fb_code == 200:
+                self._json(200, {"ok": True})
+                return
+            self._json(fb_code, {"ok": False, "error": fb_err})
+            return
+        if not username:
+            username = resolve_session_username(cookie)
         if code == 200:
             self._json(200, {"ok": True})
             return
         data = authelia_parse_json(resp)
         if isinstance(data, dict) and data.get("elevation") is True and not otc:
             authelia_proxy("POST", "/api/user/session/elevation", cookie)
-            self._json(202, {"ok": False, "need_otc": True})
+            otc_delivery = "filesystem"
+            if AUTHELIA_CFG.is_file():
+                txt = AUTHELIA_CFG.read_text(encoding="utf-8")
+                if re.search(r"^\s*smtp:", txt, re.M):
+                    otc_delivery = "email"
+            self._json(
+                202,
+                {"ok": False, "need_otc": True, "otc_delivery": otc_delivery},
+            )
             return
         if code == 401:
             self._json(401, {"ok": False, "error": "当前密码不正确"})

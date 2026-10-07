@@ -10,10 +10,24 @@ fail=0
 note(){ echo "OK: $*"; ok=$((ok + 1)); }
 bad(){ echo "FAIL: $*"; fail=$((fail + 1)); }
 
-df -h /data 2>/dev/null | grep -q /data && note "/data mounted" || bad "/data not mounted"
+if grep -q ' /data ' /proc/mounts 2>/dev/null; then
+	note "/data mounted (block device)"
+elif [ -d /data ] && [ -w /data ]; then
+	note "/data writable (overlay — large images need LEDEDATA partition)"
+else
+	bad "/data not mounted and not writable (bootstrap or lede-data-setup)"
+fi
 
-grep -q 'client_max_body_size 0' /etc/nginx/uci.conf 2>/dev/null && \
-	note "nginx client_max_body_size 0" || bad "nginx global body limit not 0"
+_nginx_global_ok() {
+	local f
+	for f in /etc/nginx/uci.conf /etc/nginx/nginx.conf; do
+		[ -f "$f" ] || continue
+		grep -q 'client_max_body_size 0' "$f" 2>/dev/null && return 0
+	done
+	return 1
+}
+_nginx_global_ok && note "nginx global client_max_body_size 0" || \
+	bad "nginx global body limit not 0 (run lede-firmware-bootstrap.sh)"
 
 grep -q 'client_max_body_size 0' /etc/nginx/conf.d/luci.locations 2>/dev/null && \
 	note "luci.locations cgi-upload limit 0" || bad "luci.locations missing upload limit 0"

@@ -11,7 +11,7 @@ SUCCESS=/etc/lede-fw-last-flash-success
 
 old_rev=$(grep DISTRIB_REVISION /etc/openwrt_release 2>/dev/null | cut -d= -f2 | tr -d "'\"")
 old_rel=$(grep DISTRIB_RELEASE /etc/openwrt_release 2>/dev/null | cut -d= -f2 | tr -d "'\"")
-size=$(stat -c '%s' "$DATA" 2>/dev/null || ls -ln "$DATA" | awk '{print $5}')
+size=$(ls -ln "$DATA" 2>/dev/null | awk '{print $5; exit}')
 
 mkdir -p /data
 cat >"$PENDING" <<EOF

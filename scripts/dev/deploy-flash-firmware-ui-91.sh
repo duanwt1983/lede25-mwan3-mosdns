@@ -14,6 +14,8 @@ router_put "$ROOT/files/www/luci-static/resources/view/system/flash.js" \
 	'/www/luci-static/resources/view/system/flash.js'
 router_put "$ROOT/files/usr/share/rpcd/acl.d/zzz-lede-flash-acl.json" \
 	'/usr/share/rpcd/acl.d/zzz-lede-flash-acl.json'
+router_put "$ROOT/files/usr/libexec/lede-firmware-validate.sh" \
+	'/usr/libexec/lede-firmware-validate.sh' 755
 router_put "$ROOT/files/usr/libexec/lede-firmware-prepare.sh" \
 	'/usr/libexec/lede-firmware-prepare.sh' 755
 router_put "$ROOT/files/usr/libexec/lede-firmware-mark-flash.sh" \
@@ -22,6 +24,8 @@ router_put "$ROOT/files/usr/libexec/lede-firmware-delete.sh" \
 	'/usr/libexec/lede-firmware-delete.sh' 755
 router_put "$ROOT/files/usr/libexec/lede-firmware-progress.sh" \
 	'/usr/libexec/lede-firmware-progress.sh' 755
+router_put "$ROOT/files/usr/libexec/lede-firmware-bootstrap.sh" \
+	'/usr/libexec/lede-firmware-bootstrap.sh' 755
 router_put "$ROOT/files/usr/libexec/lede-firmware-upload-env.sh" \
 	'/usr/libexec/lede-firmware-upload-env.sh' 755
 router_put "$ROOT/files/usr/libexec/lede-firmware-upload-check.sh" \

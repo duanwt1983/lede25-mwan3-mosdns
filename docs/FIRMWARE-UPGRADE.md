@@ -10,6 +10,28 @@
 
 整盘能力也可通过组件包 **`lede-component-firmware-upgrade-v*.tar.gz`** 热更（刷机后需重装）。
 
+### 旧固件上手动装组件包（无「组件升级」菜单）
+
+1. 将 `dist/lede-component-firmware-upgrade-v*.tar.gz` 拷到路由器，用 `lede-component-apply file …` 安装（包内自带 `lede-component-apply` 时可先解出该脚本再执行）。
+2. **v1.0.21+** 安装后会跑 **`lede-firmware-bootstrap.sh`**：挂载/启用 `/data`、`nginx`/`uwsgi` 模板、恢复 LEDE `do_stage2`、按需 **reload rpcd**（加载刷机 ACL）。
+3. 若仍失败，SSH 自检：
+
+   ```sh
+   /usr/libexec/lede-firmware-bootstrap.sh
+   /usr/libexec/lede-firmware-upload-check.sh   # 需 SUMMARY fail=0
+   tail -50 /tmp/lede-firmware-bootstrap.log
+   ```
+
+4. **`/data` 无独立分区**（仅 overlay 目录）：小镜像可能可用；**≥2GB 整盘镜像** 需先 **`lede-data-setup`** 或刷入带 LEDEDATA 的新镜像。
+
+**v1.0.20 及更早**：`post-apply` 在 `/data` 未挂载时会因 `upload-env` 失败而**中途退出**，nginx/ACL 可能未配全 → 请升级到 **v1.0.21+** 或手动执行 bootstrap。
+
+**上传/写盘立刻失败（日志实锤）**：`logread` / nginx error 出现  
+`POST /cgi-bin/cgi-upload` + `connect() to unix://.../luci-cgi_io.socket failed (111: Connection refused)`  
+原因是 **`lede-firmware-bootstrap.sh` 在上传前 `uwsgi restart`**，与正在进行的固件 POST 冲突。请 **v1.0.24+**（`quick` 模式不再 restart uwsgi；LuCI 不再默认跑 `full` bootstrap）。
+
+**刷写 sysupgrade 失败**：见 v1.0.23 `lede-firmware-flash.sh` 与 rpcd ACL 整行匹配。
+
 ---
 
 ## 固件升级 UX 约定（实现 checklist）

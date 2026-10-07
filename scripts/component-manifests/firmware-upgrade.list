@@ -6,16 +6,17 @@ www/luci-static/resources/lede-firmware/uwsgi-luci-cgi_io.ini
 www/luci-static/resources/lede-firmware/do_stage2
 usr/libexec/lede-firmware-restore-upgrade.sh
 usr/share/rpcd/acl.d/zzz-lede-flash-acl.json
+usr/libexec/lede-firmware-validate.sh
 usr/libexec/lede-firmware-prepare.sh
 usr/libexec/lede-firmware-mark-flash.sh
 usr/libexec/lede-firmware-delete.sh
 usr/libexec/lede-firmware-progress.sh
+usr/libexec/lede-firmware-bootstrap.sh
 usr/libexec/lede-firmware-upload-env.sh
 usr/libexec/lede-firmware-upload-check.sh
 usr/libexec/lede-firmware-upload-teardown.sh
 usr/libexec/lede-firmware-cgi-io.sh
 usr/libexec/lede-firmware-upload-sanity.sh
-dat/.keep
 etc/init.d/lede-data-mount
 etc/init.d/lede-cgi-tmp
 etc/uci-defaults/45-nginx-firmware-upload
@@ -25,4 +26,5 @@ etc/nginx/conf.d/luci.locations
 etc/uwsgi/vassals/luci-cgi_io.ini
 lib/upgrade/lede-flash-dd.sh
 lib/upgrade/do_stage2
+usr/libexec/lede-firmware-flash.sh
 usr/libexec/lede-firmware-run-sysupgrade.sh

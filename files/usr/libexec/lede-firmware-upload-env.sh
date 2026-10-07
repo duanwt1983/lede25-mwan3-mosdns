@@ -10,8 +10,17 @@ LEDE_FW_TMP_PREV=/var/run/lede-fw-upload-tmp-prev-kb
 [ -x /usr/libexec/lede-firmware-restore-upgrade.sh ] && \
 	/usr/libexec/lede-firmware-restore-upgrade.sh || true
 
-if ! grep -q ' /data ' /proc/mounts 2>/dev/null; then
-	echo "lede-firmware-upload-env: /data partition not mounted yet" >&2
+mkdir -p "$(dirname "$LEDE_FW_UPLOAD_ACTIVE")"
+: >"$LEDE_FW_UPLOAD_ACTIVE"
+
+# Do NOT run bootstrap here — copying uwsgi vassals makes emperor reload mid-upload.
+
+_data_ok() {
+	grep -q ' /data ' /proc/mounts 2>/dev/null && return 0
+	[ -d /data ] && [ -w /data ]
+}
+if ! _data_ok; then
+	echo "lede-firmware-upload-env: /data not ready (run lede-firmware-bootstrap.sh or lede-data-setup)" >&2
 	exit 1
 fi
 
@@ -48,10 +57,10 @@ lede_upload_tmpfs_bump() {
 
 lede_upload_tmpfs_bump
 
-mkdir -p "$(dirname "$LEDE_FW_UPLOAD_ACTIVE")"
-: >"$LEDE_FW_UPLOAD_ACTIVE"
-
-/etc/init.d/nginx reload 2>/dev/null || true
+# Avoid nginx reload during/after upload — it reloads uwsgi emperor and kills cgi-io orphans.
+if ! grep -q 'client_max_body_size 0' /etc/nginx/uci.conf 2>/dev/null; then
+	/etc/init.d/nginx reload 2>/dev/null || true
+fi
 
 rm -f /tmp/sysupgrade.img /tmp/image.bs 2>/dev/null || true
 exit 0

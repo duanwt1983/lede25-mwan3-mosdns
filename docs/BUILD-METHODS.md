@@ -37,9 +37,9 @@ bash "$OVERLAY/scripts/build-incremental.sh"
 在 Mac 上推源码并 **后台** 开编（不占用终端跟日志）：
 
 ```bash
-export SSHPASS='编译机密码'
-chmod +x scripts/trigger-remote-incremental.sh
-./scripts/trigger-remote-incremental.sh root@192.168.6.80
+cp scripts/build-host-680.env.example scripts/build-host-680.env   # BUILD_HOST、SSHPASS
+./scripts/build-680-all.sh
+# 或：./scripts/trigger-remote-incremental.sh dwt@192.168.6.80
 # 编译机上查看：tail -f /openwrt-build/incremental-*.log
 ```
 
@@ -68,8 +68,8 @@ bash /openwrt-build/overlay/scripts/cleanup-build-host.sh
 ## 2. GitHub Actions（遗留 / 仅手动发版）
 
 - 工作流：`.github/workflows/build-lede.yml`
-- **已取消 push 自动触发**；仅 **Actions → Run workflow** 手动跑
-- 每次仍是 **全量** 流程（与上面「全新 Ubuntu」相同），适合偶尔从 GitHub 打 Release，**不适合** 日常改组件/ LuCI 迭代
+- **`main` push** 与 **Actions → Run workflow** 均会触发（GitHub 上为 **全量** 编译，数小时）
+- 日常改 LuCI/组件仍推荐 **6.80 增量**（`scripts/build-680-all.sh`），勿依赖 GitHub 做迭代编
 
 ---
 

@@ -1,7 +1,7 @@
 (function () {
   'use strict';
 
-  var ME_API = '/home/api/account/me';
+  var AUTHELIA = '/authelia';
   var PWD_API = '/home/api/account/password';
 
   function $(sel, root) {
@@ -15,6 +15,44 @@
     el.className = 'acc-msg' + (kind ? (' ' + kind) : '');
   }
 
+  function parseJsonRes(res) {
+    return res.text().then(function (t) {
+      try {
+        return t ? JSON.parse(t) : null;
+      } catch (e) {
+        return null;
+      }
+    });
+  }
+
+  function autheliaFetch(method, path, body) {
+    return fetch(AUTHELIA + path, {
+      method: method,
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: body ? { 'Content-Type': 'application/json' } : {},
+      body: body ? JSON.stringify(body) : undefined
+    }).then(function (res) {
+      return parseJsonRes(res).then(function (data) {
+        return { ok: res.ok, status: res.status, data: data };
+      });
+    });
+  }
+
+  function apiData(res) {
+    var d = res && res.data;
+    if (!d) return null;
+    if (d.status === 'OK' && d.data !== undefined) return d.data;
+    if (d.ok && d.data !== undefined) return d.data;
+    return null;
+  }
+
+  function showOtc(on) {
+    var block = $('#acc-otc-block');
+    if (block) block.hidden = !on;
+    window._accNeedOtc = !!on;
+  }
+
   function loadAccountPanel() {
     msg('');
     showOtc(false);
@@ -22,30 +60,49 @@
     var form = $('#acc-password-form');
     if (form) form.reset();
 
-    return fetch(ME_API, { credentials: 'same-origin', cache: 'no-store' })
-      .then(function (r) { return r.json().then(function (b) { return { r: r, b: b }; }); })
-      .then(function (x) {
-        if (!x.r.ok || !x.b.ok) {
-          throw new Error((x.b && x.b.error) || '未登录');
-        }
-        var nameEl = $('#acc-display-name');
-        var userEl = $('#acc-username');
-        if (nameEl) nameEl.textContent = x.b.display_name || x.b.username || '—';
-        if (userEl) userEl.textContent = x.b.username || '—';
-        var formEl = $('#acc-password-form');
-        var hint = $('#acc-disabled-hint');
-        if (formEl) formEl.hidden = !!x.b.password_change_disabled;
-        if (hint) hint.hidden = !x.b.password_change_disabled;
-      })
-      .catch(function (e) {
-        msg(e.message || '无法加载当前账户', 'bad');
+    var meReq = fetch('/home/api/account/me', {
+      credentials: 'same-origin',
+      cache: 'no-store'
+    }).then(function (r) {
+      return parseJsonRes(r).then(function (b) {
+        return { status: r.status, body: b || {} };
       });
-  }
+    });
 
-  function showOtc(on) {
-    var block = $('#acc-otc-block');
-    if (block) block.hidden = !on;
-    window._accNeedOtc = !!on;
+    return Promise.all([
+      meReq,
+      autheliaFetch('GET', '/api/configuration')
+    ]).then(function (arr) {
+      var meRes = arr[0];
+      var cfgRes = arr[1];
+      if (meRes.status === 401 || meRes.status === 403) {
+        throw new Error('未登录或会话已过期，请重新打开门户并登录 Authelia');
+      }
+      if (meRes.status !== 200 || !meRes.body || !meRes.body.ok) {
+        throw new Error(
+          (meRes.body && meRes.body.error) || '无法读取当前账户'
+        );
+      }
+      var me = meRes.body;
+      var cfg = apiData(cfgRes) || cfgRes.data || {};
+      window._accCfg = cfg;
+
+      var userEl = $('#acc-username');
+      var nameEl = $('#acc-display-name');
+      if (userEl) userEl.textContent = me.username || '—';
+      if (nameEl) {
+        nameEl.textContent = me.display_name || me.username || '—';
+      }
+
+      var disabled = me.password_change_disabled ||
+        (cfg && cfg.password_change_disabled);
+      var formEl = $('#acc-password-form');
+      var hint = $('#acc-disabled-hint');
+      if (formEl) formEl.hidden = !!disabled;
+      if (hint) hint.hidden = !disabled;
+    }).catch(function (e) {
+      msg(e.message || '无法加载当前账户', 'bad');
+    });
   }
 
   function submitPassword(oldPw, newPw, otc) {
@@ -57,8 +114,17 @@
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
     }).then(function (r) {
-      return r.json().then(function (b) { return { status: r.status, body: b }; });
+      return parseJsonRes(r).then(function (b) {
+        return { status: r.status, body: b || {} };
+      });
     });
+  }
+
+  function otcDeliveryHint(body) {
+    if (body && body.otc_delivery === 'filesystem') {
+      return '未配置 SMTP：验证码在中心机 /var/lib/authelia/notification.txt（SSH：tail -20 该文件），填入后再次点击「更新密码」。';
+    }
+    return '已向您的邮箱发送验证码，填写后再次点击「更新密码」。';
   }
 
   function onSubmit(e) {
@@ -81,7 +147,7 @@
       return;
     }
     if (window._accNeedOtc && !otc) {
-      msg('请输入邮箱验证码', 'bad');
+      msg('请输入验证码', 'bad');
       return;
     }
 
@@ -90,13 +156,17 @@
     submitPassword(oldPw, newPw, otc).then(function (res) {
       if (res.status === 202 && res.body && res.body.need_otc) {
         showOtc(true);
-        msg('已向您的邮箱发送验证码，填写后再次点击「更新密码」。', 'warn');
+        msg(otcDeliveryHint(res.body), 'warn');
         return;
       }
       if (res.body && res.body.ok) {
         showOtc(false);
         if ($('#acc-password-form')) $('#acc-password-form').reset();
         msg('密码已更新', 'ok');
+        return;
+      }
+      if (res.status === 401) {
+        msg((res.body && res.body.error) || '当前密码不正确', 'bad');
         return;
       }
       msg((res.body && res.body.error) || '修改失败', 'bad');

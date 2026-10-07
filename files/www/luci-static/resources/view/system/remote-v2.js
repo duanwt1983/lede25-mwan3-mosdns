@@ -213,26 +213,31 @@ return view.extend({
 		o = s.option(form.Value, 'site_id', _('站点 ID'),
 			_('全局唯一，仅字母、数字、下划线、连字符；用于 frp 代理名。'));
 		o.datatype = 'rangelength(2,32)';
-		o.rmempty = false;
+		o.rmempty = true;
 		o.placeholder = 'shop-gz-01';
+		o.depends('enabled', '1');
 
 		o = s.option(form.Value, 'server', _('中心地址'));
 		o.default = 'center.123.gd.cn';
-		o.rmempty = false;
+		o.rmempty = true;
+		o.depends('enabled', '1');
 
 		o = s.option(form.Value, 'port', _('中心 frps 端口'));
 		o.datatype = 'port';
 		o.default = '18007';
-		o.rmempty = false;
+		o.rmempty = true;
+		o.depends('enabled', '1');
 
 		o = s.option(form.Value, 'token', _('frps 认证 Token'));
 		o.password = true;
-		o.rmempty = false;
+		o.rmempty = true;
+		o.depends('enabled', '1');
 
 		o = s.option(form.Value, 'remote_port_luci', _('中心映射端口（LuCI）'),
 			_('在中心机上为该站独占的 TCP 端口，例如 19001、19002。'));
 		o.datatype = 'range(1024,65535)';
-		o.rmempty = false;
+		o.rmempty = true;
+		o.depends('enabled', '1');
 
 		o = s.option(form.Value, 'remote_port_ssh', _('中心映射端口（SSH，可选）'),
 			_('填 0 表示不映射 SSH。'));
@@ -243,12 +248,14 @@ return view.extend({
 		o = s.option(form.Value, 'local_luci_port', _('本机 LuCI 端口'));
 		o.datatype = 'port';
 		o.default = '443';
-		o.rmempty = false;
+		o.rmempty = true;
+		o.depends('enabled', '1');
 
 		o = s.option(form.Flag, 'tls_insecure', _('TLS 跳过证书校验'),
 			_('中心使用自签证书时开启；生产环境可导入 CA 后关闭。'));
 		o.default = '1';
 		o.rmempty = false;
+		o.depends('enabled', '1');
 
 		var ts = m.section(form.GridSection, 'tunnel', _('内网 TCP 隧道'),
 			_('将门店 LAN 内 TCP 服务映射到中心 frps 端口。保存并应用时会写入 frpc 配置，并在本机防火墙放行「网关 → 内网 IP:端口」（不在本机 WAN 开放中心端口）。从公网访问须在公网入口 LEDE 将 TCP 转发至 192.168.6.251:同端口，或经 VPN/内网直连中心。'));
@@ -372,24 +379,38 @@ return view.extend({
 		});
 	},
 
+	_saveActiveMaps: function() {
+		var view = this;
+		var tab = view._activeTab || readActiveTab();
+		if (tab === 'center')
+			return view.mapCenter.save().then(function() { return view.mapRemote.save(); });
+		return view.mapRemote.save();
+	},
+
 	handleSave: function() {
 		var view = this;
-		return this.mapRemote.save().then(function() {
-			return view.mapCenter.save();
-		}).then(function() {
+		return view._saveActiveMaps().then(function() {
 			return uci.save();
 		});
 	},
 
 	handleSaveApply: function(ev, mode) {
 		var en, p, view = this;
-		return this.mapRemote.save(function() {
-			en = uci.get('lede-remote', 'main', 'enabled');
-			p = uci.get('lede-remote', 'main', 'port') || '10443';
-			en = (en === '1' || en === 1 || en === true) ? '1' : '0';
-		}).then(function() {
-			return view.mapCenter.save();
-		}).then(function() {
+		var tab = view._activeTab || readActiveTab();
+		var chain = tab === 'center'
+			? view.mapCenter.save().then(function() {
+				return view.mapRemote.save(function() {
+					en = uci.get('lede-remote', 'main', 'enabled');
+					p = uci.get('lede-remote', 'main', 'port') || '10443';
+					en = (en === '1' || en === 1 || en === true) ? '1' : '0';
+				});
+			})
+			: view.mapRemote.save(function() {
+				en = uci.get('lede-remote', 'main', 'enabled');
+				p = uci.get('lede-remote', 'main', 'port') || '10443';
+				en = (en === '1' || en === 1 || en === true) ? '1' : '0';
+			});
+		return chain.then(function() {
 			return uci.save();
 		}).then(function() {
 			return ui.changes.apply(mode == '0' || mode === false);

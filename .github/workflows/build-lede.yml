@@ -7,6 +7,9 @@ name: Build Lean 25 x86-64 PassWall samba4
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
 
 concurrency:
   group: build-lede-${{ github.ref }}
@@ -29,7 +32,6 @@ permissions:
 
 jobs:
   build:
-    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     timeout-minutes: 240
     steps:

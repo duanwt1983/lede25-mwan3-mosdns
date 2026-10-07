@@ -727,6 +727,9 @@ for _rel in \
   www/luci-static/resources/lede-firmware/uwsgi-luci-cgi_io.ini \
   www/luci-static/resources/lede-firmware/do_stage2 \
   usr/libexec/lede-firmware-restore-upgrade.sh \
+  usr/libexec/lede-firmware-bootstrap.sh \
+  usr/libexec/lede-firmware-validate.sh \
+  usr/libexec/lede-firmware-flash.sh \
   usr/libexec/lede-firmware-prepare.sh \
   usr/libexec/lede-firmware-mark-flash.sh \
   usr/libexec/lede-firmware-delete.sh \
@@ -1031,6 +1034,8 @@ assert_grep 'lede-fw-last-flash-success' "$_LEDE_FILES/etc/uci-defaults/46-lede-
 assert_grep 'reload-on-as = 0' "$_LEDE_FILES/etc/uwsgi/vassals/luci-cgi_io.ini"
 assert_grep 'lede-firmware-upload-env.sh' "$_LEDE_FILES/etc/init.d/lede-cgi-tmp"
 assert_grep 'lede_upload_tmpfs_bump' "$_LEDE_FILES/usr/libexec/lede-firmware-upload-env.sh"
+assert_grep 'lede-firmware-bootstrap.sh' "$_LEDE_FILES/usr/libexec/lede-firmware-upload-env.sh"
+assert_grep 'ensure_data' "$_LEDE_FILES/usr/libexec/lede-firmware-bootstrap.sh"
 assert_grep 'upload-teardown' "$_LEDE_FILES/usr/libexec/lede-firmware-delete.sh"
 assert_grep 'lede_cgi_io_revert_tmp' "$_LEDE_FILES/usr/libexec/lede-firmware-upload-sanity.sh"
 assert_overlay 'dat/.keep'
