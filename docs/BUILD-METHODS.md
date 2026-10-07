@@ -12,7 +12,7 @@ GitHub Actions 每次运行都在 **全新的 `ubuntu-24.04` 虚拟机** 上：
 - 只能 **重新 clone LEDE → feeds → 全量 download → 全量 make**（数小时级）
 - **无法** 做与 6.80 相同的 **增量编译**（改几个 LuCI 文件只重编少数包）
 
-因此：**GitHub 只作源码托管与备份**；改 overlay 后请在 **自有编译机** 上增量出固件。
+因此：**GitHub Actions 专门做全量出固件/Release**；日常快速迭代请在 **自有编译机（6.80）** 上增量出包。
 
 ---
 
@@ -65,11 +65,12 @@ bash /openwrt-build/overlay/scripts/cleanup-build-host.sh
 
 ---
 
-## 2. GitHub Actions（遗留 / 仅手动发版）
+## 2. GitHub Actions（全量编译 / 发 Release）
 
 - 工作流：`.github/workflows/build-lede.yml`
-- **`main` push** 与 **Actions → Run workflow** 均会触发（GitHub 上为 **全量** 编译，数小时）
-- 日常改 LuCI/组件仍推荐 **6.80 增量**（`scripts/build-680-all.sh`），勿依赖 GitHub 做迭代编
+- 每次均在 **全新 Ubuntu 虚拟机** 上：**clone LEDE → feeds → download → 全量 make**（无增量缓存）
+- **`main` push** 与 **Actions → Run workflow** 均会触发，通常 **2–3 小时**，成功后上传固件与 Release
+- 与 6.80 增量并行：GitHub 负责 **全量镜像**；本地改 LuCI/组件验证用 **`scripts/build-680-all.sh`**
 
 ---
 
@@ -110,5 +111,5 @@ cp scripts/center-portal-251.env.example scripts/center-portal-251.env   # 填�
 ./scripts/sync-to-github.sh
 ```
 
-- 只同步 overlay / 文档，**不会** 启动 Actions 编译（工作流无 push 触发）
-- 日常开发：**6.80 增量编固件 → 需要时再 push 源码**
+- **`main` push 会自动排队全量编译**；若只想备份源码、暂不编，可推其它分支或临时关闭 workflow
+- 推荐节奏：**6.80 增量验证** → 满意后 **push `main`** 触发 GitHub 全量出 Release 固件
