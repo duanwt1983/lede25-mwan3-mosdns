@@ -580,15 +580,24 @@ export function slice_rate_hist(h, win, max_pts) {
 	let last_ts = 0;
 	if (n > 0) {
 		let order = [];
-		for (let i = 0; i < n; i++)
+		let sorted = true;
+		for (let i = 0; i < n; i++) {
 			push(order, i);
-		for (let a = 0; a < n - 1; a++) {
-			for (let b = a + 1; b < n; b++) {
-				if (+t[order[b]] < +t[order[a]]) {
-					let tmp = order[a];
-					order[a] = order[b];
-					order[b] = tmp;
+			if (i > 0 && +t[i] < +t[i - 1])
+				sorted = false;
+		}
+		/* History is appended in time order. Bubble-sorting ~2k+ points
+		 * six times per save pinned one CPU core inside wan-alert. */
+		if (!sorted) {
+			for (let a = 1; a < n; a++) {
+				let key = order[a];
+				let key_t = +t[key];
+				let b = a - 1;
+				while (b >= 0 && +t[order[b]] > key_t) {
+					order[b + 1] = order[b];
+					b--;
 				}
+				order[b + 1] = key;
 			}
 		}
 		last_ts = +t[order[n - 1]];

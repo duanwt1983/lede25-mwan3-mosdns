@@ -1,0 +1,3 @@
+# Custom LEDE overlay settings that live outside /etc/config/.
+/etc/lede-topo.json
+/etc/sysupgrade.conf

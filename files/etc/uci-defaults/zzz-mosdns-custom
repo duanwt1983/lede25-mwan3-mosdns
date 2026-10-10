@@ -4,9 +4,11 @@
 
 [ -f /etc/config/mosdns ] || exit 0
 
-# Install a ready-to-use configuration, but let the user decide when MosDNS
-# should take over DNS. A fresh image must remain disabled.
-uci -q set mosdns.config.enabled='0'
+# Factory default is disabled. Keep-config sysupgrade must not turn MosDNS off
+# if the restored config already has an enabled flag.
+if [ -z "$(uci -q get mosdns.config.enabled 2>/dev/null || true)" ]; then
+	uci -q set mosdns.config.enabled='0'
+fi
 uci -q set mosdns.config.configfile='/var/etc/mosdns.yaml'
 uci -q set mosdns.config.listen_port='5335'
 uci -q set mosdns.config.listen_port_api='9091'
@@ -33,10 +35,11 @@ fi
 uci commit mosdns
 [ -x /usr/libexec/mosdns-gen ] && /usr/libexec/mosdns-gen
 [ -x /etc/init.d/mosdns ] && {
-	# Keep the rc.d link installed. start_service() already checks the UCI
-	# enabled flag, so a fresh image remains stopped while a later UI enable
-	# survives reboot.
-	/etc/init.d/mosdns stop >/dev/null 2>&1 || true
 	/etc/init.d/mosdns enable >/dev/null 2>&1 || true
+	if [ "$(uci -q get mosdns.config.enabled)" = "1" ]; then
+		/etc/init.d/mosdns restart >/dev/null 2>&1 || /etc/init.d/mosdns start >/dev/null 2>&1 || true
+	else
+		/etc/init.d/mosdns stop >/dev/null 2>&1 || true
+	fi
 }
 exit 0

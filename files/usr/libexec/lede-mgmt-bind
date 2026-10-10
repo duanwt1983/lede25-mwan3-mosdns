@@ -43,8 +43,15 @@ if uci -q get nginx._redirect2ssl >/dev/null 2>&1; then
 fi
 if [ "$ngx" = 1 ]; then
 	uci commit nginx
-	if [ -x /etc/init.d/nginx ]; then
-		/etc/init.d/nginx restart >/dev/null 2>&1 || /etc/init.d/nginx reload >/dev/null 2>&1 || true
-	fi
+fi
+# Keep /etc/nginx/uci.conf in sync even when UCI already has the LAN IP.
+# Do not run nginx-util init_lan here: it can rewrite listen from a stale
+# generated file (e.g. leftover 192.168.8.1 after LAN IP change).
+if [ -f /etc/nginx/uci.conf ]; then
+	sed -i -E "s/listen[[:space:]]+[0-9.]+(:443 ssl default_server)/listen ${LAN_IP}\\1/" /etc/nginx/uci.conf
+	sed -i -E "s/listen[[:space:]]+[0-9.]+(:80[[:space:];])/listen ${LAN_IP}\\1/" /etc/nginx/uci.conf
+fi
+if [ -x /etc/init.d/nginx ]; then
+	/etc/init.d/nginx restart >/dev/null 2>&1 || /etc/init.d/nginx start >/dev/null 2>&1 || true
 fi
 exit 0

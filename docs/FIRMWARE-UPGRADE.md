@@ -83,4 +83,8 @@
 
 ## 保留配置
 
-弹窗内 **「保留当前配置」** 默认勾选 → `sysupgrade` 不带 `-n`；取消则 `-n` 清空配置。
+弹窗内 **「保留当前配置」** 默认勾选 → `sysupgrade` 不带 `-n`，会带回 `/etc/config/` 等；取消则 `-n` 清空配置。
+
+**不是**「新固件首次启动脚本一律不跑」。OpenWrt 在保留配置后仍会执行新镜像的 `/etc/uci-defaults/`。旧版 `99-custom` 会无条件把 LAN 写成 `192.168.9.1`、并可能改 MosDNS/mwan3，看起来像「没保留 IP」。新镜像仅在 **尚未有 LAN 地址** 时写入出厂 `192.168.9.1`。
+
+自定义功能（远程管理、系统报警、MosDNS、mwan3、区域接入中心、局域网安全、Bandix 等）配置都在 `/etc/config/`，勾选保留配置会一并带走。拓扑布局在 `/etc/lede-topo.json`（不在 UCI 目录），已列入 `lib/upgrade/keep.d/lede-custom`。LuCI 脚本、nginx 模板等在镜像 overlay 里，靠新固件本身，不靠备份。

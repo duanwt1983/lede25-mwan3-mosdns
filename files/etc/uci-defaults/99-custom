@@ -4,9 +4,15 @@ if command -v passwd >/dev/null 2>&1; then
   printf 'password\npassword\n' | passwd root >/dev/null 2>&1 || true
 fi
 
-uci -q set network.lan.ipaddr='192.168.9.1'
-uci -q set network.lan.netmask='255.255.255.0'
-uci -q commit network
+# First-boot factory LAN only. Keep-config sysupgrade restores
+# /etc/config/network then still runs uci-defaults from the new image;
+# never overwrite an existing LAN address (e.g. 192.168.8.1).
+cur_lan="$(uci -q get network.lan.ipaddr 2>/dev/null || true)"
+if [ -z "$cur_lan" ]; then
+  uci -q set network.lan.ipaddr='192.168.9.1'
+  uci -q set network.lan.netmask='255.255.255.0'
+  uci -q commit network
+fi
 
 uci -q set luci.main.mediaurlbase='/luci-static/argon'
 uci -q delete luci.main.indexpage 2>/dev/null || true
@@ -83,9 +89,10 @@ if [ -x /etc/init.d/mwan3 ]; then
     /etc/init.d/mwan3 disable >/dev/null 2>&1 || true
   fi
 fi
-if [ -f /etc/config/mwan3 ]; then
+if [ -f /etc/config/mwan3 ] && [ -z "$(uci -q show mwan3 | sed -n "s/^mwan3\\.\\([^=]*\\)=interface$/\\1/p" | head -n 1)" ]; then
   # Drop stock samples so Interface / Member / Policy / Rule start empty.
   # Keep globals and the ISP ipset sections we add below.
+  # Skip when keep-config already restored user mwan3 interfaces.
   while sid=$(uci -q show mwan3 | sed -n "s/^mwan3\\.\\([^=]*\\)=interface$/\\1/p" | head -n 1); do
     [ -n "$sid" ] || break
     uci -q delete "mwan3.$sid" || break
@@ -172,8 +179,8 @@ fi
 if [ -x /etc/init.d/lan-dhcp-exclude ]; then
   /etc/init.d/lan-dhcp-exclude enable
 fi
-if [ -f /etc/config/mosdns ]; then
-  # Ship MosDNS configured but disabled; activation is the user's choice.
+if [ -f /etc/config/mosdns ] && [ -z "$(uci -q get mosdns.config.enabled 2>/dev/null || true)" ]; then
+  # Factory MosDNS defaults only when keep-config did not restore the flag.
   uci -q set mosdns.config.enabled='0'
   uci -q set mosdns.config.configfile='/var/etc/mosdns.yaml'
   uci -q set mosdns.config.listen_port_api='9091'
