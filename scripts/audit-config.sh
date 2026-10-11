@@ -125,6 +125,10 @@ if ! echo "$router_defaults" | grep -q 'kmod-ixgbe'; then
   echo "AUDIT FAIL: kmod-ixgbe missing from DEFAULT_PACKAGES.router"
   fail=1
 fi
+if ! echo "$router_defaults" | grep -q 'lede-center-frpc'; then
+  echo "AUDIT FAIL: lede-center-frpc missing from DEFAULT_PACKAGES.router"
+  fail=1
+fi
 
 echo "==== audit snapshot ===="
 grep -E '^CONFIG_PACKAGE_(luci-nginx|nginx|uhttpd|luci-theme-argon|luci-app-argon-config|luci-app-mwan3|mwan3|firewall4|nftables-json|iptables|luci-app-passwall|luci-app-samba4|ddns-scripts)=' .config || true

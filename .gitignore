@@ -8,3 +8,4 @@ tmp-topo-pull/
 *.pid
 scripts/center-portal-251.env
 scripts/build-host-680.env
+files/usr/bin/frpc

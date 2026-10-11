@@ -79,6 +79,11 @@ jobs:
           chmod +x $DIY_P2_SH
           cd openwrt
           $GITHUB_WORKSPACE/$DIY_P2_SH
+          if [ ! -x files/usr/bin/frpc ]; then
+            echo "BUILD FAIL: files/usr/bin/frpc missing after diy-part2 (regional center frpc)"
+            exit 1
+          fi
+          files/usr/bin/frpc --version
 
       - name: Download package
         timeout-minutes: 40
@@ -179,7 +184,7 @@ jobs:
           fi
           echo "==== image manifest (diskman / ixgbe / data partition tools) ===="
           grep -E 'luci-app-diskman|luci-i18n-diskman|parted|sgdisk|blkid|block-mount|e2fsprogs|kmod-ixgbe' "$mf" || true
-          for need in luci-app-diskman parted sgdisk blkid block-mount e2fsprogs kmod-ixgbe smartmontools; do
+          for need in luci-app-diskman parted sgdisk blkid block-mount e2fsprogs kmod-ixgbe smartmontools lede-center-frpc; do
             if ! grep -E "^${need}([[:space:]]|-)" "$mf"; then
               echo "IMAGE FAIL: ${need} not in $mf"
               cat "$mf"
@@ -231,6 +236,7 @@ jobs:
             echo "- WAN: mwan3 nftables port (no iptables)"
             echo "- Share: samba4; diskman + official filemanager; ttyd; ddns-go"
             echo "- NIC: kmod-ixgbe (Intel 82599ES / X520 SFP+)"
+            echo "- Regional center: lede-center-frpc (frp 0.71 /usr/bin/frpc) + LuCI 区域接入中心"
             echo "- 本页是新增的一份固件。以前的 Releases **不会删除、不会覆盖**，请在仓库 Releases 列表里往下翻。"
           } > release.txt
           echo "status=success" >> $GITHUB_OUTPUT

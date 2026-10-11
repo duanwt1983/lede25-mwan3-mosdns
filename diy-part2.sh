@@ -89,6 +89,34 @@ rm -rf package/wireshark
 cp -a "$_OVERLAY/package/wireshark" package/wireshark
 rm -rf package/lede-center-frpc
 cp -a "$_OVERLAY/package/lede-center-frpc" package/lede-center-frpc
+
+# frpc must land in /usr/bin even when CONFIG_PACKAGE alone is ignored by image install.
+# Download at build time (not committed); pairs with package/lede-center-frpc + DEFAULT_PACKAGES.
+lede_install_frpc_overlay() {
+  local ver=0.71.0 arch=linux_amd64 hash=84f27e39f11169f7adcef8e8b70c9329de17747b1f14dad9fb95eef5682ea716
+  local dest=files/usr/bin/frpc tmp tball
+  mkdir -p files/usr/bin
+  tmp=$(mktemp -d)
+  tball="$tmp/frp_${ver}_${arch}.tar.gz"
+  if ! curl -sfL --retry 3 --connect-timeout 20 -o "$tball" \
+    "https://github.com/fatedier/frp/releases/download/v${ver}/frp_${ver}_${arch}.tar.gz"; then
+    echo "ERROR: cannot download frpc ${ver} for overlay (files/usr/bin/frpc)" >&2
+    rm -rf "$tmp"
+    return 1
+  fi
+  printf '%s  %s\n' "$hash" "$tball" | sha256sum -c - >/dev/null || {
+    echo "ERROR: frpc tarball hash mismatch" >&2
+    rm -rf "$tmp"
+    return 1
+  }
+  tar -xzf "$tball" -C "$tmp" "frp_${ver}_${arch}/frpc"
+  install -m 755 "$tmp/frp_${ver}_${arch}/frpc" "$dest"
+  rm -rf "$tmp"
+  "$dest" --version
+  echo "overlay: $dest (frp ${ver})"
+}
+lede_install_frpc_overlay
+
 # Overlay scripts must be executable in the image. A checkout may store them
 # as 100644; fix the index when possible, then chmod the working tree.
 [ -f scripts/fix-overlay-exec.sh ] && sh scripts/fix-overlay-exec.sh || true
@@ -375,7 +403,8 @@ new_router = (
     "\tblock-mount coremark kmod-nf-nathelper kmod-nf-nathelper-extra kmod-tun \\\n"
     "\tluci-app-diskman luci-i18n-diskman-zh-cn parted blkid sgdisk e2fsprogs \\\n"
     "\tkmod-fs-ext4 kmod-fs-ntfs3 kmod-fs-exfat kmod-usb-storage kmod-usb-storage-uas kmod-ixgbe \\\n"
-    "\tip-full default-settings luci-nginx luci-proto-ipv6 curl ca-certificates\n"
+    "\tip-full default-settings luci-nginx luci-proto-ipv6 curl ca-certificates \\\n"
+    "\tlede-center-frpc\n"
 )
 text2, n = pat.subn(new_router, text, count=1)
 if n != 1:

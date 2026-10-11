@@ -202,6 +202,6 @@ strip_unwanted
 select_wanted
 
 echo "==== selected extras ===="
-grep -E '^CONFIG_PACKAGE_(luci-nginx|nginx|uhttpd|luci-app-samba4|samba4-server|luci-app-passwall|luci-app-mosdns|mosdns|librespeed-go|bandix-plus|luci-app-bandix-plus|tcpdump|wireshark|luci-app-istorex|luci-app-quickstart|luci-app-fastnet|luci-app-diskman|luci-i18n-diskman-zh-cn|luci-app-filemanager|luci-app-mwan3|mwan3|parted|blkid|kmod-ixgbe|smartmontools|mdadm|nftables-json|ip-full)=' .config || true
+grep -E '^CONFIG_PACKAGE_(luci-nginx|nginx|uhttpd|luci-app-samba4|samba4-server|luci-app-passwall|luci-app-mosdns|mosdns|librespeed-go|bandix-plus|luci-app-bandix-plus|tcpdump|wireshark|lede-center-frpc|luci-app-istorex|luci-app-quickstart|luci-app-fastnet|luci-app-diskman|luci-i18n-diskman-zh-cn|luci-app-filemanager|luci-app-mwan3|mwan3|parted|blkid|kmod-ixgbe|smartmontools|mdadm|nftables-json|ip-full)=' .config || true
 grep -E '^CONFIG_PACKAGE_(firewall4|nftables|iptables|iptables-nft|iptables-zz-legacy|firewall)=' .config || true
 grep -E '^CONFIG_(VMDK_IMAGES|GRUB_EFI_IMAGES|TARGET_ROOTFS_PARTSIZE|TARGET_ROOTFS_EXT4FS|TARGET_IMAGES_GZIP)=' .config || true
