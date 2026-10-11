@@ -157,7 +157,7 @@ proxies_tcp="$(jq -nc \
       name: .name,
       user: (.user // ""),
       clientId: (.clientID // .clientId // ""),
-      status: (.status.state // "offline"),
+      status: (.status.phase // .status.state // "offline"),
       todayTrafficIn: (.status.todayTrafficIn // 0),
       todayTrafficOut: (.status.todayTrafficOut // 0),
       curConns: (.status.curConns // 0),

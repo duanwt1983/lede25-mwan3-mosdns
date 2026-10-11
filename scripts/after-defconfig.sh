@@ -100,6 +100,7 @@ select_wanted() {
   enable_pkg wget-ssl
   enable_pkg tcpdump
   enable_pkg wireshark
+  enable_pkg lede-center-frpc
 
   enable_pkg firewall4
   enable_pkg nftables-json

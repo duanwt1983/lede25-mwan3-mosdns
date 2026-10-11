@@ -201,6 +201,9 @@ return view.extend({
 					E('span', { 'class': 'lede-remote-frpc-state--up' }, _('frpc 运行中')),
 					_('）')
 				]);
+			if (!st.frpc_installed)
+				return E('span', { 'class': 'lede-remote-frpc-state--down' },
+					_('无法启动：系统缺少 /usr/bin/frpc（固件未含 lede-center-frpc）。请刷入含 frpc 的新固件，或联系管理员热更新 frpc 0.71。'));
 			if (st.config || st.uci_ok)
 				return E('span', { 'class': 'lede-remote-frpc-state--down' },
 					_('未连接：frpc 未运行。请「保存并应用」，或 SSH：/usr/libexec/lede-center-frpc apply'));
@@ -334,7 +337,7 @@ return view.extend({
 	render: function(data) {
 		var view = this;
 		var stWan = parseJsonStatus(data[2], { enabled: 0, port: 10443 });
-		var stCenter = parseJsonStatus(data[3], { enabled: 0, running: 0, config: 0, uci_ok: 0 });
+		var stCenter = parseJsonStatus(data[3], { enabled: 0, running: 0, config: 0, uci_ok: 0, frpc_installed: 0 });
 
 		view._activeTab = readActiveTab();
 		persistActiveTab(view._activeTab);

@@ -299,12 +299,15 @@ status_json() {
 	[ -n "$STATUS_TUNNELS_JSON" ] || STATUS_TUNNELS_JSON=""
 	ca_ok=0
 	default_ca_file >/dev/null 2>&1 && ca_ok=1
-	printf '{"enabled":%s,"running":%s,"config":%s,"uci_ok":%s,"ca_installed":%s,"site_id":"%s","server":"%s","port":"%s","remote_port_luci":"%s","tunnels":[%s]}' \
+	frpc_bin=0
+	[ -x /usr/bin/frpc ] && frpc_bin=1
+	printf '{"enabled":%s,"running":%s,"config":%s,"uci_ok":%s,"ca_installed":%s,"frpc_installed":%s,"site_id":"%s","server":"%s","port":"%s","remote_port_luci":"%s","tunnels":[%s]}' \
 		"$([ "$en" = "1" ] && echo 1 || echo 0)" \
 		"$run" \
 		"$cfg" \
 		"$uci_ok" \
 		"$ca_ok" \
+		"$frpc_bin" \
 		"$(uci_get site_id)" \
 		"$(uci_get server)" \
 		"$(uci_get port)" \

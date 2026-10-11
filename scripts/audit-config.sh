@@ -33,6 +33,7 @@ must_y=(
   CONFIG_PACKAGE_mwan3
   CONFIG_PACKAGE_tcpdump
   CONFIG_PACKAGE_wireshark
+  CONFIG_PACKAGE_lede-center-frpc
   CONFIG_PACKAGE_firewall4
   CONFIG_PACKAGE_kmod-nft-bridge
   CONFIG_PACKAGE_kmod-nft-arp

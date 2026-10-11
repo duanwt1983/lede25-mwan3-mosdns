@@ -98,7 +98,6 @@
   function renderKpi(sites, status) {
     var total = sites.length;
     var online = sites.filter(function (s) { return proxyOnline(status, s.id); }).length;
-    var ver = (status && status.server && status.server.version) ? status.server.version : '—';
     var clients = (status && status.server && status.server.clientCounts != null)
       ? status.server.clientCounts : '—';
     var curConns = (status && status.server && status.server.curConns != null)
@@ -107,11 +106,8 @@
       ? formatBytes(status.server.totalTrafficIn) : '—';
     var tout = (status && status.server && status.server.totalTrafficOut != null)
       ? formatBytes(status.server.totalTrafficOut) : '—';
-    var apiVer = (status && status.api_version != null) ? ('API v' + status.api_version) : '';
-
     $('#kpi-total').textContent = String(total);
     $('#kpi-online').textContent = String(online);
-    $('#kpi-frps').textContent = ver;
     $('#kpi-clients').textContent = String(clients);
     var elConns = $('#kpi-conns');
     if (elConns) elConns.textContent = String(curConns);
@@ -119,8 +115,6 @@
     if (elTin) elTin.textContent = tin;
     var elTout = $('#kpi-traffic-out');
     if (elTout) elTout.textContent = tout;
-    var elApi = $('#kpi-api');
-    if (elApi) elApi.textContent = apiVer || '—';
     $('#status-updated').textContent = formatTime(status && status.updated);
   }
 
@@ -134,7 +128,7 @@
       clientBody.innerHTML = '<tr><td colspan="6" class="sub">暂无客户端数据（请升级中心 frps 并启用 Dashboard）</td></tr>';
     } else {
       clientBody.innerHTML = clients.map(function (c) {
-        var on = c.online === true || c.status === 'online' || (c.status && c.status.state === 'online');
+        var on = c.online === true || c.status === 'online' || (c.status && (c.status.state === 'online' || c.status.phase === 'online'));
         return '<tr>' +
           '<td><code>' + escapeHtml(c.user || c.User || '—') + '</code></td>' +
           '<td>' + escapeHtml(c.hostname || c.Hostname || '—') + '</td>' +
