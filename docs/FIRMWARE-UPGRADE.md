@@ -87,4 +87,4 @@
 
 **不是**「新固件首次启动脚本一律不跑」。OpenWrt 在保留配置后仍会执行新镜像的 `/etc/uci-defaults/`。旧版 `99-custom` 会无条件把 LAN 写成 `192.168.9.1`、并可能改 MosDNS/mwan3，看起来像「没保留 IP」。新镜像仅在 **尚未有 LAN 地址** 时写入出厂 `192.168.9.1`。
 
-自定义功能（远程管理、系统报警、MosDNS、mwan3、区域接入中心、局域网安全、Bandix 等）配置都在 `/etc/config/`，勾选保留配置会一并带走。拓扑布局在 `/etc/lede-topo.json`（不在 UCI 目录），已列入 `lib/upgrade/keep.d/lede-custom`。LuCI 脚本、nginx 模板等在镜像 overlay 里，靠新固件本身，不靠备份。
+自定义功能（远程管理、系统报警、MosDNS、mwan3、区域接入中心、局域网安全、Bandix 等）配置都在 `/etc/config/`，勾选保留配置会一并带走。拓扑图：节点位置、勾选字段、连线、网格/锁定、显示台数写在 `/etc/lede-topo.json`（已列入 keep.d）；浏览器 localStorage 里的同名缓存**不会**随固件升级带走，换电脑或清站点数据会丢。旧镜像 `99-custom` 会把 root 密码重置为 `password`，新镜像仅在没有 `/etc/shadow` 时才设置出厂密码。LuCI 脚本、nginx 模板等在镜像 overlay 里，靠新固件本身，不靠备份。

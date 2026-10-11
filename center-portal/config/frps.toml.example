@@ -1,0 +1,26 @@
+# 区域接入中心 frps 示例（6.251）。复制为 /etc/frp/frps.toml 并按环境修改。
+# 升级 frp：/opt/center-portal/center-portal-upgrade-frps.sh
+
+bindAddr = "0.0.0.0"
+bindPort = 18007
+
+auth.method = "token"
+auth.token = "REPLACE_WITH_STRONG_TOKEN"
+
+transport.tls.force = true
+transport.tls.certFile = "/etc/frp/frps.crt"
+transport.tls.keyFile = "/etc/frp/frps.key"
+
+# Dashboard + API v2（仅本机；门户 center-portal-status 通过此端口采集）
+webServer.addr = "127.0.0.1"
+webServer.port = 7500
+webServer.user = "portal"
+webServer.password = "REPLACE_DASHBOARD_PASSWORD"
+
+# 可选：Prometheus（需先启用 webServer）
+enablePrometheus = true
+
+# 建议独占区间，与门户 sites.json / 网关 UCI 一致
+allowPorts = [
+  { start = 19001, end = 19999 }
+]

@@ -60,12 +60,26 @@
     });
   }
 
+  function statusProxies(status) {
+    if (!status) return [];
+    if (status.proxies_tcp && status.proxies_tcp.length) return status.proxies_tcp;
+    if (status.tcp && status.tcp.proxies) return status.tcp.proxies;
+    return [];
+  }
+
   function proxyNamedOnline(status, proxyName) {
-    if (!status || !status.tcp || !status.tcp.proxies)
-      return false;
-    return status.tcp.proxies.some(function (p) {
+    return statusProxies(status).some(function (p) {
       return p.name === proxyName && p.status === 'online';
     });
+  }
+
+  function formatBytes(n) {
+    var v = Number(n);
+    if (!isFinite(v) || v <= 0) return '0 B';
+    var u = ['B', 'KB', 'MB', 'GB', 'TB'];
+    var i = 0;
+    while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+    return (i === 0 ? v.toFixed(0) : v.toFixed(1)) + ' ' + u[i];
   }
 
   function proxyOnline(status, siteId) {
@@ -87,12 +101,70 @@
     var ver = (status && status.server && status.server.version) ? status.server.version : '—';
     var clients = (status && status.server && status.server.clientCounts != null)
       ? status.server.clientCounts : '—';
+    var curConns = (status && status.server && status.server.curConns != null)
+      ? status.server.curConns : '—';
+    var tin = (status && status.server && status.server.totalTrafficIn != null)
+      ? formatBytes(status.server.totalTrafficIn) : '—';
+    var tout = (status && status.server && status.server.totalTrafficOut != null)
+      ? formatBytes(status.server.totalTrafficOut) : '—';
+    var apiVer = (status && status.api_version != null) ? ('API v' + status.api_version) : '';
 
     $('#kpi-total').textContent = String(total);
     $('#kpi-online').textContent = String(online);
     $('#kpi-frps').textContent = ver;
     $('#kpi-clients').textContent = String(clients);
+    var elConns = $('#kpi-conns');
+    if (elConns) elConns.textContent = String(curConns);
+    var elTin = $('#kpi-traffic-in');
+    if (elTin) elTin.textContent = tin;
+    var elTout = $('#kpi-traffic-out');
+    if (elTout) elTout.textContent = tout;
+    var elApi = $('#kpi-api');
+    if (elApi) elApi.textContent = apiVer || '—';
     $('#status-updated').textContent = formatTime(status && status.updated);
+  }
+
+  function renderMonitor(status) {
+    var clientBody = $('#monitor-clients-body');
+    var proxyBody = $('#monitor-proxies-body');
+    if (!clientBody || !proxyBody) return;
+
+    var clients = (status && status.clients) ? status.clients : [];
+    if (!clients.length) {
+      clientBody.innerHTML = '<tr><td colspan="6" class="sub">暂无客户端数据（请升级中心 frps 并启用 Dashboard）</td></tr>';
+    } else {
+      clientBody.innerHTML = clients.map(function (c) {
+        var on = c.online === true || c.status === 'online' || (c.status && c.status.state === 'online');
+        return '<tr>' +
+          '<td><code>' + escapeHtml(c.user || c.User || '—') + '</code></td>' +
+          '<td>' + escapeHtml(c.hostname || c.Hostname || '—') + '</td>' +
+          '<td>' + escapeHtml(c.clientIP || c.ClientIP || '—') + '</td>' +
+          '<td>' + escapeHtml(c.version || c.Version || '—') + '</td>' +
+          '<td><span class="tunnel-pill ' + (on ? 'on' : 'off') + '">' + (on ? '在线' : '离线') + '</span></td>' +
+          '<td><code class="mono-sm">' + escapeHtml(c.clientID || c.ClientID || '—') + '</code></td>' +
+        '</tr>';
+      }).join('');
+    }
+
+    var proxies = statusProxies(status).slice().sort(function (a, b) {
+      return String(a.name).localeCompare(String(b.name));
+    });
+    if (!proxies.length) {
+      proxyBody.innerHTML = '<tr><td colspan="6" class="sub">暂无 TCP 代理</td></tr>';
+    } else {
+      proxyBody.innerHTML = proxies.map(function (p) {
+        var on = p.status === 'online';
+        var rp = (p.conf && p.conf.remotePort != null) ? p.conf.remotePort : '—';
+        return '<tr>' +
+          '<td><code>' + escapeHtml(p.name) + '</code></td>' +
+          '<td><span class="tunnel-pill ' + (on ? 'on' : 'off') + '">' + (on ? '在线' : '离线') + '</span></td>' +
+          '<td>' + rp + '</td>' +
+          '<td>' + (p.curConns != null ? p.curConns : '—') + '</td>' +
+          '<td>' + formatBytes(p.todayTrafficIn) + '</td>' +
+          '<td>' + formatBytes(p.todayTrafficOut) + '</td>' +
+        '</tr>';
+      }).join('');
+    }
   }
 
   function renderSites(sites, status) {
@@ -226,6 +298,7 @@
       renderKpi(sites, status);
       renderSites(sites, status);
       renderPortTable(sites, status);
+      renderMonitor(status);
     }).catch(function (err) {
       console.error(err);
       $('#site-grid').innerHTML = '<div class="empty">加载失败，请检查登录状态或联系管理员。</div>';

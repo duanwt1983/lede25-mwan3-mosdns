@@ -94,9 +94,16 @@
     return 'both';
   }
 
+  function statusProxies(st) {
+    var s = st || frpStatus;
+    if (!s) return [];
+    if (s.proxies_tcp && s.proxies_tcp.length) return s.proxies_tcp;
+    if (s.tcp && s.tcp.proxies) return s.tcp.proxies;
+    return [];
+  }
+
   function proxyNamedOnline(proxyName) {
-    if (!frpStatus || !frpStatus.tcp || !frpStatus.tcp.proxies) return false;
-    return frpStatus.tcp.proxies.some(function (p) {
+    return statusProxies().some(function (p) {
       return p.name === proxyName && p.status === 'online';
     });
   }
@@ -220,16 +227,15 @@
     if (chk && chk.frp_target) raw = chk.frp_target;
     if (!raw) {
       var pname = siteId + '-' + name;
-      if (frpStatus && frpStatus.tcp && frpStatus.tcp.proxies) {
-        for (var i = 0; i < frpStatus.tcp.proxies.length; i++) {
-          var p = frpStatus.tcp.proxies[i];
-          if (p.name !== pname || !p.conf) continue;
-          var ip = p.conf.localIP || '';
-          var port = p.conf.localPort;
-          if (!ip) break;
-          raw = port != null && port !== '' ? (ip + ':' + port) : ip;
-          break;
-        }
+      var plist = statusProxies();
+      for (var i = 0; i < plist.length; i++) {
+        var p = plist[i];
+        if (p.name !== pname || !p.conf) continue;
+        var ip = p.conf.localIP || '';
+        var port = p.conf.localPort;
+        if (!ip) break;
+        raw = port != null && port !== '' ? (ip + ':' + port) : ip;
+        break;
       }
     }
     if (!raw || raw === '127.0.0.1' || raw.indexOf('127.0.0.1:') === 0) return '';
@@ -558,6 +564,24 @@
         $('bp-token').classList.add('token-blur');
         $('bp-reveal').textContent = '显示';
         $('bp-err').textContent = '';
+        var caLink = $('bp-ca-link');
+        var caSha = $('bp-ca-sha');
+        if (data.ca_available && data.ca_cert_url && caLink) {
+          caLink.href = data.ca_cert_url;
+          caLink.textContent = '下载根 CA';
+          if (caSha && data.ca_cert_sha256) {
+            caSha.textContent = ' SHA256 ' + data.ca_cert_sha256.slice(0, 16) + '…';
+          }
+        } else if (caLink) {
+          caLink.removeAttribute('href');
+          caLink.textContent = '未签发（请在中心执行 center-portal-ca-init）';
+        }
+        var caCopy = $('bp-ca-copy-url');
+        if (caCopy) {
+          caCopy.onclick = function () {
+            if (data.ca_cert_url) copyText(data.ca_cert_url);
+          };
+        }
       })
       .catch(function (e) {
         $('bp-err').textContent = e.message || String(e);

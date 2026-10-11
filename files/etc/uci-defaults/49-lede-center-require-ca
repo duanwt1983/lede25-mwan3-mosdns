@@ -1,0 +1,5 @@
+#!/bin/sh
+# Drop legacy tls_insecure (skip verify no longer supported).
+uci -q delete lede-center.main.tls_insecure 2>/dev/null || true
+uci commit lede-center 2>/dev/null || true
+exit 0

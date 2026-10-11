@@ -27,6 +27,7 @@
       <button type="button" class="active" data-tab="dashboard">站点概览</button>
       <button type="button" data-tab="admin">站点登记</button>
       <button type="button" data-tab="ports">在线列表</button>
+      <button type="button" data-tab="monitor">隧道监控</button>
       <button type="button" data-tab="account">账户与安全</button>
     </div>
 
@@ -36,8 +37,12 @@
         <div class="kpi"><div class="label">隧道在线</div><div class="val" id="kpi-online">—</div></div>
         <div class="kpi"><div class="label">frps 版本</div><div class="val" id="kpi-frps">—</div></div>
         <div class="kpi"><div class="label">已连接客户端</div><div class="val" id="kpi-clients">—</div></div>
+        <div class="kpi"><div class="label">当前连接数</div><div class="val" id="kpi-conns">—</div></div>
+        <div class="kpi"><div class="label">累计入站</div><div class="val" id="kpi-traffic-in">—</div></div>
+        <div class="kpi"><div class="label">累计出站</div><div class="val" id="kpi-traffic-out">—</div></div>
+        <div class="kpi"><div class="label">Dashboard</div><div class="val" id="kpi-api">—</div></div>
       </div>
-      <p class="sub" style="margin:-8px 0 18px;">状态更新：<span id="status-updated">—</span>（约每分钟自动刷新）</p>
+      <p class="sub" style="margin:-8px 0 18px;">状态更新：<span id="status-updated">—</span>（约每分钟自动刷新；数据来自 frps Dashboard API v2）</p>
       <div id="site-grid" class="site-grid"></div>
     </section>
 
@@ -57,12 +62,43 @@
             <dt>frps 认证 Token</dt><dd><code id="bp-token" class="token-blur">—</code>
               <button type="button" class="btn-sm" id="bp-reveal">显示</button>
               <button type="button" class="btn-sm copy" data-copy="bp-token">复制</button></dd>
+            <dt>中心 CA 证书</dt><dd>
+              <a id="bp-ca-link" href="#" target="_blank" rel="noopener">下载根 CA</a>
+              <button type="button" class="btn-sm copy" id="bp-ca-copy-url">复制链接</button>
+              <span class="sub" id="bp-ca-sha"></span>
+            </dd>
           </dl>
+          <p class="sub">网关须导入中心 CA 后才能连 frps（固件强制校验，不可跳过）。LuCI → 区域接入中心 →「从中心下载并导入 CA」。</p>
           <p class="sub" id="bp-err"></p>
         </div>
         <p id="admin-msg" class="admin-msg" aria-live="polite"></p>
         <div id="admin-site-cards" class="admin-site-cards"></div>
         <div id="admin-new-site-slot"></div>
+      </div>
+    </section>
+
+    <section id="panel-monitor" class="panel">
+      <div class="doc">
+        <h2>隧道监控</h2>
+        <p class="sub">与 frps 0.70+ Dashboard 对齐：已连接 frpc 客户端、TCP 代理在线状态与今日流量（仅中心内网采集，经门户展示）。</p>
+        <h3>frpc 客户端</h3>
+        <div class="monitor-scroll">
+          <table class="data">
+            <thead>
+              <tr><th>用户</th><th>主机名</th><th>客户端 IP</th><th>frpc 版本</th><th>状态</th><th>Client ID</th></tr>
+            </thead>
+            <tbody id="monitor-clients-body"></tbody>
+          </table>
+        </div>
+        <h3>TCP 代理</h3>
+        <div class="monitor-scroll">
+          <table class="data">
+            <thead>
+              <tr><th>代理名</th><th>状态</th><th>中心端口</th><th>当前连接</th><th>今日入站</th><th>今日出站</th></tr>
+            </thead>
+            <tbody id="monitor-proxies-body"></tbody>
+          </table>
+        </div>
       </div>
     </section>
 
@@ -134,14 +170,14 @@
         <p>固件自动创建 <code>&lt;site_id&gt;-luci</code>、可选 <code>&lt;site_id&gt;-ssh</code>，以及在「内网 TCP 隧道」中登记的 <code>&lt;site_id&gt;-&lt;代理名&gt;</code>。门户据此显示 LuCI / 内网隧道在线状态。</p>
 
         <h3>维护（一般无需 SSH）</h3>
-        <p>站点增删改均在「站点登记」完成。若需排查，在 6.251 上可执行 <code>center-portal-status</code>、<code>systemctl status center-portal-admin frps authelia</code>。</p>
+        <p>站点增删改均在「站点登记」完成。若需排查，在 6.251 上可执行 <code>center-portal-status</code>、<code>center-portal-upgrade-frps.sh</code>（升级 frps）、<code>systemctl status center-portal-admin frps authelia</code>。</p>
       </div>
     </dialog>
 
-    <p class="foot">区域接入中心 · Authelia 保护 · frp 0.61.1</p>
+    <p class="foot">区域接入中心 · Authelia 保护 · frp 0.71.0</p>
   </div>
-  <script src="assets/app.js?v=20261007ui1"></script>
-  <script src="assets/admin.js?v=20261001t"></script>
+  <script src="assets/app.js?v=20261011frp71"></script>
+  <script src="assets/admin.js?v=20261011ca1"></script>
   <script src="assets/account.js?v=20261007ui1"></script>
   <script>document.addEventListener('DOMContentLoaded', function () {
     if (window.initPortalAdmin) window.initPortalAdmin();

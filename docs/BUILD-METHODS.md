@@ -86,7 +86,7 @@ bash /openwrt-build/overlay/scripts/cleanup-build-host.sh
 
 下文链接中的 `center.example.com` 仅为文档示例；**固件 UCI / frpc 默认中心域名为 `center.123.gd.cn`**（见 `files/etc/config/lede-center`），与线上 Authelia、frps 一致。
 
-固件内置 `lede-center-frpc`（frp **0.61.1**，与总部 frps 一致）。LuCI 在 **系统 → 管理权 → 远程管理** 页内选项卡 **区域接入中心**（与本机外网管理并列）。每台网关填写唯一 **站点 ID**、**remote_port_luci**（在 6.251 登记）和 **frps token** 后保存即可出站连 `center.example.com:18007`；保存并应用时会同步 frpc 配置，并为「内网 TCP 隧道」在防火墙放行网关到 LAN 的访问（不在门店 WAN 开放中心端口）。配置保留见 `lib/upgrade/keep.d/lede-center`。
+固件内置 `lede-center-frpc`（frp **0.71.0**，须与总部 frps 同版本）。LuCI 在 **系统 → 管理权 → 远程管理** 页内选项卡 **区域接入中心**（与本机外网管理并列）。每台网关须先 **导入中心 CA**（LuCI 一键下载或 `/etc/lede-center/frps-ca.crt`），**强制 TLS 校验**，无 CA 则无法生成配置/连接 `center.example.com:18007`。填写 **站点 ID**、**remote_port_luci**（在 6.251 登记）和 **frps token** 后保存并应用；会 `frpc verify` 并同步 frpc 配置。配置保留见 `lib/upgrade/keep.d/lede-center`。
 
 ### 总部中心门户（6.251）
 
@@ -96,6 +96,8 @@ bash /openwrt-build/overlay/scripts/cleanup-build-host.sh
 cp scripts/center-portal-251.env.example scripts/center-portal-251.env   # 填写 SSHPASS，勿提交
 ./scripts/deploy-center-portal-251.sh root@192.168.6.251
 ```
+
+中心机升级 frps（与固件 frpc 对齐）：`center-portal-upgrade-frps`（脚本在 `center-portal/scripts/`，deploy 时安装到 `/opt/center-portal/`）。Dashboard 默认 `127.0.0.1:7500`，门户 `center-portal-status` 走 **API v2** 展示客户端/代理/流量；可选 `enablePrometheus = true`（见 `center-portal/config/frps.toml.example`）。
 
 外网入口 LEDE 仅需转发 **18443**、**18007** 到 6.251。LuCI 推荐链接（需 Authelia，**不**依赖内网隧道 19100 等公网口）：
 

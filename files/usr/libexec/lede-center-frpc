@@ -5,9 +5,18 @@ set -e
 
 CONF=/var/etc/lede-center-frpc.toml
 PIDFILE=/var/run/lede-center-frpc.pid
+CA_STORE=/etc/lede-center/frps-ca.crt
 
 uci_get() {
 	uci -q get "lede-center.main.$1" 2>/dev/null || true
+}
+
+default_ca_file() {
+	local f
+	f=$(uci_get ca_file)
+	[ -n "$f" ] && [ -f "$f" ] && printf '%s' "$f" && return 0
+	[ -f /etc/lede-center/frps-ca.crt ] && printf '%s' /etc/lede-center/frps-ca.crt && return 0
+	return 1
 }
 
 valid_site_id() {
@@ -40,8 +49,19 @@ uci_config_valid() {
 	return 0
 }
 
+require_center_ca() {
+	local ca_path
+	ca_path=$(default_ca_file) || true
+	if [ -z "$ca_path" ]; then
+		echo "未安装中心 CA：请在 LuCI 点击「从中心下载并导入 CA」，或放置证书到 /etc/lede-center/frps-ca.crt" >&2
+		return 1
+	fi
+	printf '%s' "$ca_path"
+	return 0
+}
+
 write_config() {
-	local en site server port token rpluc rpssh lport tls skip tmp lip
+	local en site server port token rpluc rpssh lport tmp lip ca_path
 	en=$(uci_get enabled)
 	site=$(uci_get site_id)
 	server=$(uci_get server)
@@ -51,7 +71,6 @@ write_config() {
 	rpssh=$(uci_get remote_port_ssh)
 	lport=$(uci_get local_luci_port)
 	lip=$(uci_get local_luci_ip)
-	tls=$(uci_get tls_insecure)
 	[ -n "$server" ] || server=center.123.gd.cn
 	[ -n "$port" ] || port=18007
 	[ -n "$lport" ] || lport=443
@@ -59,8 +78,6 @@ write_config() {
 		lip=$(uci -q get network.lan.ipaddr)
 	fi
 	[ -n "$lip" ] || lip=127.0.0.1
-	skip=1
-	[ "$tls" = "0" ] && skip=0
 
 	mkdir -p "$(dirname "$CONF")"
 
@@ -81,6 +98,7 @@ write_config() {
 		echo "remote_port_luci is required when enabled" >&2
 		return 1
 	}
+	ca_path=$(require_center_ca) || return 1
 
 	tmp="${CONF}.tmp.$$"
 	cat >"$tmp" <<EOF
@@ -92,10 +110,9 @@ auth.token = "$token"
 
 transport.tls.enable = true
 transport.tls.disableCustomTLSFirstByte = true
-EOF
+transport.tls.trustedCaFile = "$ca_path"
 
-	# frp 0.61+ has no transport.tls.insecureSkipVerify; with TLS enabled and no
-	# trustedCaFile, frpc connects without verifying the server cert (OK for self-signed).
+EOF
 
 	cat >>"$tmp" <<EOF
 
@@ -280,11 +297,14 @@ status_json() {
 		config_foreach status_tunnel_json_line tunnel
 	fi
 	[ -n "$STATUS_TUNNELS_JSON" ] || STATUS_TUNNELS_JSON=""
-	printf '{"enabled":%s,"running":%s,"config":%s,"uci_ok":%s,"site_id":"%s","server":"%s","port":"%s","remote_port_luci":"%s","tunnels":[%s]}' \
+	ca_ok=0
+	default_ca_file >/dev/null 2>&1 && ca_ok=1
+	printf '{"enabled":%s,"running":%s,"config":%s,"uci_ok":%s,"ca_installed":%s,"site_id":"%s","server":"%s","port":"%s","remote_port_luci":"%s","tunnels":[%s]}' \
 		"$([ "$en" = "1" ] && echo 1 || echo 0)" \
 		"$run" \
 		"$cfg" \
 		"$uci_ok" \
+		"$ca_ok" \
 		"$(uci_get site_id)" \
 		"$(uci_get server)" \
 		"$(uci_get port)" \
@@ -292,7 +312,43 @@ status_json() {
 		"$STATUS_TUNNELS_JSON"
 }
 
+import_ca() {
+	local server pport url tmp sha
+	server=$(uci_get server)
+	[ -n "$server" ] || server=center.123.gd.cn
+	pport=$(uci_get portal_port)
+	[ -n "$pport" ] || pport=18443
+	url="https://${server}:${pport}/home/ca/root-ca.crt"
+	mkdir -p /etc/lede-center
+	tmp="${CA_STORE}.tmp.$$"
+	if ! curl -sfk --max-time 30 -o "$tmp" "$url"; then
+		rm -f "$tmp"
+		printf '{"ok":false,"error":"无法从中心下载 CA（%s），请检查 WAN/18443 或中心地址"}\n' "$url"
+		return 1
+	fi
+	if ! openssl x509 -in "$tmp" -noout -subject >/dev/null 2>&1; then
+		rm -f "$tmp"
+		printf '{"ok":false,"error":"下载内容不是有效的 X.509 证书"}\n'
+		return 1
+	fi
+	mv "$tmp" "$CA_STORE"
+	chmod 644 "$CA_STORE"
+	sha=$(sha256sum "$CA_STORE" 2>/dev/null | awk '{print $1}')
+	uci set "lede-center.main.ca_file=$CA_STORE"
+	uci -q delete lede-center.main.tls_insecure 2>/dev/null || true
+	uci commit lede-center
+	printf '{"ok":true,"path":"%s","url":"%s","sha256":"%s"}\n' \
+		"$CA_STORE" "$url" "${sha:-}"
+}
+
 case "${1:-status}" in
+import-ca)
+	import_ca || exit 1
+	if [ "$(uci_get enabled)" = "1" ] && uci_config_valid; then
+		write_config || exit 1
+		/etc/init.d/lede-center-frpc restart 2>/dev/null || true
+	fi
+	;;
 write-config)
 	write_config
 	;;
@@ -300,6 +356,12 @@ apply)
 	en=$(uci_get enabled)
 	if [ "$en" = "1" ]; then
 		write_config || exit 1
+		if [ -s "$CONF" ] && [ -x /usr/bin/frpc ]; then
+			/usr/bin/frpc verify -c "$CONF" || {
+				echo "frpc verify failed; fix config above" >&2
+				exit 1
+			}
+		fi
 	else
 		write_config || true
 	fi
@@ -320,6 +382,9 @@ restart)
 	en=$(uci_get enabled)
 	[ "$en" = "1" ] || exit 0
 	write_config || exit 1
+	if [ -s "$CONF" ] && [ -x /usr/bin/frpc ]; then
+		/usr/bin/frpc verify -c "$CONF" || exit 1
+	fi
 	/etc/init.d/lede-center-frpc restart || exit 1
 	sleep 2
 	pidof frpc >/dev/null || {
@@ -331,7 +396,7 @@ status|ensure)
 	status_json
 	;;
 *)
-	echo "usage: $0 {write-config|apply|restart|ensure|status}" >&2
+	echo "usage: $0 {write-config|apply|restart|ensure|status|import-ca}" >&2
 	exit 1
 	;;
 esac

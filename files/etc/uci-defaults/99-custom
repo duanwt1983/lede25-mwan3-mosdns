@@ -1,7 +1,11 @@
 #!/bin/sh
 
-if command -v passwd >/dev/null 2>&1; then
-  printf 'password\npassword\n' | passwd root >/dev/null 2>&1 || true
+# Factory root password only on a blank image. Keep-config sysupgrade
+# restores /etc/shadow; never reset an existing password.
+if [ ! -s /etc/shadow ] || ! grep -q '^root:' /etc/shadow 2>/dev/null; then
+  if command -v passwd >/dev/null 2>&1; then
+    printf 'password\npassword\n' | passwd root >/dev/null 2>&1 || true
+  fi
 fi
 
 # First-boot factory LAN only. Keep-config sysupgrade restores

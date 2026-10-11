@@ -185,6 +185,7 @@ return view.extend({
 	},
 
 	_buildCenterMap: function(st) {
+		var viewRef = this;
 		var m = new form.Map('lede-center');
 		var s = m.section(form.NamedSection, 'main', 'frpc');
 		s.addremove = false;
@@ -251,11 +252,46 @@ return view.extend({
 		o.rmempty = true;
 		o.depends('enabled', '1');
 
-		o = s.option(form.Flag, 'tls_insecure', _('TLS 跳过证书校验'),
-			_('中心使用自签证书时开启；生产环境可导入 CA 后关闭。'));
-		o.default = '1';
-		o.rmempty = false;
+		o = s.option(form.DummyValue, '_tls_policy', _('TLS 安全策略'));
 		o.depends('enabled', '1');
+		o.rawhtml = true;
+		o.cfgvalue = function() {
+			return E('p', { 'class': 'lede-remote-pane-hint', 'style': 'margin:0' },
+				_('连接中心 frps 必须校验证书：请先导入中心 CA，否则无法建立隧道（不允许跳过校验）。'));
+		};
+
+		o = s.option(form.Value, 'portal_port', _('中心门户 HTTPS 端口'),
+			_('用于从中心下载 CA，默认 18443。'));
+		o.datatype = 'port';
+		o.default = '18443';
+		o.rmempty = true;
+		o.depends('enabled', '1');
+
+		o = s.option(form.DummyValue, '_ca_state', _('中心 CA'));
+		o.depends('enabled', '1');
+		o.cfgvalue = function() {
+			if (st.ca_installed)
+				return E('span', { 'style': 'color:#16a34a;font-weight:600' }, _('已导入，可连接中心'));
+			return E('span', { 'class': 'lede-remote-frpc-state--down' }, _('未导入 — 无法连接，请先点击下方按钮'));
+		};
+
+		o = s.option(form.Button, '_import_ca', ' ');
+		o.inputtitle = _('从中心下载并导入 CA');
+		o.inputstyle = 'apply';
+		o.depends('enabled', '1');
+		o.onclick = function() {
+			return fs.exec('/usr/libexec/lede-center-frpc', ['import-ca']).then(function(res) {
+				var out = parseJsonStatus(res, { ok: false, error: _('导入失败') });
+				if (out.ok) {
+					ui.addNotification(null, E('p', {},
+						_('CA 已保存至 ') + (out.path || '/etc/lede-center/frps-ca.crt') +
+						_('。若 frpc 已启用将自动重启。')), 'info');
+					st.ca_installed = 1;
+					return viewRef.mapCenter.render();
+				}
+				ui.addNotification(null, E('p', {}, out.error || _('导入失败')), 'danger');
+			});
+		};
 
 		var ts = m.section(form.GridSection, 'tunnel', _('内网 TCP 隧道'),
 			_('将门店 LAN 内 TCP 服务映射到中心 frps 端口。保存并应用时会写入 frpc 配置，并在本机防火墙放行「网关 → 内网 IP:端口」（不在本机 WAN 开放中心端口）。从公网访问须在公网入口 LEDE 将 TCP 转发至 192.168.6.251:同端口，或经 VPN/内网直连中心。'));

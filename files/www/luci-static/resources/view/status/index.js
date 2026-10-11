@@ -1139,9 +1139,6 @@ return view.extend({
 			this.layoutLock = src.lock === '1' || src.lock === true;
 			const n = Number(src.topn);
 			this._topN = (n >= 1 && n <= CLI_TOPN_MAX) ? Math.floor(n) : TOPO_DEFAULT_TOPN;
-			this.migrateLanFlowDir();
-			this.migrateGwSwSize();
-			this.migrateWanSumLayout();
 			this.writeLayoutLocal();
 			return;
 		}
@@ -1157,9 +1154,6 @@ return view.extend({
 		} catch (e) {}
 		if (hadLocal)
 			this.schedulePersist();
-		this.migrateLanFlowDir();
-		this.migrateGwSwSize();
-		this.migrateWanSumLayout();
 	},
 
 	loadPos() {

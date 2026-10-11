@@ -2,6 +2,7 @@
 """Local admin API for portal site registry (127.0.0.1 only)."""
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -20,6 +21,8 @@ SITES_PATH = Path("/var/www/center-portal/sites.json")
 SYNC_CMD = Path("/opt/center-portal/center-portal-sync.sh")
 TOKEN_FILE = Path("/etc/frp/frps.token")
 FRPS_TOML = Path("/etc/frp/frps.toml")
+CA_ROOT_CRT = Path("/etc/lede-center-ca/root-ca.crt")
+CA_PUB_CRT = Path("/var/www/center-portal/ca/root-ca.crt")
 ID_RE = re.compile(r"^[a-zA-Z0-9_-]{2,32}$")
 DEFAULT_SERVER = "center.123.gd.cn"
 DEFAULT_FRPS_PORT = 18007
@@ -550,6 +553,24 @@ def read_frp_token() -> str:
     return ""
 
 
+def read_ca_bootstrap(pub: str, pub_port: str) -> dict[str, Any]:
+    path = CA_ROOT_CRT if CA_ROOT_CRT.is_file() else CA_PUB_CRT
+    if not path.is_file():
+        return {
+            "ca_available": False,
+            "ca_cert_url": "",
+            "ca_cert_sha256": "",
+        }
+    raw = path.read_bytes()
+    digest = hashlib.sha256(raw).hexdigest()
+    return {
+        "ca_available": True,
+        "ca_cert_url": f"https://{pub}:{pub_port}/home/ca/root-ca.crt",
+        "ca_cert_sha256": digest,
+        "ca_gateway_path": "/etc/lede-center/frps-ca.crt",
+    }
+
+
 def read_bootstrap() -> dict[str, Any]:
     token = read_frp_token()
     if not token:
@@ -565,6 +586,7 @@ def read_bootstrap() -> dict[str, Any]:
         "tunnel_port_min": TUNNEL_PORT_MIN,
         "tunnel_port_max": TUNNEL_PORT_MAX,
         "reserved_center_ports": sorted(RESERVED_CENTER_PORTS),
+        **read_ca_bootstrap(pub, pub_port),
     }
 
 

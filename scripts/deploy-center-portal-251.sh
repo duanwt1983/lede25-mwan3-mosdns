@@ -44,13 +44,26 @@ rsync -e "$RSYNC_SSH" --archive \
   "$PORTAL/scripts/center-portal-gw-rewrite.lua" \
   "$PORTAL/scripts/center-portal-gw-handler.lua" \
   "$PORTAL/scripts/center-portal-frp-firewall.sh" \
+  "$PORTAL/scripts/center-portal-upgrade-frps.sh" \
+  "$PORTAL/scripts/center-portal-ensure-frps-dashboard.sh" \
+  "$PORTAL/config/frps.toml.example" \
+  "$PORTAL/scripts/center-portal-ca-init.sh" \
+  "$PORTAL/scripts/center-portal-ca-apply-frps.sh" \
   "${TARGET}:/tmp/center-portal-deploy/"
 
-"${RUN[@]}" "$TARGET" 'bash -s' <<'REMOTE'
+CENTER_NAME_FOR_DEPLOY="${CENTER_SERVER_NAME:-center.123.gd.cn}"
+"${RUN[@]}" "$TARGET" "bash -s" <<REMOTE
 set -euo pipefail
 mkdir -p /opt/center-portal /etc/nginx/lua /var/www/center-portal/api
 install -m 0755 /tmp/center-portal-deploy/center-portal-status.sh /opt/center-portal/
 install -m 0755 /tmp/center-portal-deploy/center-portal-frp-firewall.sh /opt/center-portal/
+install -m 0755 /tmp/center-portal-deploy/center-portal-upgrade-frps.sh /opt/center-portal/
+install -m 0755 /tmp/center-portal-deploy/center-portal-ensure-frps-dashboard.sh /opt/center-portal/
+install -m 0644 /tmp/center-portal-deploy/frps.toml.example /opt/center-portal/frps.toml.example
+install -m 0755 /tmp/center-portal-deploy/center-portal-ca-init.sh /opt/center-portal/
+install -m 0755 /tmp/center-portal-deploy/center-portal-ca-apply-frps.sh /opt/center-portal/
+ln -sf /opt/center-portal/center-portal-upgrade-frps.sh /usr/local/bin/center-portal-upgrade-frps
+ln -sf /opt/center-portal/center-portal-ca-init.sh /usr/local/bin/center-portal-ca-init
 install -m 0755 /tmp/center-portal-deploy/center-portal-sync.sh /opt/center-portal/
 install -m 0755 /tmp/center-portal-deploy/center-portal-admin.py /opt/center-portal/
 install -m 0644 /tmp/center-portal-deploy/center-portal-auth.lua /etc/nginx/lua/
@@ -66,6 +79,12 @@ systemctl daemon-reload
 systemctl enable center-portal-admin.service
 systemctl restart center-portal-admin.service
 /opt/center-portal/center-portal-frp-firewall.sh || true
+export CENTER_SERVER_NAME="${CENTER_NAME_FOR_DEPLOY}"
+/opt/center-portal/center-portal-ca-init.sh || true
+/opt/center-portal/center-portal-ensure-frps-dashboard.sh || true
+if [ "\${UPGRADE_FRPS:-1}" = "1" ]; then
+  /opt/center-portal/center-portal-upgrade-frps.sh || true
+fi
 /opt/center-portal/center-portal-status.sh
 REMOTE
 
@@ -85,6 +104,7 @@ SRC=/tmp/center-portal-deploy/center.example.com.conf
 sed "s/center.example.com/${CENTER_SERVER_NAME}/g" "\$SRC" >"\${SRC}.live"
 install -m 0644 "\${SRC}.live" "\$VHOST"
 rm -f /www/server/panel/vhost/nginx/center.example.com.conf
+nginx -t 2>/dev/null && nginx -s reload 2>/dev/null || /etc/init.d/nginx reload 2>/dev/null || true
 REMOTE
 else
   echo "Skip nginx vhost (仓库模板为 center.example.com；生产请在 center-portal-251.env 设置 CENTER_SERVER_NAME)"
