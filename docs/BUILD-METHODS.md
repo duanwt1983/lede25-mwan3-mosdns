@@ -86,7 +86,7 @@ bash /openwrt-build/overlay/scripts/cleanup-build-host.sh
 
 下文链接中的 `center.example.com` 仅为文档示例；**固件 UCI / frpc 默认中心域名为 `center.123.gd.cn`**（见 `files/etc/config/lede-center`），与线上 Authelia、frps 一致。
 
-固件内置 `lede-center-frpc`（frp **0.71.0**，须与总部 frps 同版本）。LuCI 在 **系统 → 管理权 → 远程管理** 页内选项卡 **区域接入中心**（与本机外网管理并列）。每台网关须先 **导入中心 CA**（LuCI 一键下载或 `/etc/lede-center/frps-ca.crt`），**强制 TLS 校验**，无 CA 则无法生成配置/连接 `center.example.com:18007`。填写 **站点 ID**、**remote_port_luci**（在 6.251 登记）和 **frps token** 后保存并应用；会 `frpc verify` 并同步 frpc 配置。配置保留见 `lib/upgrade/keep.d/lede-center`。
+固件内置 `lede-center-frpc`（frp **0.71.0**，须与总部 frps 同版本）。LuCI 在 **系统 → 管理权 → 远程管理** 页内选项卡 **区域接入中心**（与本机外网管理并列）。每台网关须先 **导入中心 CA**（LuCI 一键下载或 `/etc/lede-center/frps-ca.crt`），**强制 TLS 校验**，无 CA 则无法生成配置/连接 `center.example.com:18007`。填写 **站点 ID**、**remote_port_luci**（在 6.251 登记）和 **frps token** 后保存并应用；会 `frpc verify` 并同步 frpc 配置。「保留配置」升级时保留 UCI 与 **`/etc/lede-center/frps-ca.crt`**（`lib/upgrade/keep.d/lede-center`、`/etc/sysupgrade.conf` 中的 `/etc/lede-center/`）。
 
 ### 总部中心门户（6.251）
 

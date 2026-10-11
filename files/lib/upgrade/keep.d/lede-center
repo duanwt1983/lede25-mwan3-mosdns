@@ -1,1 +1,4 @@
+# Regional center: UCI + on-disk CA (not under /etc/config/).
 /etc/config/lede-center
+/etc/lede-center/
+/etc/lede-center/frps-ca.crt

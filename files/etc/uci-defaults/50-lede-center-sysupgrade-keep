@@ -1,0 +1,15 @@
+#!/bin/sh
+# Keep center CA on「保留配置」sysupgrade (see lib/upgrade/keep.d/lede-center).
+CONF=/etc/sysupgrade.conf
+MARK=/etc/lede-center/.sysupgrade-keep-applied
+PATTERN='/etc/lede-center/'
+
+[ -f "$MARK" ] && exit 0
+
+mkdir -p /etc/lede-center
+touch "$CONF" 2>/dev/null || true
+if ! grep -qF "$PATTERN" "$CONF" 2>/dev/null; then
+	printf '%s\n' "$PATTERN" >>"$CONF"
+fi
+touch "$MARK"
+exit 0
