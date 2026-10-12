@@ -14,8 +14,14 @@
     return (m && m.content) ? m.content.trim() : 'center.123.gd.cn';
   }
 
+  function readCenterLanHost() {
+    var m = document.querySelector('meta[name="portal-center-lan-host"]');
+    return (m && m.content) ? m.content.trim() : '';
+  }
+
   /** 内网隧道 / 登记页访问链接（业务域名，勿与 bootstrap 混用） */
   var tunnelHost = readCenterHost();
+  var tunnelLanHost = readCenterLanHost();
   /** 复制到网关 frpc 的中心地址 */
   var frpcServer = readCenterHost();
   var tunnelPortMin = 19100;
@@ -108,8 +114,16 @@
     });
   }
 
+  function tunnelAccessHost() {
+    if (tunnelLanHost) return tunnelLanHost;
+    var pageHost = window.location.hostname || '';
+    if (/^\d{1,3}(\.\d{1,3}){3}$/.test(pageHost) || /:/.test(pageHost)) return pageHost;
+    return tunnelHost;
+  }
+
   function tunnelAccessUrl(port, https) {
-    return (https ? 'https' : 'http') + '://' + tunnelHost + ':' + port + '/';
+    var host = tunnelAccessHost();
+    return (https ? 'https' : 'http') + '://' + host + ':' + port + '/';
   }
 
   function copyText(text) {
@@ -270,7 +284,8 @@
         if (mode === 'https' || mode === 'both') {
           links += '<a class="btn-sm link-btn" href="' + escAttr(httpsUrl) + '" target="_blank" rel="noopener">HTTPS</a> ';
         }
-        links += '<button type="button" class="btn-sm" data-copy-url="' + escAttr(mode === 'https' ? httpsUrl : httpUrl) + '">复制链接</button>';
+        var copyUrl = mode === 'https' ? httpsUrl : httpUrl;
+        links += '<button type="button" class="btn-sm" data-copy-url="' + escAttr(copyUrl) + '">复制链接</button>';
       }
       var live = frpTunnelTarget(site.id, t.name);
       var memo = t.local || '—';

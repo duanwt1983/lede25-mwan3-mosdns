@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="portal-base" content="/home/">
   <meta name="portal-center-host" content="center.123.gd.cn">
+  <meta name="portal-center-lan-host" content="192.168.6.251">
   <title>区域接入中心</title>
   <link rel="stylesheet" href="assets/style.css?v=20261007ui1">
 </head>
@@ -141,10 +142,10 @@
         </div>
         <h3>新站接入流程</h3>
         <ol>
-          <li>在门户 <strong>站点登记</strong> 页添加站点 ID 与中心端口（自动同步 Nginx）。</li>
           <li>公网入口 LEDE 将 WAN <strong>18443</strong>、<strong>18007</strong> 转发至 192.168.6.251。</li>
-          <li>刷 9.1 固件后打开 <strong>系统 → 管理权 → 远程管理 → 区域接入中心</strong>：中心地址 <code>center.example.com</code>、端口 <code>18007</code>、<strong>Token 在「站点登记」页顶部复制</strong>，并填本页登记的站点 ID 与 LuCI 端口；<strong>不要</strong>同时开启「本机外网管理」10443。</li>
-          <li>保存并应用后，本页站点卡片应显示「隧道在线」，点击「打开 LuCI」经 <code>/home/gw/&lt;site_id&gt;/</code> 访问（无需单独开放 190xx 到公网）。</li>
+          <li>门店网关打开 <strong>系统 → 远程管理 → 区域接入中心</strong>：导入中心 CA，填写 <strong>站点 ID</strong>、<strong>frps Token</strong>（与站点登记页顶部一致）、LuCI/SSH 中心端口；内网 TCP 隧道在网关添加即可。</li>
+          <li><strong>保存并应用</strong> 后网关会用 CA + Token 自动向中心登记站点与隧道（一般无需在「站点登记」重复录入）。</li>
+          <li>本页应显示「隧道在线」；LuCI 经 <code>/home/gw/&lt;site_id&gt;/</code> 打开（无需单独开放 190xx 到公网）。</li>
         </ol>
 
         <h3>LuCI 访问方式</h3>
@@ -155,27 +156,21 @@
         <pre>https://center.example.com:&lt;luci_port&gt;/</pre>
 
         <h3>内网隧道访问</h3>
-        <p>隧道是 <strong>TCP 直通</strong>（不是 LuCI 的 18443 反代）。须同时满足：</p>
-        <ol>
-          <li><strong>9.1 网关</strong>「内网 TCP 隧道」：内网 IP = 门店设备（如 <code>192.168.9.100</code>），内网端口 = 设备真实端口；<strong>勿填 6.251 / 127.0.0.1</strong>（否则会 400/宝塔页）。保存并应用。</li>
-          <li><strong>中心机内网</strong>可测：<code>http://192.168.6.251:&lt;中心端口&gt;/</code>（应看到门店设备，不是中心 Nginx）。</li>
-          <li><strong>外网/手机</strong>：在公网入口 LEDE 增加 <code>WAN:&lt;中心端口&gt; → 192.168.6.251:&lt;同端口&gt;</code>（仅 18443 不够）。</li>
-        </ol>
-        <pre>http://center.example.com:&lt;隧道中心端口&gt;/</pre>
-        <p>内网是 HTTPS（443）时在登记「内网备忘」写 <code>IP:443</code>，用门户上的 HTTPS 按钮；非 Web 服务用客户端连 <code>center.example.com:端口</code>。</p>
+        <p>隧道是 <strong>TCP 直通</strong>（不是 LuCI 的 18443 反代）。在网关「内网 TCP 隧道」填门店 LAN 设备 IP/端口（勿填 6.251 / 127.0.0.1），保存并应用。</p>
+        <p>门户上的访问链接指向<strong>中心机 LAN 地址</strong>（见页头 <code>portal-center-lan-host</code>，如 <code>192.168.6.251:&lt;中心端口&gt;</code>），需与中心同网段或 VPN 可达。备忘含 <code>:443</code> 时用 HTTPS 按钮。</p>
 
         <h3>frpc 代理命名</h3>
         <p>固件自动创建 <code>&lt;site_id&gt;-luci</code>、可选 <code>&lt;site_id&gt;-ssh</code>，以及在「内网 TCP 隧道」中登记的 <code>&lt;site_id&gt;-&lt;代理名&gt;</code>。门户据此显示 LuCI / 内网隧道在线状态。</p>
 
         <h3>维护（一般无需 SSH）</h3>
-        <p>站点增删改均在「站点登记」完成。若需排查，在 6.251 上可执行 <code>center-portal-status</code>、<code>center-portal-upgrade-frps.sh</code>（升级 frps）、<code>systemctl status center-portal-admin frps authelia</code>。</p>
+        <p>「站点登记」用于查看/微调自动同步的站点，或预分配端口；网关 <code>apply</code> 会覆盖该站的 LuCI/SSH/内网隧道列表。排查：<code>center-portal-status</code>、<code>systemctl status center-portal-admin frps</code>。</p>
       </div>
     </dialog>
 
     <p class="foot">区域接入中心 · Authelia 保护 · frp 0.71.0</p>
   </div>
-  <script src="assets/app.js?v=20261011phase1"></script>
-  <script src="assets/admin.js?v=20261011ca1"></script>
+  <script src="assets/app.js?v=20261012card-tunnel"></script>
+  <script src="assets/admin.js?v=20261012tunnel-one"></script>
   <script src="assets/account.js?v=20261007ui1"></script>
   <script>document.addEventListener('DOMContentLoaded', function () {
     if (window.initPortalAdmin) window.initPortalAdmin();

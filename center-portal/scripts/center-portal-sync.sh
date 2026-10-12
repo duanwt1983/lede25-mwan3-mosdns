@@ -69,11 +69,20 @@ location ^~ /home/gw/ {
     proxy_redirect ~^/(.*)$ https://$http_host$gw_pub_prefix$1;
     proxy_buffering on;
     sub_filter_once off;
-    sub_filter_types text/html text/css application/javascript application/json;
+    # 勿对 application/json 做 sub_filter（LuCI admin/ubus 为 JSON，改写会导致 No related RPC reply）
+    sub_filter_types text/html text/css application/javascript;
     sub_filter 'href="/luci-static/' 'href="${gw_pub_prefix}luci-static/';
     sub_filter 'src="/luci-static/' 'src="${gw_pub_prefix}luci-static/';
     sub_filter 'action="/cgi-bin/' 'action="${gw_pub_prefix}cgi-bin/';
     sub_filter '"/cgi-bin/' '"${gw_pub_prefix}cgi-bin/';
+    sub_filter "'/cgi-bin/" "'${gw_pub_prefix}cgi-bin/";
+    sub_filter '"/ubus' '"${gw_pub_prefix}ubus';
+    sub_filter "'/ubus" "'${gw_pub_prefix}ubus";
+    sub_filter '+"/ubus' '+"${gw_pub_prefix}ubus';
+    sub_filter 'href="/ttyd/' 'href="${gw_pub_prefix}ttyd/';
+    sub_filter 'src="/ttyd/' 'src="${gw_pub_prefix}ttyd/';
+    sub_filter '"/ttyd/' '"${gw_pub_prefix}ttyd/';
+    sub_filter "'/ttyd/" "'${gw_pub_prefix}ttyd/";
     sub_filter 'href="/"' 'href="${gw_pub_prefix}cgi-bin/luci/"';
     proxy_read_timeout 3600s;
     proxy_send_timeout 3600s;
@@ -96,6 +105,42 @@ location ^~ /cgi-bin/ {
     proxy_set_header Connection "upgrade";
     proxy_redirect ~^https?://[^/]+/(.*)$ https://$http_host$gw_pub_prefix$1;
     proxy_redirect ~^/(.*)$ https://$http_host$gw_pub_prefix$1;
+    proxy_read_timeout 3600s;
+    proxy_send_timeout 3600s;
+}
+
+# LuCI nginx 模式 ubus 在站点根 /ubus（非 /cgi-bin/…），须反代到门店否则 No related RPC reply
+location ^~ /ubus {
+    access_by_lua_file /etc/nginx/lua/center-portal-gw-proxy.lua;
+    proxy_pass https://127.0.0.1:$gw_port$request_uri;
+    proxy_connect_timeout 10s;
+    proxy_intercept_errors on;
+    error_page 502 504 =503 @center_gw_offline;
+    proxy_ssl_verify off;
+    proxy_http_version 1.1;
+    proxy_set_header Host $gw_host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_read_timeout 3600s;
+    proxy_send_timeout 3600s;
+}
+
+# ttyd WebSocket（LuCI 终端 iframe 走 /ttyd/，须带 center_gw cookie）
+location ^~ /ttyd/ {
+    access_by_lua_file /etc/nginx/lua/center-portal-gw-proxy.lua;
+    proxy_pass https://127.0.0.1:$gw_port$request_uri;
+    proxy_connect_timeout 10s;
+    proxy_intercept_errors on;
+    error_page 502 504 =503 @center_gw_offline;
+    proxy_ssl_verify off;
+    proxy_http_version 1.1;
+    proxy_set_header Host $gw_host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
     proxy_read_timeout 3600s;
     proxy_send_timeout 3600s;
 }

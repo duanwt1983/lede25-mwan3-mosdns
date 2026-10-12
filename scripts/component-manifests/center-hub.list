@@ -1,0 +1,9 @@
+# 区域接入中心：网关自动向中心登记站点与内网隧道（CA + frps Token）
+etc/nginx/conf.d/20-lede-ttyd.locations
+usr/libexec/lede-component-apply
+usr/libexec/rpcd/lede-component
+usr/share/rpcd/acl.d/zzz-lede-flash-acl.json
+www/luci-static/resources/view/system/flash.js
+usr/libexec/lede-center-frpc
+usr/share/ucode/lede-center-portal.uc
+www/luci-static/resources/view/system/remote-v2.js

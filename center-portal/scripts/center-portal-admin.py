@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import re
+import secrets
 import shutil
 import subprocess
 import sys
@@ -200,6 +201,81 @@ def validate_registry(data: dict[str, Any]) -> dict[str, Any]:
         sites.append(site)
 
     return {"version": int(data.get("version") or 1), "sites": sites}
+
+
+def gateway_token_from_headers(headers: Any) -> str:
+    auth = str(headers.get("Authorization") or "").strip()
+    if auth.lower().startswith("bearer "):
+        return auth[7:].strip()
+    return str(headers.get("X-Lede-Token") or "").strip()
+
+
+def verify_gateway_token(headers: Any) -> None:
+    supplied = gateway_token_from_headers(headers)
+    expected = read_frp_token()
+    if not expected:
+        raise ValueError("中心未配置 frps Token")
+    if not supplied or not secrets.compare_digest(supplied, expected):
+        raise PermissionError("frps Token 无效")
+
+
+def upsert_gateway_register(payload: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise ValueError("body must be an object")
+    sid = str(payload.get("site_id") or payload.get("id") or "").strip()
+    if not ID_RE.match(sid):
+        raise ValueError(f"站点 ID 无效: {sid!r}")
+
+    reg = read_registry()
+    sites_in = reg.get("sites") or []
+    existing = next((s for s in sites_in if s.get("id") == sid), None)
+    others = [s for s in sites_in if s.get("id") != sid]
+
+    name = str(payload.get("name") or "").strip()
+    if not name:
+        name = str((existing or {}).get("name") or sid).strip()
+    if not name:
+        name = sid
+
+    try:
+        luci_port = int(payload.get("luci_port"))
+    except (TypeError, ValueError) as e:
+        raise ValueError("luci_port 无效") from e
+
+    ssh_raw = payload.get("ssh_port", 0)
+    try:
+        ssh_port = int(ssh_raw) if ssh_raw not in (None, "") else 0
+    except (TypeError, ValueError) as e:
+        raise ValueError("ssh_port 无效") from e
+
+    site: dict[str, Any] = {
+        "id": sid,
+        "name": name,
+        "region": str(payload.get("region") or (existing or {}).get("region") or "").strip(),
+        "luci_port": luci_port,
+        "ssh_port": ssh_port,
+        "tags": list((existing or {}).get("tags") or []),
+    }
+    luci_host = str(payload.get("luci_host") or "").strip()
+    if luci_host:
+        site["luci_host"] = luci_host
+    elif existing and existing.get("luci_host"):
+        site["luci_host"] = existing["luci_host"]
+    if existing and existing.get("note"):
+        site["note"] = existing["note"]
+
+    tunnels_in = payload.get("tunnels")
+    if tunnels_in is None:
+        tunnels_in = (existing or {}).get("tunnels") or []
+    if not isinstance(tunnels_in, list):
+        raise ValueError("tunnels 须为数组")
+    site["tunnels"] = tunnels_in
+
+    merged_sites = others + [site]
+    reg_out = validate_registry({"version": int(reg.get("version") or 1), "sites": merged_sites})
+    write_registry(reg_out)
+    run_sync()
+    return reg_out
 
 
 def write_registry(data: dict[str, Any]) -> None:
@@ -758,6 +834,27 @@ class Handler(BaseHTTPRequestHandler):
             except (TypeError, ValueError):
                 body = b""
             self._proxy_authelia("POST", api_path, body or None)
+            return
+        if self.path.rstrip("/") == "/gateway/register":
+            try:
+                verify_gateway_token(self.headers)
+                body = self._read_json()
+                if not isinstance(body, dict):
+                    raise ValueError("invalid body")
+                reg = upsert_gateway_register(body)
+                site_id = str(body.get("site_id") or body.get("id") or "")
+                self._json(
+                    200,
+                    {"ok": True, "site_id": site_id, "registry_version": reg.get("version", 1)},
+                )
+            except PermissionError as e:
+                self._json(403, {"ok": False, "error": str(e)})
+            except ValueError as e:
+                self._json(400, {"ok": False, "error": str(e)})
+            except RuntimeError as e:
+                self._json(500, {"ok": False, "error": "nginx sync failed", "detail": str(e)})
+            except Exception as e:
+                self._json(500, {"ok": False, "error": str(e)})
             return
         self._json(404, {"ok": False, "error": "not found"})
 

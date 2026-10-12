@@ -7,6 +7,8 @@
 				"/dev/mtdblock[0-9]*": [ "read" ],
 				"/etc/sysupgrade.conf": [ "read" ],
 				"/etc/lede-component-state.json": [ "read" ],
+				"/tmp/lede-component-state.json": [ "read" ],
+				"/tmp/lede-component-upload.tar.gz": [ "read" ],
 				"/lib/upgrade/platform.sh": [ "list" ],
 				"/proc/[0-9]*/mounts": [ "read" ],
 				"/proc/mounts": [ "read" ],
@@ -83,6 +85,8 @@
 				"/etc/openwrt_release": [ "read" ],
 				"/tmp/lede-overlay.tar.gz": [ "write", "read" ],
 				"/tmp/lede-component-dl.tar.gz": [ "write", "read" ],
+				"/tmp/lede-component-upload.tar.gz": [ "write", "read" ],
+				"/tmp/lede-component-state.json": [ "write", "read" ],
 				"/data": [ "list" ],
 				"/data/*": [ "read", "write", "list" ]
 			},

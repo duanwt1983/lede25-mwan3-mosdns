@@ -13,11 +13,13 @@ EOF
 	call)
 		case "$2" in
 			status)
-				if [ -f /etc/lede-component-state.json ]; then
-					cat /etc/lede-component-state.json
-				else
-					echo '{"ok":true,"version":"","pack_id":"","applied_at":""}'
-				fi
+				for stf in /etc/lede-component-state.json /tmp/lede-component-state.json; do
+					if [ -f "$stf" ]; then
+						cat "$stf"
+						exit 0
+					fi
+				done
+				echo '{"ok":true,"running":false,"version":"","pack_id":"","applied_at":""}'
 				;;
 			apply_url)
 				read -r input
@@ -40,7 +42,7 @@ EOF
 				read -r input
 				path=$(printf '%s' "$input" | jsonfilter -e '@.path' 2>/dev/null)
 				[ -n "$path" ] || path=$(printf '%s' "$input" | sed -n 's/.*"path"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
-				[ -n "$path" ] || path="/tmp/lede-overlay.tar.gz"
+				[ -n "$path" ] || path="/tmp/lede-component-upload.tar.gz"
 				[ -f "$path" ] || { echo '{"ok":false,"error":"file not found"}'; exit 0; }
 				LOCK=/tmp/lede-component-apply.lock
 				if [ -f "$LOCK" ]; then
@@ -50,6 +52,7 @@ EOF
 						exit 0
 					fi
 				fi
+				# 必须快速返回：经中心 /home/gw/ 隧道时 ubus 长时间阻塞会触发 LuCI「No related RPC reply」
 				( /usr/libexec/lede-component-apply file "$path"; rm -f "$LOCK" ) >>/tmp/lede-component-apply.log 2>&1 &
 				echo $! > "$LOCK"
 				echo '{"ok":true,"started":true}'

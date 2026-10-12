@@ -215,10 +215,21 @@ return view.extend({
 		o.default = '0';
 
 		o = s.option(form.Value, 'site_id', _('站点 ID'),
-			_('全局唯一，仅字母、数字、下划线、连字符；用于 frp 代理名。'));
+			_('全局唯一，仅字母、数字、下划线、连字符；用于 frp 代理名。保存并应用后会自动登记到区域接入中心。'));
 		o.datatype = 'rangelength(2,32)';
 		o.rmempty = true;
 		o.placeholder = 'shop-gz-01';
+		o.depends('enabled', '1');
+
+		o = s.option(form.Value, 'display_name', _('站点名称'),
+			_('门户卡片显示名；留空则使用本机主机名。'));
+		o.rmempty = true;
+		o.placeholder = '晋城门店';
+		o.depends('enabled', '1');
+
+		o = s.option(form.Value, 'region', _('区域/备注'));
+		o.rmempty = true;
+		o.placeholder = '晋城';
 		o.depends('enabled', '1');
 
 		o = s.option(form.Value, 'server', _('中心地址'));
@@ -264,9 +275,16 @@ return view.extend({
 		};
 
 		o = s.option(form.Value, 'portal_port', _('中心门户 HTTPS 端口'),
-			_('用于从中心下载 CA，默认 18443。'));
+			_('用于从中心下载 CA 与门户登记，默认 18443。'));
 		o.datatype = 'port';
 		o.default = '18443';
+		o.rmempty = true;
+		o.depends('enabled', '1');
+
+		o = s.option(form.Value, 'portal_lan_host', _('中心门户内网 IP（可选）'),
+			_('门店 WAN 未放行 18443 时，若本机能路由到中心内网（如 192.168.6.251），填此项可走内网拉 CA/登记；域名仍用上方「中心地址」校验证书。'));
+		o.datatype = 'ipaddr';
+		o.placeholder = '192.168.6.251';
 		o.rmempty = true;
 		o.depends('enabled', '1');
 
@@ -297,7 +315,7 @@ return view.extend({
 		};
 
 		var ts = m.section(form.GridSection, 'tunnel', _('内网 TCP 隧道'),
-			_('将门店 LAN 内 TCP 服务映射到中心 frps 端口。保存并应用时会写入 frpc 配置，并在本机防火墙放行「网关 → 内网 IP:端口」（不在本机 WAN 开放中心端口）。从公网访问须在公网入口 LEDE 将 TCP 转发至 192.168.6.251:同端口，或经 VPN/内网直连中心。'));
+			_('将门店 LAN 内 TCP 服务映射到中心 frps 端口；保存并应用时会同步到区域接入中心站点登记（无需在中心重复添加）。本机防火墙放行「网关 → 内网 IP:端口」。公网访问须在入口 LEDE 将 TCP 转发至 192.168.6.251:同端口。'));
 		ts.addremove = true;
 		ts.anonymous = true;
 		ts.nodescriptions = true;

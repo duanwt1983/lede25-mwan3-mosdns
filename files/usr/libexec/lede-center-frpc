@@ -19,6 +19,21 @@ default_ca_file() {
 	return 1
 }
 
+# When WAN DNS hits an unreachable public IP, connect to portal_lan_host but keep TLS SNI = server.
+portal_curl_resolve() {
+	local server pport lan
+	server="$1"
+	pport="$2"
+	lan=$(uci_get portal_lan_host)
+	[ -n "$lan" ] || return 0
+	case "$lan" in
+	*[!0-9.a-fA-F:]*)
+		return 0
+		;;
+	esac
+	printf '%s' "--resolve ${server}:${pport}:${lan}"
+}
+
 valid_site_id() {
 	case "$1" in
 	''|*[!a-zA-Z0-9_-]*)
@@ -130,7 +145,7 @@ EOF
 [[proxies]]
 name = "${site}-ssh"
 type = "tcp"
-localIP = "127.0.0.1"
+localIP = "$lip"
 localPort = 22
 remotePort = $rpssh
 EOF
@@ -315,6 +330,46 @@ status_json() {
 		"$STATUS_TUNNELS_JSON"
 }
 
+register_portal() {
+	local server pport token url body resp
+	[ "$(uci_get enabled)" = "1" ] || return 0
+	uci_config_valid || return 0
+	token=$(uci_get token)
+	[ -n "$token" ] || return 0
+	# Portal HTTPS (18443) may use panel self-signed cert; frps CA is for frpc only (see import_ca -k).
+	server=$(uci_get server)
+	[ -n "$server" ] || server=center.123.gd.cn
+	pport=$(uci_get portal_port)
+	[ -n "$pport" ] || pport=18443
+	body=$(ucode -e "import { register_payload } from '/usr/share/ucode/lede-center-portal.uc'; print(sprintf('%J', register_payload()));" 2>/dev/null) || {
+		echo "portal register: build payload failed" >&2
+		return 0
+	}
+	url="https://${server}:${pport}/home/api/gateway/register"
+	resolve=$(portal_curl_resolve "$server" "$pport")
+	resp=""
+	rc=0
+	# shellcheck disable=SC2086
+	resp=$(curl -sfk --max-time 25 $resolve \
+		-H "Content-Type: application/json; charset=utf-8" \
+		-H "Authorization: Bearer ${token}" \
+		-d "$body" "$url" 2>&1) || rc=$?
+	if [ "$rc" -ne 0 ]; then
+		if [ -z "$resp" ]; then
+			resp="curl exit ${rc} (无法访问 ${url}，请检查门店 WAN、DNS、18443 放行及 CA/Token)"
+		fi
+		echo "portal register failed: $resp" >&2
+		return 0
+	fi
+	case "$resp" in
+	*"\"ok\":true"*|*'"ok": true'*)
+		echo "portal register ok: $(uci_get site_id)" >&2
+		;;
+	*) echo "portal register: $resp" >&2 ;;
+	esac
+	return 0
+}
+
 import_ca() {
 	local server pport url tmp sha
 	server=$(uci_get server)
@@ -322,11 +377,13 @@ import_ca() {
 	pport=$(uci_get portal_port)
 	[ -n "$pport" ] || pport=18443
 	url="https://${server}:${pport}/home/ca/root-ca.crt"
+	resolve=$(portal_curl_resolve "$server" "$pport")
 	mkdir -p /etc/lede-center
 	tmp="${CA_STORE}.tmp.$$"
-	if ! curl -sfk --max-time 30 -o "$tmp" "$url"; then
+	# shellcheck disable=SC2086
+	if ! curl -sfk --max-time 30 $resolve -o "$tmp" "$url"; then
 		rm -f "$tmp"
-		printf '{"ok":false,"error":"无法从中心下载 CA（%s），请检查 WAN/18443 或中心地址"}\n' "$url"
+		printf '{"ok":false,"error":"无法从中心下载 CA（%s）。公网入口 LEDE 须转发 WAN:18443→192.168.6.251:18443；若门店能访问中心内网，可在 LuCI 填写「中心门户内网 IP」如 192.168.6.251 后重试"}\n' "$url"
 		return 1
 	fi
 	if ! openssl x509 -in "$tmp" -noout -subject >/dev/null 2>&1; then
@@ -350,7 +407,11 @@ import-ca)
 	if [ "$(uci_get enabled)" = "1" ] && uci_config_valid; then
 		write_config || exit 1
 		/etc/init.d/lede-center-frpc restart 2>/dev/null || true
+		register_portal
 	fi
+	;;
+register-portal)
+	register_portal
 	;;
 write-config)
 	write_config
@@ -379,6 +440,7 @@ apply)
 			echo "frpc failed to start; see logread | grep frpc" >&2
 			exit 1
 		}
+		register_portal
 	fi
 	;;
 restart)
@@ -394,12 +456,13 @@ restart)
 		echo "frpc failed to start; see logread | grep frpc" >&2
 		exit 1
 	}
+	register_portal
 	;;
 status|ensure)
 	status_json
 	;;
 *)
-	echo "usage: $0 {write-config|apply|restart|ensure|status|import-ca}" >&2
+	echo "usage: $0 {write-config|apply|restart|ensure|status|import-ca|register-portal}" >&2
 	exit 1
 	;;
 esac

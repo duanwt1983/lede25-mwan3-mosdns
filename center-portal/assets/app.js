@@ -8,11 +8,29 @@
     return (m && m.content) ? m.content.trim() : 'center.123.gd.cn';
   }
 
+  function readCenterLanHost() {
+    var m = document.querySelector('meta[name="portal-center-lan-host"]');
+    return (m && m.content) ? m.content.trim() : '';
+  }
+
   var PORTAL_HOST = readCenterHost();
   var PORTAL_HTTPS_PORT = '18443';
 
-  function tunnelPublicUrl(port, https) {
-    return (https ? 'https' : 'http') + '://' + PORTAL_HOST + ':' + port + '/';
+  function tunnelSchemeUrl(host, port, https) {
+    return (https ? 'https' : 'http') + '://' + host + ':' + port + '/';
+  }
+
+  /** TCP 隧道 HTTP(S) 链接：走中心机 LAN IP（meta 或当前门户 hostname），不单列公网域名链接。 */
+  function tunnelAccessHost() {
+    var lan = readCenterLanHost();
+    if (lan) return lan;
+    var pageHost = window.location.hostname || '';
+    if (/^\d{1,3}(\.\d{1,3}){3}$/.test(pageHost) || /:/.test(pageHost)) return pageHost;
+    return PORTAL_HOST;
+  }
+
+  function tunnelAccessUrl(port, https) {
+    return tunnelSchemeUrl(tunnelAccessHost(), port, https);
   }
 
   function portalEntryUrl() {
@@ -178,13 +196,15 @@
       var tunnelHtml = (site.tunnels || []).map(function (t) {
         var pname = site.id + '-' + t.name;
         var ton = proxyNamedOnline(status, pname);
-        var label = escapeHtml(t.remark || t.name) + ' · ' + t.port;
+        var label = escapeHtml(t.remark || t.name || '');
         var local = String(t.local || '');
         var useHttps = /:443\b/.test(local) || local.endsWith(':443');
-        var href = tunnelPublicUrl(t.port, useHttps);
-        return '<span class="tunnel-chip ' + (ton ? 'on' : 'off') + '">' +
-          (ton ? '<a href="' + href + '" target="_blank" rel="noopener">' + label + '</a>' : label) +
-          '</span>';
+        var href = tunnelAccessUrl(t.port, useHttps);
+        var linkHtml = label;
+        if (ton) {
+          linkHtml = '<a href="' + href + '" target="_blank" rel="noopener">' + label + '</a>';
+        }
+        return '<span class="tunnel-chip ' + (ton ? 'on' : 'off') + '">' + linkHtml + '</span>';
       }).join('');
 
       return (
@@ -198,18 +218,10 @@
           (site.note ? '<div class="meta">' + escapeHtml(site.note) + '</div>' : '') +
           '<div class="card-actions">' +
             '<a class="' + (on ? '' : 'disabled') + '" href="' + (on ? gwUrl : '#') + '" target="_blank" rel="noopener">打开 LuCI</a>' +
-            '<a class="secondary" href="#" data-goto-docs="1">接入说明</a>' +
           '</div>' +
         '</article>'
       );
     }).join('');
-
-    grid.querySelectorAll('[data-goto-docs]').forEach(function (a) {
-      a.addEventListener('click', function (ev) {
-        ev.preventDefault();
-        openDocsDialog();
-      });
-    });
   }
 
   function renderPortTable(sites, status) {

@@ -49,6 +49,7 @@ rsync -e "$RSYNC_SSH" --archive \
   "$PORTAL/config/frps.toml.example" \
   "$PORTAL/scripts/center-portal-ca-init.sh" \
   "$PORTAL/scripts/center-portal-ca-apply-frps.sh" \
+  "$PORTAL/scripts/center-portal-ensure-gateway-register-nginx.sh" \
   "${TARGET}:/tmp/center-portal-deploy/"
 
 CENTER_NAME_FOR_DEPLOY="${CENTER_SERVER_NAME:-center.123.gd.cn}"
@@ -65,6 +66,7 @@ install -m 0755 /tmp/center-portal-deploy/center-portal-ca-apply-frps.sh /opt/ce
 ln -sf /opt/center-portal/center-portal-upgrade-frps.sh /usr/local/bin/center-portal-upgrade-frps
 ln -sf /opt/center-portal/center-portal-ca-init.sh /usr/local/bin/center-portal-ca-init
 install -m 0755 /tmp/center-portal-deploy/center-portal-sync.sh /opt/center-portal/
+install -m 0755 /tmp/center-portal-deploy/center-portal-ensure-gateway-register-nginx.sh /opt/center-portal/
 install -m 0755 /tmp/center-portal-deploy/center-portal-admin.py /opt/center-portal/
 install -m 0644 /tmp/center-portal-deploy/center-portal-auth.lua /etc/nginx/lua/
 install -m 0644 /tmp/center-portal-deploy/center-portal-authelia-gate.lua /etc/nginx/lua/
@@ -114,6 +116,7 @@ fi
 set -euo pipefail
 touch /www/server/panel/vhost/nginx/center-portal-gw.inc
 /opt/center-portal/center-portal-sync.sh
+/opt/center-portal/center-portal-ensure-gateway-register-nginx.sh || true
 CRON=/etc/cron.d/center-portal
 if [ ! -f "$CRON" ]; then
   echo '* * * * * root /opt/center-portal/center-portal-status.sh >/dev/null 2>&1' > "$CRON"

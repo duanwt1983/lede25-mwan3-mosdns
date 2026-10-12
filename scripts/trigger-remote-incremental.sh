@@ -21,7 +21,9 @@ SSH_TARGET="$1"
 OVERLAY="$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)"
 REMOTE_DIR="${REMOTE_DIR:-/openwrt-build/overlay}"
 LEDE_WORK="${LEDE_WORK:-/openwrt-build}"
-LOG="$LEDE_WORK/incremental-$(date +%Y%m%d-%H%M%S).log"
+LOG_DIR="$LEDE_WORK/logs"
+LOG="$LOG_DIR/incremental-$(date +%Y%m%d-%H%M%S).log"
+LOG_CURRENT="$LEDE_WORK/incremental-current.log"
 BUILD="${FULL:-0}"
 
 SSH_OPTS=(-o PubkeyAuthentication=no -o PreferredAuthentications=password -o StrictHostKeyChecking=no)
@@ -43,7 +45,7 @@ export LEDE_WORK=${LEDE_WORK}
 export OVERLAY=${REMOTE_DIR}
 export TZ=Asia/Shanghai
 chmod +x "\$OVERLAY/scripts/"*.sh "\$OVERLAY/diy-part"*.sh 2>/dev/null || true
-mkdir -p "\$LEDE_WORK"
+mkdir -p "\$LEDE_WORK" "${LOG_DIR}"
 if [ -f "\$LEDE_WORK/build.pid" ]; then
   old=\$(cat "\$LEDE_WORK/build.pid" 2>/dev/null || true)
   if [ -n "\$old" ] && kill -0 "\$old" 2>/dev/null; then
@@ -55,14 +57,16 @@ if [ -f "\$LEDE_WORK/build.pid" ]; then
 fi
 if [ "${BUILD}" = 1 ] || [ ! -d "\$LEDE_WORK/openwrt/.git" ]; then
   echo "Starting FULL build-offline in background -> ${LOG}.full"
+  ln -sfn "${LOG}.full" "${LOG_CURRENT}.full"
   nohup bash "\$OVERLAY/scripts/build-offline.sh" > "${LOG}.full" 2>&1 &
 else
   echo "Starting INCREMENTAL build in background -> ${LOG}"
+  ln -sfn "${LOG}" "${LOG_CURRENT}"
   nohup bash "\$OVERLAY/scripts/build-incremental.sh" > "${LOG}" 2>&1 &
 fi
 echo \$! > "\$LEDE_WORK/build.pid"
 echo "pid=\$(cat \$LEDE_WORK/build.pid)"
-echo "tail -f ${LOG}   # on build host"
+echo "tail -f ${LOG_CURRENT}   # on build host (symlink to this run)"
 EOF
 )
 
@@ -70,5 +74,5 @@ EOF
 
 echo ""
 echo "Remote build started. On ${SSH_TARGET}:"
-echo "  tail -f ${LOG}"
+echo "  tail -f ${LOG_CURRENT}"
 echo "  ls -lh ${LEDE_WORK}/openwrt/bin/targets/x86/64/   # when done"

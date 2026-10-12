@@ -4,9 +4,23 @@
 #        lede-component-apply url  https://host/path/pack.tar.gz
 set -eu
 
+APPLY_DONE=0
+
 STATE=/etc/lede-component-state.json
 VERS=/etc/lede-component-versions.json
 LOG=/tmp/lede-component-apply.log
+
+pick_state_paths() {
+	if touch "$STATE" 2>/dev/null; then
+		:
+	else
+		STATE=/tmp/lede-component-state.json
+		log "WARN: /etc not writable, using $STATE"
+	fi
+	if ! touch "$VERS" 2>/dev/null; then
+		VERS=/tmp/lede-component-versions.json
+	fi
+}
 ALLOW_PREFIX="
 /usr/libexec/
 /etc/init.d/
@@ -81,6 +95,11 @@ PACK=""
 WORKDIR=""
 
 cleanup() {
+	if [ "$APPLY_DONE" != 1 ] && [ -f "$STATE" ]; then
+		if grep -q '"running"[[:space:]]*:[[:space:]]*true' "$STATE" 2>/dev/null; then
+			write_state false "安装未完成（详见 $LOG）" "" "" 0
+		fi
+	fi
 	[ -n "$WORKDIR" ] && [ -d "$WORKDIR" ] && rm -rf "$WORKDIR"
 }
 trap cleanup EXIT
@@ -106,8 +125,9 @@ case "$MODE" in
 		;;
 esac
 
+pick_state_paths
 write_state false "" "" "" 1
-log "begin apply mode=$MODE src=$SRC"
+log "begin apply mode=$MODE src=$SRC state=$STATE"
 
 extract_pack() {
 	case "$PACK" in
@@ -166,13 +186,24 @@ install_one() {
 }
 
 if grep -q '"files"' "$ROOT/manifest.json" 2>/dev/null; then
-	# paths from manifest: crude parse lines with "path":
-	grep '"path"' "$ROOT/manifest.json" | sed -n 's/.*"path"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | while read -r rel; do
+	# paths from manifest (avoid pipe subshell so set -e / counters behave)
+	_manifest_paths=$(grep '"path"' "$ROOT/manifest.json" | sed -n 's/.*"path"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+	INSTALLED=0
+	while read -r rel; do
 		[ -n "$rel" ] || continue
 		mode=$(grep -F "\"$rel\"" "$ROOT/manifest.json" | sed -n 's/.*"mode"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
 		[ -n "$mode" ] || mode=644
-		install_one "$rel" "$mode" || true
-	done
+		if install_one "$rel" "$mode"; then
+			INSTALLED=$((INSTALLED + 1))
+		fi
+	done <<EOF
+$_manifest_paths
+EOF
+	[ "$INSTALLED" -gt 0 ] || {
+		write_state false "manifest 中无文件被安装（路径不在白名单？先装 lede-component 基础包）" "$PACK_VER" "$PACK_ID" 0
+		echo '{"ok":false,"error":"no files installed"}'
+		exit 1
+	}
 else
 	find "$ROOT" -type f ! -name manifest.json ! -name post-apply.sh | while read -r f; do
 		rel=${f#"$ROOT/"}
@@ -180,19 +211,27 @@ else
 	done
 fi
 
+# Mark success before post-apply (nginx restart etc.) so LuCI poll does not show
+#「安装失败」while the session blips during /etc/init.d/nginx restart.
+APPLY_DONE=1
+write_state true "" "$PACK_VER" "$PACK_ID" 0
+log "OK $PACK_ID $PACK_VER (files installed; post-apply next)"
+
 if [ -x "$ROOT/post-apply.sh" ]; then
 	log "run post-apply.sh"
 	( cd / && sh "$ROOT/post-apply.sh" ) >>"$LOG" 2>&1 || true
 fi
 
-# Merge version record
+# Merge version record (non-fatal — must not block ok state)
 if command -v jsonfilter >/dev/null 2>&1; then
-	[ -f "$VERS" ] || echo '{}' > "$VERS"
-	# append via uci-style simple rewrite
-	printf '{\n  "%s": {"version":"%s","applied_at":"%s"}\n}\n' \
-		"$PACK_ID" "$PACK_VER" "$(date '+%Y-%m-%dT%H:%M:%S')" > "$VERS"
+	[ -f "$VERS" ] || echo '{}' > "$VERS" 2>/dev/null || true
+	if ! printf '{\n  "%s": {"version":"%s","applied_at":"%s"}\n}\n' \
+		"$PACK_ID" "$PACK_VER" "$(date '+%Y-%m-%dT%H:%M:%S')" > "$VERS" 2>>"$LOG"; then
+		log "WARN: could not write $VERS (read-only /etc?)"
+	fi
 else
-	printf '%s %s %s\n' "$PACK_ID" "$PACK_VER" "$(date '+%Y-%m-%dT%H:%M:%S')" >> /etc/lede-component-versions.log
+	printf '%s %s %s\n' "$PACK_ID" "$PACK_VER" "$(date '+%Y-%m-%dT%H:%M:%S')" \
+		>> /etc/lede-component-versions.log 2>>"$LOG" || log "WARN: versions log write failed"
 fi
 
 # Do not restart rpcd here — it drops the active LuCI session during component install.
@@ -208,6 +247,5 @@ fi
 rm -rf /tmp/luci-*cache* 2>/dev/null || true
 [ -x /sbin/luci-clear-cache ] && /sbin/luci-clear-cache 2>/dev/null || true
 
-write_state true "" "$PACK_VER" "$PACK_ID"
-log "OK $PACK_ID $PACK_VER"
+log "post-apply finished $PACK_ID $PACK_VER"
 printf '{"ok":true,"pack_id":"%s","version":"%s"}\n' "$PACK_ID" "$PACK_VER"

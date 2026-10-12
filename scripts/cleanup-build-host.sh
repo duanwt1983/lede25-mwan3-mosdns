@@ -55,15 +55,27 @@ fi
 echo "=== cleanup-build-host LEDE_WORK=$LEDE_WORK ==="
 echo "Before: $(human)"
 
-# Workdir logs (not openwrt)
-if ls "$LEDE_WORK"/incremental-*.log >/dev/null 2>&1; then
-	mapfile -t _logs < <(ls -1t "$LEDE_WORK"/incremental-*.log 2>/dev/null || true)
-	for ((i = KEEP_LOGS; i < ${#_logs[@]}; i++)); do
-		run rm -f "${_logs[$i]}"
-	done
+# Workdir logs (not openwrt); never delete logs/ while a build is running (see top).
+_log_dirs=("$LEDE_WORK/logs")
+[ -d "$LEDE_WORK" ] && _log_dirs+=("$LEDE_WORK")
+for _ld in "${_log_dirs[@]}"; do
+	if ls "$_ld"/incremental-*.log >/dev/null 2>&1; then
+		mapfile -t _logs < <(ls -1t "$_ld"/incremental-*.log 2>/dev/null || true)
+		for ((i = KEEP_LOGS; i < ${#_logs[@]}; i++)); do
+			run rm -f "${_logs[$i]}"
+		done
+	fi
+	run rm -f "$_ld"/incremental-*.log.full 2>/dev/null || true
+done
+run rm -f "$LEDE_WORK"/incremental-*.log "$LEDE_WORK"/incremental-*.log.full 2>/dev/null || true
+if [ -f "$LEDE_WORK/build.pid" ]; then
+	pid=$(cat "$LEDE_WORK/build.pid" 2>/dev/null || true)
+	if [ -n "${pid:-}" ] && kill -0 "$pid" 2>/dev/null; then
+		:
+	else
+		run rm -f "$LEDE_WORK/build.pid" 2>/dev/null || true
+	fi
 fi
-run rm -f "$LEDE_WORK"/incremental-*.log.full 2>/dev/null || true
-run rm -f "$LEDE_WORK/build.pid" 2>/dev/null || true
 
 # Host temp from bandix host-build
 run rm -rf /tmp/bandix-plus-patched-* 2>/dev/null || true
