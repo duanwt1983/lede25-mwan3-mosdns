@@ -169,6 +169,22 @@ export function ncpu() {
 	return n;
 }
 
+/* load_warn UCI = per-CPU threshold; alert when load15 >= load_warn * ncpu(). */
+export function load_per_cpu_warn_default() {
+	return '1.00';
+}
+
+export function load_threshold_total(load_warn) {
+	let per = +load_warn;
+	if (!(per > 0))
+		per = +load_per_cpu_warn_default();
+	return per * ncpu();
+}
+
+export function load_over_threshold(load15v, load_warn) {
+	return +load15v >= load_threshold_total(load_warn);
+}
+
 function wa_cfg(ctx, key, def) {
 	let v = ctx.get('wanalert', 'main', key);
 	if (v == null || v == '')
@@ -216,7 +232,8 @@ export function wanalert_hud_flags(cpu, load15v, temp) {
 		out.cpu = wa_hold_fired(st, 'cpu', cpu >= +wa_cfg(ctx, 'cpu_percent', 90),
 			+wa_cfg(ctx, 'cpu_hold_min', 5));
 	if (wa_alert_on(ctx, 'alert_load'))
-		out.load = wa_hold_fired(st, 'load', load15v >= +wa_cfg(ctx, 'load_warn', '2.00'),
+		out.load = wa_hold_fired(st, 'load',
+			load_over_threshold(load15v, wa_cfg(ctx, 'load_warn', load_per_cpu_warn_default())),
 			+wa_cfg(ctx, 'load_hold_min', 5));
 	if (wa_alert_on(ctx, 'alert_temp'))
 		out.temp = wa_hold_fired(st, 'temp', temp >= +wa_cfg(ctx, 'temp_c', 80),
@@ -290,6 +307,130 @@ function parse_top_procs(text) {
 		}
 	}
 	return procs;
+}
+
+function top_cpu_summary(text, maxn, min_pct) {
+	let procs = parse_top_procs(text);
+	let parts = [];
+	for (let round = 0; round < maxn; round++) {
+		let best = -1, bi = -1;
+		for (let i = 0; i < length(procs); i++) {
+			if (procs[i] == null)
+				continue;
+			if (procs[i].pct > best) {
+				best = procs[i].pct;
+				bi = i;
+			}
+		}
+		if (bi < 0 || best < min_pct)
+			break;
+		let it = procs[bi];
+		procs[bi] = null;
+		let s = sprintf('%s %d%%', it.name, int(it.pct + 0.5));
+		if (it.role != '')
+			s += '(' + it.role + ')';
+		push(parts, s);
+	}
+	return parts;
+}
+
+function join_sp(arr) {
+	let s = '';
+	for (let i = 0; i < length(arr); i++) {
+		if (i > 0)
+			s += '、';
+		s += arr[i];
+	}
+	return s;
+}
+
+/* For load alerts: top CPU + D-state (IO wait) processes; load avg lags behind CPU. */
+export function load_cause() {
+	let bits = [];
+	let p = popen('top -bn1 2>/dev/null', 'r');
+	let text = '';
+	if (p) {
+		text = replace(p.read('all') || '', /\r/g, '');
+		p.close();
+	}
+	let cpu_top = top_cpu_summary(text, 5, 0);
+	if (length(cpu_top) > 0) {
+		let s = '进程CPU(快照)：' + cpu_top[0];
+		for (let i = 1; i < length(cpu_top); i++)
+			s += '、' + cpu_top[i];
+		push(bits, s);
+	}
+	let blocked = [];
+	p = popen("ps w 2>/dev/null", 'r');
+	if (p) {
+		let ps = p.read('all') || '';
+		p.close();
+		for (let line in split(ps, '\n')) {
+			line = trim(replace(line, /\r$/, ''));
+			if (line == '' || match(line, /^PID /))
+				continue;
+			let f = split(line, /[ \t]+/);
+			if (length(f) < 5)
+				continue;
+			let stat = f[4];
+			if (!match(stat, /D/))
+				continue;
+			let cmd = f[length(f) - 1];
+			if (length(f) > 5) {
+				cmd = '';
+				for (let i = 5; i < length(f); i++) {
+					if (cmd != '')
+						cmd += ' ';
+					cmd += f[i];
+				}
+			}
+			cmd = cmd_base(cmd);
+			if (cmd != '' && cmd != 'ps')
+				push(blocked, cmd + '(D/IO)');
+		}
+	}
+	if (length(blocked) > 0) {
+		let seen = {};
+		let uniq = [];
+		for (let i = 0; i < length(blocked); i++) {
+			if (seen[blocked[i]])
+				continue;
+			seen[blocked[i]] = true;
+			push(uniq, blocked[i]);
+			if (length(uniq) >= 5)
+				break;
+		}
+		push(bits, '不可中断等待：' + join_sp(uniq));
+	}
+	p = popen("ps -o pcpu=,stat=,comm= 2>/dev/null | sort -rn | head -6", 'r');
+	if (p) {
+		let alt = trim(p.read('all') || '');
+		p.close();
+		if (alt != '' && length(cpu_top) == 0) {
+			let rows = [];
+			for (let line in split(alt, '\n')) {
+				line = trim(line);
+				if (line == '')
+					continue;
+				let m = match(line, /^(\d+\.?\d*)\s+(\S+)\s+(.+)$/);
+				if (m)
+					push(rows, sprintf('%s %s%%', cmd_base(m[3]), int(+m[1] + 0.5)));
+				if (length(rows) >= 5)
+					break;
+			}
+			if (length(rows) > 0)
+				push(bits, '进程CPU( ps )：' + join_sp(rows));
+		}
+	}
+	if (length(bits) == 0)
+		return '进程：当前快照无明显高 CPU；15 分钟负载为滑动平均，可能由数分钟前的任务残留';
+	let out = '';
+	for (let i = 0; i < length(bits); i++) {
+		if (i > 0)
+			out += '。';
+		out += bits[i];
+	}
+	return out;
 }
 
 /* Snapshot of CPU breakdown + processes currently using CPU (busybox top -bn1). */
@@ -497,6 +638,15 @@ export function repair_rate_hist(h) {
 	let t = type(h.t) == 'array' ? h.t : [];
 	let n = length(t);
 	if (n < 1)
+		return h;
+	let monotonic = true;
+	for (let i = 1; i < n; i++) {
+		if (+t[i] < +t[i - 1]) {
+			monotonic = false;
+			break;
+		}
+	}
+	if (monotonic)
 		return h;
 	let series = type(h.series) == 'object' ? h.series : {};
 	let order = [];

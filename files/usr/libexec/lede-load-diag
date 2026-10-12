@@ -1,0 +1,23 @@
+#!/bin/sh
+# One-shot load investigation (run on gateway when load alert fires).
+export PATH=/usr/sbin:/sbin:/usr/bin:/bin
+ncpu=$(grep -c ^processor /proc/cpuinfo 2>/dev/null || echo 1)
+[ "$ncpu" -ge 1 ] 2>/dev/null || ncpu=1
+per=$(uci -q get wanalert.main.load_warn 2>/dev/null || echo 1.00)
+thr=$(awk -v p="$per" -v n="$ncpu" 'BEGIN{printf "%.2f", p*n}')
+echo "=== $(date -Is 2>/dev/null || date) ==="
+echo "loadavg: $(cat /proc/loadavg)"
+echo "per-CPU(15m): $(awk -v l="$(awk '{print $3}' /proc/loadavg)" -v n="$ncpu" 'BEGIN{if(n>0) printf "%.2f", l/n; else print l}')"
+echo "threshold: ${per}/core × ${ncpu} cpus = ${thr} (UCI load_warn is per-core after 2026-10 fix)"
+echo "--- top ---"
+top -bn1 2>/dev/null | head -22
+echo "--- D-state (IO wait inflates load) ---"
+ps w 2>/dev/null | awk 'NR==1 || $4 ~ /D/'
+echo "--- wan-alert samples ---"
+if [ -f /tmp/lede-load-samples.json ]; then
+	ucode -e 'let a=json(readfile("/tmp/lede-load-samples.json")||"[]"); if(type(a)!="array") exit(0); for(let i=0;i<length(a);i++) print(sprintf("%s 15m=%s 1m=%s cpu=%s%%  %s", a[i].ts, a[i].load15, a[i].load1, a[i].cpu, a[i].procs));' 2>/dev/null || cat /tmp/lede-load-samples.json
+else
+	echo "(empty — upgrade wan-alert with load sampling, or wait for next high-load period)"
+fi
+echo "--- wan-alert CPU ---"
+ps w 2>/dev/null | grep -E 'wan-alert|bandix|mosdns|sing-box|passwall' | grep -v grep | head -15

@@ -270,9 +270,9 @@ return baseclass.extend({
 	o.datatype = 'uinteger';
 	o.default = '5';
 
-	o = s.option(form.Value, 'load_warn', _('15 分钟负载'),
-		_('与 /proc/loadavg 第三个数字比较。x86 多核能适当调高。'));
-	o.default = '2.00';
+	o = s.option(form.Value, 'load_warn', _('15 分钟负载（每核）'),
+		_('与 /proc/loadavg 第三项比较：当 15 分钟负载 ≥ 本值 × CPU 核数 时报警（多核 x86 勿再用固定 2.0）。'));
+	o.default = '1.00';
 	o = s.option(form.Value, 'load_hold_min', _('持续时间（分钟）'));
 	o.datatype = 'uinteger';
 	o.default = '5';

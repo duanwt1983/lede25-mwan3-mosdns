@@ -44,9 +44,19 @@ set $gw_host "";
 set $gw_pub_prefix "";
 set $gw_backend_path "";
 
+location @center_gw_offline {
+    internal;
+    default_type text/html;
+    charset utf-8;
+    return 503 '<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><title>隧道未连接</title></head><body style="font-family:sans-serif;max-width:36em;margin:2em auto;line-height:1.6"><h1>502/504：门店 frp 隧道未连接</h1><p>中心机 <code>127.0.0.1:映射端口</code> 无响应，通常是门店网关 <strong>frpc 未运行</strong> 或未连上 frps。</p><p>请在网关 LuCI「区域接入中心」确认已导入 CA、启用并<strong>保存并应用</strong>，或 SSH：<code>/usr/libexec/lede-center-frpc apply</code>。</p><p><a href="/home/">返回区域接入中心首页</a></p></body></html>';
+}
+
 location ^~ /home/gw/ {
     access_by_lua_file /etc/nginx/lua/center-portal-gw-handler.lua;
     proxy_pass https://127.0.0.1:$gw_port$gw_backend_path$is_args$args;
+    proxy_connect_timeout 10s;
+    proxy_intercept_errors on;
+    error_page 502 504 =503 @center_gw_offline;
     proxy_ssl_verify off;
     proxy_http_version 1.1;
     proxy_set_header Host $gw_host;
@@ -73,6 +83,9 @@ location ^~ /home/gw/ {
 location ^~ /cgi-bin/ {
     access_by_lua_file /etc/nginx/lua/center-portal-gw-proxy.lua;
     proxy_pass https://127.0.0.1:$gw_port$request_uri;
+    proxy_connect_timeout 10s;
+    proxy_intercept_errors on;
+    error_page 502 504 =503 @center_gw_offline;
     proxy_ssl_verify off;
     proxy_http_version 1.1;
     proxy_set_header Host $gw_host;
@@ -90,6 +103,9 @@ location ^~ /cgi-bin/ {
 location ^~ /luci-static/ {
     access_by_lua_file /etc/nginx/lua/center-portal-gw-proxy.lua;
     proxy_pass https://127.0.0.1:$gw_port$request_uri;
+    proxy_connect_timeout 10s;
+    proxy_intercept_errors on;
+    error_page 502 504 =503 @center_gw_offline;
     proxy_ssl_verify off;
     proxy_http_version 1.1;
     proxy_set_header Host $gw_host;
