@@ -28,7 +28,22 @@ ensure_bpf_linker() {
 		local url="https://github.com/aya-rs/bpf-linker/releases/download/${BPF_LINKER_VERSION}/bpf-linker-x86_64-unknown-linux-musl.tar.zst"
 		local zst="$WORK/bpf-linker.tar.zst"
 		echo "bandix-plus: fetching bpf-linker ${BPF_LINKER_VERSION} (prebuilt)..."
-		curl -fsSL -o "$zst" "$url"
+		local n=0
+		while [ "$n" -lt 8 ]; do
+			if curl -fsSL --connect-timeout 30 --max-time 600 \
+				--retry 3 --retry-all-errors --retry-delay 5 \
+				-o "$zst" "$url"; then
+				break
+			fi
+			n=$((n + 1))
+			echo "bandix-plus: bpf-linker download failed (attempt $n/8), retry in 15s..." >&2
+			rm -f "$zst"
+			sleep 15
+		done
+		[ -s "$zst" ] || {
+			echo "ERROR: bpf-linker download failed after retries: $url" >&2
+			exit 1
+		}
 		if ! tar --zstd -xf "$zst" -C "$CARGO_HOME/bin" 2>/dev/null; then
 			if command -v zstd >/dev/null 2>&1; then
 				zstd -d -q -o "$WORK/bpf-linker" "$zst"
