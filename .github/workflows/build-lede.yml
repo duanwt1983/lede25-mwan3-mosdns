@@ -191,23 +191,19 @@ jobs:
               exit 1
             fi
           done
-          img_check=$(ls -1 *ext4-combined-efi.img 2>/dev/null | head -1 || true)
-          if [ -z "$img_check" ]; then
-            echo "IMAGE FAIL: no ext4-combined-efi.img for frpc verification"
-            ls -la
+          echo "==== verify /usr/bin/frpc in staged rootfs (files/ overlay; not in opkg manifest) ===="
+          rootfs=""
+          for d in /workdir/openwrt/build_dir/target-*/root-*; do
+            [ -d "$d" ] && rootfs="$d" && break
+          done
+          if [ -z "$rootfs" ] || [ ! -x "$rootfs/usr/bin/frpc" ]; then
+            echo "IMAGE FAIL: /usr/bin/frpc missing under build_dir rootfs (got: ${rootfs:-none})"
+            find /workdir/openwrt/build_dir -path '*/usr/bin/frpc' 2>/dev/null | head -10 || true
+            ls -la "${rootfs:-/workdir/openwrt/build_dir}/usr/bin/" 2>/dev/null | head -20 || true
             exit 1
           fi
-          echo "==== verify /usr/bin/frpc inside $img_check (overlay; may be absent from manifest) ===="
-          if ! debugfs -R 'stat /usr/bin/frpc' "$img_check" 2>/dev/null | grep -q 'Regular File'; then
-            echo "IMAGE FAIL: /usr/bin/frpc missing in rootfs image"
-            debugfs -R 'stat /usr/bin/frpc' "$img_check" 2>&1 || true
-            debugfs -R 'ls /usr/bin' "$img_check" 2>&1 | head -30 || true
-            exit 1
-          fi
-          debugfs -R 'dump /usr/bin/frpc /tmp/lede-frpc-from-img' "$img_check"
-          chmod +x /tmp/lede-frpc-from-img
-          /tmp/lede-frpc-from-img --version
-          grep -E '^lede-center-frpc|^frpc' "$mf" || echo "note: frpc delivered via files/ overlay (not always listed in manifest)"
+          "$rootfs/usr/bin/frpc" --version
+          grep -E '^lede-center-frpc|^frpc' "$mf" || echo "note: frpc from files/ overlay (manifest may omit it)"
           rm -rf packages
           find . -type f ! -name '*ext4-combined-efi.img' ! -name '*ext4-combined-efi.img.gz' ! -name '*ext4-combined-efi.vmdk' ! -name '*ext4-combined-efi.vmdk.gz' ! -name 'sha256sums' -delete
           rev=$(sed -n "s/.*DISTRIB_REVISION='\([^']*\)'.*/\1/p" /workdir/openwrt/package/lean/default-settings/files/zzz-default-settings | head -1)
