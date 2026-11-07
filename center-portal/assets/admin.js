@@ -265,10 +265,6 @@
       var pname = site.id + '-' + t.name;
       var on = proxyNamedOnline(pname);
       var conflict = tunnelPortConflict(t.port);
-      var localStr = String(t.local || '');
-      if (!conflict && (localStr.indexOf('6.251') >= 0 || localStr.indexOf('192.168.6.251') >= 0)) {
-        conflict = '内网目标误填为中心机 6.251，请改为门店 LAN 内 IP';
-      }
       var httpUrl = tunnelAccessUrl(t.port, false);
       var httpsUrl = tunnelAccessUrl(t.port, true);
       var mode = tunnelLinkMode(t.local);
@@ -532,14 +528,6 @@
   function saveTunnelsHandler() {
     if (!editingId) {
       msg('请先选择站点', true);
-      return;
-    }
-    var badLocal = readTunnelsFromForm(false).filter(function (t) {
-      var L = (t.local || '').toLowerCase();
-      return L.indexOf('6.251') >= 0 || L.indexOf('192.168.6.251') >= 0;
-    });
-    if (badLocal.length && !window.confirm(
-      '内网备忘中含有中心机 6.251：隧道会从门店网关转回中心服务器，通常不是你要的内网设备。确定仍要保存？')) {
       return;
     }
     var idx = registry.sites.findIndex(function (s) { return s.id === editingId; });

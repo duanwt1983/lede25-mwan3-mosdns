@@ -156,7 +156,7 @@
         <pre>https://center.example.com:&lt;luci_port&gt;/</pre>
 
         <h3>内网隧道访问</h3>
-        <p>隧道是 <strong>TCP 直通</strong>（不是 LuCI 的 18443 反代）。在网关「内网 TCP 隧道」填门店 LAN 设备 IP/端口（勿填 6.251 / 127.0.0.1），保存并应用。</p>
+        <p>隧道是 <strong>TCP 直通</strong>（不是 LuCI 的 18443 反代）。在网关「内网 TCP 隧道」填门店 LAN 设备 IP/端口（勿填 127.0.0.1）。门店地址和中心机地址不是同一张网，数字相同也可以。保存并应用。</p>
         <p>门户上的访问链接指向<strong>中心机 LAN 地址</strong>（见页头 <code>portal-center-lan-host</code>，如 <code>192.168.6.251:&lt;中心端口&gt;</code>），需与中心同网段或 VPN 可达。备忘含 <code>:443</code> 时用 HTTPS 按钮。</p>
 
         <h3>frpc 代理命名</h3>

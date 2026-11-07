@@ -228,9 +228,6 @@ if [ -f "$SITES" ]; then
     if [ "$online" != "online" ]; then
       hint="frp 离线：请在门店网关保存并应用区域接入中心"
       level="bad"
-    elif [ "$frp_local" = "192.168.6.251" ]; then
-      hint="内网 IP 指回中心 6.251，请在网关隧道改为门店 LAN 或测试目标 IP"
-      level="bad"
     elif [ "$code" = "400" ] && [ "${srv#nginx}" != "$srv" ]; then
       hint="连到中心 Nginx/宝塔，非门店设备：请改网关隧道内网 IP/端口"
       level="bad"

@@ -47,10 +47,10 @@ valid_site_id() {
 	return 0
 }
 
-# 隧道须指向门店 LAN 设备，不能指回中心或本机回环
+# 只拒绝本机回环。门店 LAN 与中心机不是同一张网，地址数字相同也合法。
 tunnel_local_ip_bad() {
 	case "$1" in
-	127.0.0.1|::1|localhost|192.168.6.251)
+	127.0.0.1|::1|localhost)
 		return 0
 		;;
 	esac
@@ -176,7 +176,7 @@ append_tunnel_proxy() {
 	[ -n "$lip" ] && [ -n "$lport" ] && [ -n "$rport" ] || return 0
 	valid_site_id "$pname" || return 0
 	if tunnel_local_ip_bad "$lip"; then
-		echo "tunnel ${pname}: local_ip ${lip} 无效（请填门店 LAN 内设备 IP，勿填 6.251/127.0.0.1）" >&2
+		echo "tunnel ${pname}: local_ip ${lip} 无效（请填门店 LAN 内设备 IP，勿填 127.0.0.1）" >&2
 		TUNNEL_ERR=1
 		return 1
 	fi
@@ -458,6 +458,23 @@ register_retry_async() {
 	return 0
 }
 
+# One quiet POST. Restores a site the center deleted. Does not arm the manual button.
+register_keepalive() {
+	local rc=0 old
+	[ "$(uci_get enabled)" = "1" ] || return 0
+	if [ -f "$REG_PID" ]; then
+		old=$(cat "$REG_PID" 2>/dev/null || true)
+		if [ -n "$old" ] && kill -0 "$old" 2>/dev/null; then
+			return 0
+		fi
+	fi
+	register_portal || rc=$?
+	if [ "$rc" -eq 0 ]; then
+		register_mark ok 0 ""
+	fi
+	return 0
+}
+
 import_ca() {
 	local server pport url tmp sha
 	server=$(uci_get server)
@@ -518,6 +535,9 @@ register-retry-worker)
 register-retry)
 	register_retry_async
 	;;
+register-keepalive)
+	register_keepalive
+	;;
 write-config)
 	write_config
 	;;
@@ -568,7 +588,7 @@ status|ensure)
 	status_json
 	;;
 *)
-	echo "usage: $0 {write-config|apply|restart|ensure|status|import-ca|register-portal|register-retry}" >&2
+	echo "usage: $0 {write-config|apply|restart|ensure|status|import-ca|register-portal|register-retry|register-keepalive}" >&2
 	exit 1
 	;;
 esac

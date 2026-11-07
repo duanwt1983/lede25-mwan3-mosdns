@@ -1054,6 +1054,8 @@ assert_grep 'ledeFwUpgradeTitle' "$_LEDE_FILES/www/luci-static/resources/view/sy
 assert_grep 'ledeFwBuildStamp' "$_LEDE_FILES/www/luci-static/resources/view/system/flash.js"
 assert_grep '手工注册' "$_LEDE_FILES/www/luci-static/resources/view/system/remote-v2.js"
 assert_grep 'register_retry_worker' "$_LEDE_FILES/usr/libexec/lede-center-frpc"
+assert_grep 'register-keepalive' "$_LEDE_FILES/usr/libexec/lede-center-frpc"
+assert_grep 'register-keepalive' "$_LEDE_FILES/etc/init.d/lede-center-frpc"
 assert_grep 'sleep 30' "$_LEDE_FILES/usr/libexec/lede-center-frpc"
 assert_grep 'showConfirmFlash' "$_LEDE_FILES/www/luci-static/resources/view/system/flash.js"
 assert_grep 'lede-firmware-flash.sh' "$_LEDE_FILES/www/luci-static/resources/view/system/flash.js"
