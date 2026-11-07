@@ -6,6 +6,10 @@ set -e
 CONF=/var/etc/lede-center-frpc.toml
 PIDFILE=/var/run/lede-center-frpc.pid
 CA_STORE=/etc/lede-center/frps-ca.crt
+REG_STATE=/etc/lede-center/register.state
+REG_PID=/tmp/lede-center-register.pid
+REG_LOG=/tmp/lede-center-register.log
+REG_DETAIL=""
 
 uci_get() {
 	uci -q get "lede-center.main.$1" 2>/dev/null || true
@@ -316,7 +320,22 @@ status_json() {
 	default_ca_file >/dev/null 2>&1 && ca_ok=1
 	frpc_bin=0
 	[ -x /usr/bin/frpc ] && frpc_bin=1
-	printf '{"enabled":%s,"running":%s,"config":%s,"uci_ok":%s,"ca_installed":%s,"frpc_installed":%s,"site_id":"%s","server":"%s","port":"%s","remote_port_luci":"%s","tunnels":[%s]}' \
+	reg_phase=none
+	reg_fails=0
+	reg_detail=""
+	if [ -f "$REG_STATE" ]; then
+		reg_phase=$(sed -n 's/^phase=//p' "$REG_STATE" | head -1)
+		reg_fails=$(sed -n 's/^fails=//p' "$REG_STATE" | head -1)
+		reg_detail=$(sed -n 's/^detail=//p' "$REG_STATE" | head -1)
+	fi
+	case "$reg_phase" in
+	pending|ok|failed|none) ;;
+	*) reg_phase=none ;;
+	esac
+	case "$reg_fails" in
+	''|*[!0-9]*) reg_fails=0 ;;
+	esac
+	printf '{"enabled":%s,"running":%s,"config":%s,"uci_ok":%s,"ca_installed":%s,"frpc_installed":%s,"site_id":"%s","server":"%s","port":"%s","remote_port_luci":"%s","tunnels":[%s],"register_phase":"%s","register_fails":%s,"register_detail":"%s"}' \
 		"$([ "$en" = "1" ] && echo 1 || echo 0)" \
 		"$run" \
 		"$cfg" \
@@ -327,23 +346,40 @@ status_json() {
 		"$(uci_get server)" \
 		"$(uci_get port)" \
 		"$(uci_get remote_port_luci)" \
-		"$STATUS_TUNNELS_JSON"
+		"$STATUS_TUNNELS_JSON" \
+		"$reg_phase" \
+		"$reg_fails" \
+		"$(json_esc "$reg_detail")"
+}
+
+json_esc() {
+	printf '%s' "$1" | tr '\r\n' '  ' | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
+register_mark() {
+	local phase="$1" fails="$2" detail="$3"
+	mkdir -p /etc/lede-center
+	detail=$(printf '%s' "$detail" | tr '\r\n' '  ' | cut -c1-180)
+	printf 'phase=%s\nfails=%s\ndetail=%s\n' "$phase" "$fails" "$detail" > "$REG_STATE.tmp"
+	mv "$REG_STATE.tmp" "$REG_STATE"
 }
 
 register_portal() {
-	local server pport token url body resp
-	[ "$(uci_get enabled)" = "1" ] || return 0
-	uci_config_valid || return 0
+	local server pport token url body resp resolve rc
+	REG_DETAIL=""
+	[ "$(uci_get enabled)" = "1" ] || return 2
+	uci_config_valid || return 2
 	token=$(uci_get token)
-	[ -n "$token" ] || return 0
+	[ -n "$token" ] || return 2
 	# Portal HTTPS (18443) may use panel self-signed cert; frps CA is for frpc only (see import_ca -k).
 	server=$(uci_get server)
 	[ -n "$server" ] || server=center.123.gd.cn
 	pport=$(uci_get portal_port)
 	[ -n "$pport" ] || pport=18443
 	body=$(ucode -e "import { register_payload } from '/usr/share/ucode/lede-center-portal.uc'; print(sprintf('%J', register_payload()));" 2>/dev/null) || {
-		echo "portal register: build payload failed" >&2
-		return 0
+		REG_DETAIL="portal register: build payload failed"
+		echo "$REG_DETAIL" >&2
+		return 1
 	}
 	url="https://${server}:${pport}/home/api/gateway/register"
 	resolve=$(portal_curl_resolve "$server" "$pport")
@@ -358,15 +394,67 @@ register_portal() {
 		if [ -z "$resp" ]; then
 			resp="curl exit ${rc} (无法访问 ${url}，请检查门店 WAN、DNS、18443 放行及 CA/Token)"
 		fi
-		echo "portal register failed: $resp" >&2
-		return 0
+		REG_DETAIL="portal register failed: $resp"
+		echo "$REG_DETAIL" >&2
+		return 1
 	fi
 	case "$resp" in
 	*"\"ok\":true"*|*'"ok": true'*)
 		echo "portal register ok: $(uci_get site_id)" >&2
+		return 0
 		;;
-	*) echo "portal register: $resp" >&2 ;;
+	*)
+		REG_DETAIL="portal register: $resp"
+		echo "$REG_DETAIL" >&2
+		return 1
+		;;
 	esac
+}
+
+# One automatic run: try immediately, then twice more, 30s apart.
+# 0 = registered, 2 = nothing to register. Three failures leave phase=failed.
+register_retry_worker() {
+	local n=0 rc=0 detail=""
+	trap '' HUP
+	echo $$ > "$REG_PID"
+	register_mark pending 0 ""
+	while [ "$n" -lt 3 ]; do
+		rc=0
+		register_portal || rc=$?
+		if [ "$rc" -eq 0 ]; then
+			register_mark ok 0 ""
+			rm -f "$REG_PID"
+			return 0
+		fi
+		if [ "$rc" -eq 2 ]; then
+			register_mark none 0 ""
+			rm -f "$REG_PID"
+			return 0
+		fi
+		n=$((n + 1))
+		detail=$REG_DETAIL
+		if [ "$n" -lt 3 ]; then
+			register_mark pending "$n" "$detail"
+			sleep 30
+		fi
+	done
+	register_mark failed 3 "$detail"
+	rm -f "$REG_PID"
+	return 0
+}
+
+register_retry_async() {
+	local old
+	if [ -f "$REG_PID" ]; then
+		old=$(cat "$REG_PID" 2>/dev/null || true)
+		[ -n "$old" ] && kill "$old" 2>/dev/null || true
+		rm -f "$REG_PID"
+	fi
+	register_mark pending 0 ""
+	(
+		trap '' HUP
+		/usr/libexec/lede-center-frpc register-retry-worker
+	) </dev/null >>"$REG_LOG" 2>&1 &
 	return 0
 }
 
@@ -407,11 +495,28 @@ import-ca)
 	if [ "$(uci_get enabled)" = "1" ] && uci_config_valid; then
 		write_config || exit 1
 		/etc/init.d/lede-center-frpc restart 2>/dev/null || true
-		register_portal
+		register_retry_async
 	fi
 	;;
 register-portal)
-	register_portal
+	rc=0
+	register_portal || rc=$?
+	if [ "$rc" -eq 0 ]; then
+		register_mark ok 0 ""
+		exit 0
+	fi
+	if [ "$rc" -eq 2 ]; then
+		register_mark none 0 ""
+		exit 0
+	fi
+	register_mark failed 3 "$REG_DETAIL"
+	exit 1
+	;;
+register-retry-worker)
+	register_retry_worker
+	;;
+register-retry)
+	register_retry_async
 	;;
 write-config)
 	write_config
@@ -428,6 +533,7 @@ apply)
 		fi
 	else
 		write_config || true
+		register_mark none 0 ""
 	fi
 	sync_tunnel_firewall
 	/etc/init.d/lede-center-frpc stop 2>/dev/null || true
@@ -440,7 +546,7 @@ apply)
 			echo "frpc failed to start; see logread | grep frpc" >&2
 			exit 1
 		}
-		register_portal
+		register_retry_async
 	fi
 	;;
 restart)
@@ -456,13 +562,13 @@ restart)
 		echo "frpc failed to start; see logread | grep frpc" >&2
 		exit 1
 	}
-	register_portal
+	register_retry_async
 	;;
 status|ensure)
 	status_json
 	;;
 *)
-	echo "usage: $0 {write-config|apply|restart|ensure|status|import-ca|register-portal}" >&2
+	echo "usage: $0 {write-config|apply|restart|ensure|status|import-ca|register-portal|register-retry}" >&2
 	exit 1
 	;;
 esac

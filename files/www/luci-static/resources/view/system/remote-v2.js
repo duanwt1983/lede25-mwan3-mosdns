@@ -408,6 +408,16 @@ return view.extend({
 			paneWan.appendChild(stripMapChrome(nodes[0], false));
 
 			var paneCenter = E('div', { 'data-pane': 'center' });
+			paneCenter.appendChild(E('div', {
+				id: 'lede-center-manual-reg',
+				style: 'display:none;margin:0 0 1rem;align-items:center;gap:.75rem;flex-wrap:wrap'
+			}, [
+				E('button', {
+					'class': 'btn cbi-button-action',
+					'click': ui.createHandlerFn(view, 'handleManualRegister')
+				}, [_('手工注册')]),
+				E('span', { id: 'lede-center-manual-reg-msg', style: 'opacity:.8' })
+			]));
 			paneCenter.appendChild(stripMapChrome(nodes[1], true));
 
 			view._panes.appendChild(paneWan);
@@ -421,7 +431,66 @@ return view.extend({
 			}
 
 			view._syncTabs();
+			view._applyRegButton(stCenter);
+			view._ensureRegPoll(stCenter);
 			return root;
+		});
+	},
+
+	_applyRegButton: function(st) {
+		var box = document.getElementById('lede-center-manual-reg');
+		if (!box)
+			return;
+		var show = !!(st && (st.enabled === 1 || st.enabled === '1') &&
+			st.register_phase === 'failed' && (+st.register_fails >= 3));
+		box.style.display = show ? 'flex' : 'none';
+		var msg = document.getElementById('lede-center-manual-reg-msg');
+		if (msg)
+			msg.textContent = (show && st.register_detail) ? String(st.register_detail) : '';
+	},
+
+	_ensureRegPoll: function(st) {
+		var view = this;
+		if (!st || st.register_phase !== 'pending') {
+			if (view._regPoll) {
+				clearInterval(view._regPoll);
+				view._regPoll = null;
+			}
+			return;
+		}
+		if (view._regPoll)
+			return;
+		view._regPoll = window.setInterval(function() {
+			fs.exec('/usr/libexec/lede-center-frpc', ['status']).then(function(res) {
+				var nst = parseJsonStatus(res, {});
+				view._applyRegButton(nst);
+				if (nst.register_phase !== 'pending' && view._regPoll) {
+					clearInterval(view._regPoll);
+					view._regPoll = null;
+				}
+			});
+		}, 5000);
+	},
+
+	handleManualRegister: function(ev) {
+		var view = this;
+		var btn = ev.currentTarget;
+		if (btn)
+			btn.disabled = true;
+		return fs.exec('/usr/libexec/lede-center-frpc', ['register-portal']).then(function(res) {
+			if (btn)
+				btn.disabled = false;
+			if (res && res.code === 0)
+				ui.addNotification(null, E('p', _('已向区域接入中心登记')), 'info');
+			else
+				ui.addNotification(null, E('p', (res && (res.stderr || res.stdout)) || _('手工登记失败')), 'danger');
+			return fs.exec('/usr/libexec/lede-center-frpc', ['status']);
+		}).then(function(res) {
+			view._applyRegButton(parseJsonStatus(res, {}));
+		}).catch(function(err) {
+			if (btn)
+				btn.disabled = false;
+			ui.addNotification(null, E('p', (err && err.message) || _('手工登记失败')), 'danger');
 		});
 	},
 

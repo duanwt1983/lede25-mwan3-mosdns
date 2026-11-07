@@ -6,7 +6,7 @@ set -euo pipefail
 ROOT="$(CDPATH= cd -- "$(dirname "$0")/../.." && pwd)"
 IP="${1:-192.168.8.1}"
 PASS="${2:-password}"
-PACK="${3:-$ROOT/dist/lede-component-center-hub-v1.0.5.tar.gz}"
+PACK="${3:-$ROOT/dist/lede-component-center-hub-v1.0.6.tar.gz}"
 
 [ -f "$PACK" ] || { echo "missing pack: $PACK" >&2; exit 1; }
 

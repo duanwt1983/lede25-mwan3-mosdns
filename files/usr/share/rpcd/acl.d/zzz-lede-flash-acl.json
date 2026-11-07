@@ -6,6 +6,7 @@
 			"file": {
 				"/dev/mtdblock[0-9]*": [ "read" ],
 				"/etc/sysupgrade.conf": [ "read" ],
+				"/etc/lede-buildtime": [ "read" ],
 				"/etc/lede-component-state.json": [ "read" ],
 				"/tmp/lede-component-state.json": [ "read" ],
 				"/tmp/lede-component-upload.tar.gz": [ "read" ],
@@ -83,6 +84,7 @@
 				"/tmp/lede-fw-flash.log": [ "read" ],
 				"/etc/lede-fw-last-flash-success": [ "read" ],
 				"/etc/openwrt_release": [ "read" ],
+				"/etc/lede-buildtime": [ "read" ],
 				"/tmp/lede-overlay.tar.gz": [ "write", "read" ],
 				"/tmp/lede-component-dl.tar.gz": [ "write", "read" ],
 				"/tmp/lede-component-upload.tar.gz": [ "write", "read" ],

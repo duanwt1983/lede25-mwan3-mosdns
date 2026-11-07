@@ -1,4 +1,4 @@
 pack_id=lede-component-firmware-upgrade
-version=1.0.32
-description=无 GNU stat 时用 ls 取镜像大小（避免 2.1G 被误判为 0 而校验失败）
-archive=lede-component-firmware-upgrade-v1.0.32.tar.gz
+version=1.0.33
+description=固件升级标题显示镜像编译时间（年-月-日-时:分:秒）
+archive=lede-component-firmware-upgrade-v1.0.33.tar.gz

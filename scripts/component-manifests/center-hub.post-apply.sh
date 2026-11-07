@@ -28,16 +28,7 @@ fi
 if [ -x /usr/libexec/lede-center-frpc ] && [ "$(uci -q get lede-center.main.enabled 2>/dev/null)" = "1" ]; then
 	/usr/libexec/lede-center-frpc write-config >>/tmp/lede-component-apply.log 2>&1 || true
 	/etc/init.d/lede-center-frpc restart >>/tmp/lede-component-apply.log 2>&1 || true
-	( sleep 8
-	  i=0
-	  while [ "$i" -lt 3 ]; do
-		if /usr/libexec/lede-center-frpc register-portal >>/tmp/lede-component-apply.log 2>&1 \
-			&& grep -q 'portal register ok:' /tmp/lede-component-apply.log 2>/dev/null; then
-			break
-		fi
-		i=$((i + 1))
-		sleep 5
-	  done
-	) &
+	# 3 attempts, 30s apart. Three failures arm the LuCI manual-register button.
+	/usr/libexec/lede-center-frpc register-retry >>/tmp/lede-component-apply.log 2>&1 || true
 fi
 exit 0

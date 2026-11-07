@@ -100,6 +100,8 @@ echo "=== host golang (diy-part2 picks sbwml branch) ==="
   staging_dir/hostpkg/bin/go version 2>/dev/null || staging_dir/host/bin/go version
 )
 
+bash "$OVERLAY/scripts/stamp-lede-buildtime.sh" "$LEDE_WORK/openwrt"
+
 echo "=== make -j$LEDE_JOBS ==="
 if ! ( cd openwrt && make -j"$LEDE_JOBS" ); then
   echo "Parallel make failed, retry -j1 ..."

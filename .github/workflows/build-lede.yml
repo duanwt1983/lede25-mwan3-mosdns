@@ -115,6 +115,7 @@ jobs:
           cd openwrt
           rm -rf dl/go-mod-cache tmp/go-build
           echo -e "$(nproc) thread compile"
+          bash "$GITHUB_WORKSPACE/scripts/stamp-lede-buildtime.sh" "$PWD"
           echo "build host Go first (sbwml branch chosen in diy-part2.sh)"
           if ! make -j1 package/feeds/packages/golang/host/compile; then
             echo "host golang failed to compile"

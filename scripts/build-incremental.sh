@@ -31,6 +31,8 @@ make defconfig
 bash "$OVERLAY/scripts/after-defconfig.sh"
 bash "$OVERLAY/scripts/audit-config.sh"
 
+bash "$OVERLAY/scripts/stamp-lede-buildtime.sh" "$PWD"
+
 if ! make -j"$LEDE_JOBS"; then
   echo "Parallel make failed, retry -j1 ..."
   make -j1

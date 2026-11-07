@@ -1,4 +1,4 @@
 pack_id=lede-component-center-hub
-version=1.0.5
-description=区域接入中心；修复 ttyd nginx 片段、门户自动登记 TLS；portal_lan_host
-archive=lede-component-center-hub-v1.0.5.tar.gz
+version=1.0.6
+description=自动登记失败后隔 30 秒重试，最多 3 次；三次都失败才显示手工注册
+archive=lede-component-center-hub-v1.0.6.tar.gz
